@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Echo Chamber</title>
+    <!-- uPlot CSS and JS -->
+    <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
+    <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --border: rgba(255, 255, 255, 0.1);
+            --text: #f8fafc;
+            --accent: #3b82f6;
+            --danger: #ef4444;
+            --success: #10b981;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 1rem;
+            height: 100vh;
+            max-height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+            flex-shrink: 0;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+
+        .status-badge.disconnected {
+            color: var(--danger);
+            border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .status-badge.connected {
+            color: var(--success);
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .dashboard {
+            display: flex;
+            gap: 1rem;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .controls {
+            width: 250px;
+            background: var(--surface);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .chartsarea {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            overflow: hidden;
+            background: var(--surface);
+            padding: 0.5rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+
+        .chart-box {
+            flex: 1;
+            position: relative;
+            min-height: 50px;
+            width: 100%;
+        }
+
+        .controls-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .controls-group label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            border: 1px solid var(--border);
+            padding: 0.75rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.1s;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        button.active.mode-ctrl {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: var(--accent);
+            color: #93c5fd;
+        }
+
+        button.active.mode-loop {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: var(--danger);
+            color: #fca5a5;
+        }
+
+        button.active.rec-on {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: var(--success);
+            color: #6ee7b7;
+        }
+
+        /* uPlot overrides for dark mode */
+        .u-title {
+            color: #f8fafc;
+            font-weight: 600;
+            font-family: Inter, sans-serif;
+            font-size: 12px;
+            margin: 0;
+            padding: 2px;
+        }
+
+        .u-axis-text {
+            fill: #94a3b8;
+            font-family: Inter, sans-serif;
+            font-size: 10px;
+        }
+
+        .u-legend {
+            color: #f8fafc;
+            font-size: 12px;
+            padding: 2px;
+            display: none;
+        }
+
+        .u-wrap {
+            padding-top: 0 !important;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header">
+        <h1>The Echo Chamber</h1>
+        <span id="status" class="status-badge disconnected">Disconnected</span>
+    </div>
+
+    <div class="dashboard">
+        <div class="controls">
+            <div class="controls-group">
+                <label>Recording</label>
+                <button id="btn-rec" onclick="toggleRecording()">Start Recording</button>
+            </div>
+
+            <div class="controls-group">
+                <label>Experiment Mode</label>
+                <button id="btn-ctrl" class="active mode-ctrl" onclick="setMode('control')">Control</button>
+                <button id="btn-loop" onclick="setMode('closed-loop')">Closed-Loop</button>
+            </div>
+
+            <div style="flex-grow: 1;"></div>
+            <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="fs-info">
+                Waiting for stream info...
+            </div>
+        </div>
+
+        <div class="chartsarea">
+            <div id="chart-ai0" class="chart-box"></div>
+            <div id="chart-ai1" class="chart-box"></div>
+            <div id="chart-ao0" class="chart-box"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- UPLOT SETUP (3 Stacked Charts) ---
+        let uplotAi0, uplotAi1, uplotAo0;
+
+        function makeOpts(title, strokeColor) {
+            return {
+                title: title,
+                width: 100, // Wait for resize
+                height: 100, // Wait for resize
+                cursor: { sync: { key: "foo" } },
+                scales: { x: { time: false } },
+                series: [
+                    {},
+                    { stroke: strokeColor, width: 2 }
+                ],
+                axes: [
+                    {
+                        stroke: "#94a3b8",
+                        grid: { stroke: "rgba(255,255,255,0.05)", width: 1 }
+                    },
+                    { stroke: "#94a3b8", grid: { stroke: "rgba(255,255,255,0.05)", width: 1 } }
+                ]
+            };
+        }
+
+        uplotAi0 = new uPlot(makeOpts("CA3 (AI0)", "#3b82f6"), [[], []], document.getElementById("chart-ai0"));
+        uplotAi1 = new uPlot(makeOpts("Cortex (AI1)", "#10b981"), [[], []], document.getElementById("chart-ai1"));
+        uplotAo0 = new uPlot(makeOpts("Stimulation (AO0)", "#ef4444"), [[], []], document.getElementById("chart-ao0"));
+
+        function resizeCharts() {
+            let boxes = [
+                document.getElementById("chart-ai0"),
+                document.getElementById("chart-ai1"),
+                document.getElementById("chart-ao0")
+            ];
+
+            [uplotAi0, uplotAi1, uplotAo0].forEach((u, i) => {
+                let box = boxes[i];
+                u.setSize({
+                    width: box.clientWidth,
+                    height: box.clientHeight
+                });
+            });
+        }
+
+        window.addEventListener("resize", resizeCharts);
+        // Initial setup resize
+        setTimeout(resizeCharts, 50);
+
+        // --- DATA STATE ---
+        const MAX_SECONDS = 5;
+        let downsampledFS = 2000;
+
+        let tArray = [];
+        let ai0Array = [];
+        let ai1Array = [];
+        let ao0Array = [];
+        let totalSamplesReceived = 0;
+
+        // UI STATE
+        let isRecording = false;
+        let currentMode = 'control';
+
+        // --- WEBSOCKETS ---
+        let ws;
+
+        function connect() {
+            ws = new WebSocket("ws://127.0.0.1:8765");
+
+            ws.onopen = () => {
+                let badge = document.getElementById("status");
+                badge.textContent = "CONNECTED";
+                badge.className = "status-badge connected";
+                resizeCharts();
+            };
+
+            ws.onclose = () => {
+                let badge = document.getElementById("status");
+                badge.textContent = "DISCONNECTED";
+                badge.className = "status-badge disconnected";
+                setTimeout(connect, 2000); // Reconnect loop
+            };
+
+            ws.onmessage = (e) => {
+                try {
+                    let msg = JSON.parse(e.data);
+
+                    // Sync visually to backend truth
+                    isRecording = msg.is_recording;
+                    currentMode = msg.mode;
+                    updateButtonsVisually();
+
+                    if (msg.fs) {
+                        downsampledFS = msg.fs;
+                        document.getElementById("fs-info").innerHTML = `<strong>Data Stream FS:</strong> ${msg.fs} Hz`;
+                    }
+
+                    let ai0 = msg.ai[0];
+                    let ai1 = msg.ai[1];
+                    let ao0 = msg.ao[0];
+                    let numPoints = ai0.length;
+                    if (!numPoints) return;
+
+                    for (let i = 0; i < numPoints; i++) {
+                        tArray.push((totalSamplesReceived + i) / downsampledFS);
+                        ai0Array.push(ai0[i]);
+                        ai1Array.push(ai1[i]);
+                        ao0Array.push(ao0[i]);
+                    }
+                    totalSamplesReceived += numPoints;
+
+                    // Enforce max window using slice
+                    let maxP = Math.floor(MAX_SECONDS * downsampledFS);
+                    if (tArray.length > maxP) {
+                        tArray = tArray.slice(-maxP);
+                        ai0Array = ai0Array.slice(-maxP);
+                        ai1Array = ai1Array.slice(-maxP);
+                        ao0Array = ao0Array.slice(-maxP);
+                    }
+
+                    // Plot immediately directly from standard JS arrays
+                    uplotAi0.setData([tArray, ai0Array]);
+                    uplotAi1.setData([tArray, ai1Array]);
+                    uplotAo0.setData([tArray, ao0Array]);
+
+                } catch (err) {
+                    console.error("RX Err:", err);
+                }
+            };
+        }
+
+        function updateButtonsVisually() {
+            let btnCtrl = document.getElementById('btn-ctrl');
+            let btnLoop = document.getElementById('btn-loop');
+            let btnRec = document.getElementById('btn-rec');
+
+            btnCtrl.className = currentMode === 'control' ? 'active mode-ctrl' : '';
+            btnLoop.className = currentMode === 'closed-loop' ? 'active mode-loop' : '';
+
+            if (isRecording) {
+                btnRec.className = 'active rec-on';
+                btnRec.textContent = 'Stop Recording';
+            } else {
+                btnRec.className = '';
+                btnRec.textContent = 'Start Recording';
+            }
+        }
+
+        // Action handles synchronously change UI first to feel "responsive", then push network frame.
+        function setMode(modeText) {
+            currentMode = modeText;
+            updateButtonsVisually();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_mode', mode: modeText }));
+            }
+        }
+
+        function toggleRecording() {
+            isRecording = !isRecording;
+            updateButtonsVisually();
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                let cmd = isRecording ? 'start_recording' : 'stop_recording';
+                ws.send(JSON.stringify({ command: cmd }));
+            }
+        }
+
+        // Init App 
+        connect();
+    </script>
+</body>
+
+</html>
