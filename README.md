@@ -1,4 +1,4 @@
-# theEchoChamber
+# The Echo Chamber
 
 This project aims to implement a closed-loop reservoir computing algorithm to prevent epileptic seizure-like activity in rodent brain slices.
 The algorithm will be implemented in Python and will use the NI USB-6343 board for digital interface.
