@@ -24,11 +24,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION (OPEN FOR TUNING) ---
-SAMPLE_RATE = 2000
+SAMPLE_RATE = 20000
 # Chunk size dictates the latency. 
 # 100 samples / 20000 Hz = 5 ms latency.
 CHUNK_SIZE = 100  
-VIS_DOWNSAMPLE_FACTOR = 10
+VIS_DOWNSAMPLE_FACTOR = 100
 UI_UPDATE_INTERVAL = 0.1 # Broadcast to UI every 100ms (10 FPS)
 AI_CHANNELS = ["Dev1/ai0", "Dev1/ai1"]
 AO_CHANNEL = ["Dev1/ao0"]
