@@ -27,3 +27,15 @@ If in testing mode (no device connected)
 ```
 python closed_loop.py --mock
 ```
+
+## ESN closed-loop setup
+
+Install the ESN dependencies:
+
+```
+python -m pip install -r requirements.txt
+```
+
+Files:
+- `esn_artifact.pkl`: pre-trained ESN + scaler + config (loaded by `closed_loop.py`)
+- `esn/`: streaming ESN runtime package used by the closed-loop loop

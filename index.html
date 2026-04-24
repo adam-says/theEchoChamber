@@ -124,6 +124,19 @@
             font-weight: 600;
         }
 
+        select, input[type="range"] {
+            width: 100%;
+        }
+
+        select {
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            border: 1px solid var(--border);
+            padding: 0.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+        }
+
         button {
             background: rgba(255, 255, 255, 0.05);
             color: white;
@@ -207,6 +220,19 @@
                 <button id="btn-loop" onclick="setMode('closed-loop')">Closed-Loop</button>
             </div>
 
+            <div class="controls-group">
+                <label>Stimulation (Closed-Loop)</label>
+                <select id="stim-mode" onchange="setStim()">
+                    <option value="off">Off</option>
+                    <option value="passthrough" selected>ESN Passthrough</option>
+                    <option value="threshold_pulse">ESN Threshold Pulse</option>
+                </select>
+                <div style="display:flex; gap: 0.5rem; align-items:center;">
+                    <input id="stim-gain" type="range" min="0" max="10" step="0.1" value="1.0" oninput="setStim(true)" />
+                    <div style="width: 52px; text-align:right; font-size: 12px;" id="stim-gain-label">1.0V</div>
+                </div>
+            </div>
+
             <div style="flex-grow: 1;"></div>
             <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="fs-info">
                 Waiting for stream info...
@@ -282,6 +308,8 @@
         // UI STATE
         let isRecording = false;
         let currentMode = 'control';
+        let stimMode = 'passthrough';
+        let stimGain = 1.0;
 
         // --- WEBSOCKETS ---
         let ws;
@@ -310,6 +338,8 @@
                     // Sync visually to backend truth
                     isRecording = msg.is_recording;
                     currentMode = msg.mode;
+                    if (msg.stim_mode) stimMode = msg.stim_mode;
+                    if (typeof msg.stim_gain === "number") stimGain = msg.stim_gain;
                     updateButtonsVisually();
 
                     if (msg.fs) {
@@ -355,9 +385,16 @@
             let btnCtrl = document.getElementById('btn-ctrl');
             let btnLoop = document.getElementById('btn-loop');
             let btnRec = document.getElementById('btn-rec');
+            let stimModeSel = document.getElementById('stim-mode');
+            let stimGainSlider = document.getElementById('stim-gain');
+            let stimGainLabel = document.getElementById('stim-gain-label');
 
             btnCtrl.className = currentMode === 'control' ? 'active mode-ctrl' : '';
             btnLoop.className = currentMode === 'closed-loop' ? 'active mode-loop' : '';
+
+            if (stimModeSel) stimModeSel.value = stimMode;
+            if (stimGainSlider) stimGainSlider.value = stimGain;
+            if (stimGainLabel) stimGainLabel.textContent = `${Number(stimGain).toFixed(1)}V`;
 
             if (isRecording) {
                 btnRec.className = 'active rec-on';
@@ -383,6 +420,19 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 let cmd = isRecording ? 'start_recording' : 'stop_recording';
                 ws.send(JSON.stringify({ command: cmd }));
+            }
+        }
+
+        function setStim(isLive = false) {
+            stimMode = document.getElementById('stim-mode').value;
+            stimGain = parseFloat(document.getElementById('stim-gain').value);
+            updateButtonsVisually();
+            if (!isLive && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_stim', stim_mode: stimMode, stim_gain: stimGain }));
+            }
+            // For slider live updates, throttle-ish: send on input too
+            if (isLive && ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_stim', stim_mode: stimMode, stim_gain: stimGain }));
             }
         }
 

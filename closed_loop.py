@@ -12,6 +12,7 @@ from collections import deque
 from dataclasses import dataclass
 import numpy as np
 import websockets
+from typing import Optional
 
 try:
     import nidaqmx
@@ -34,11 +35,27 @@ AI_CHANNELS = ["Dev1/ai0", "Dev1/ai1"]
 AO_CHANNEL = ["Dev1/ao0"]
 WS_PORT = 8765
 
+# --- ESN CLOSED-LOOP CONFIG ---
+ESN_ARTIFACT = os.path.join(os.path.dirname(__file__), "esn_artifact.pkl")
+CTX_CHANNEL_INDEX = 1  # ai1 = EC/CTX (matches MockDAQManager ordering)
+DEFAULT_STIM_GAIN = 1.0
+DEFAULT_STIM_MODE = "passthrough"  # off | passthrough | threshold_pulse
+
+try:
+    from esn import load_artifact
+
+    _ESN_STREAMER = load_artifact(ESN_ARTIFACT)
+except Exception as _e:
+    _ESN_STREAMER = None
+    logger.warning(f"ESN artifact not loaded ({_e}). Closed-loop ESN will output zeros.")
+
 @dataclass
 class GlobalState:
     is_running: bool = True
     is_recording: bool = False
     mode: str = "control"  # 'control' or 'closed-loop'
+    stim_mode: str = DEFAULT_STIM_MODE
+    stim_gain: float = DEFAULT_STIM_GAIN
 
 class DataLogger:
     """ Handles asynchronous dumping of recorded data to disk. """
@@ -84,18 +101,17 @@ class DataLogger:
 
 def RCalgorithm(data_chunk):
     """
-    PLACEHOLDER FOR THE RESERVOIR COMPUTING ALGORITHM.
     data_chunk: shape (2, CHUNK_SIZE)
     Returns: stimulation_array of shape (1, CHUNK_SIZE)
     """
-                 
-    stim_array = np.zeros((1, data_chunk.shape[1]))
+    if _ESN_STREAMER is None:
+        return np.zeros((1, data_chunk.shape[1]))
 
-    if np.random.rand() < 0.05:
-        stim_array += np.sin(np.linspace(0, 50, data_chunk.shape[1])) * 5
-                 
-    # Simple placeholder: emit 0 if nothing happens, or some calculated pulse
-    return stim_array
+    try:
+        return _ESN_STREAMER.process_chunk(data_chunk, ctx_index=CTX_CHANNEL_INDEX)
+    except Exception as e:
+        logger.error(f"ESN processing error: {e}")
+        return np.zeros((1, data_chunk.shape[1]))
 
 
 class BaseDAQManager:
@@ -154,6 +170,8 @@ class BaseDAQManager:
                     "ao": downsampled_ao,
                     "mode": self.state.mode,
                     "is_recording": self.state.is_recording,
+                    "stim_mode": getattr(self.state, "stim_mode", DEFAULT_STIM_MODE),
+                    "stim_gain": getattr(self.state, "stim_gain", DEFAULT_STIM_GAIN),
                     "fs": SAMPLE_RATE / self.downsample_factor
                 }
                 
@@ -247,6 +265,17 @@ async def websocket_handler(websocket, state: GlobalState, ws_queue: asyncio.Que
                     elif cmd['command'] == 'set_mode':
                         state.mode = cmd.get('mode', 'control')
                         logger.info(f"Mode changed to: {state.mode}")
+                        if state.mode == "control" and _ESN_STREAMER is not None:
+                            _ESN_STREAMER.reset()
+                    elif cmd["command"] == "set_stim":
+                        # optional fields: stim_mode, stim_gain
+                        if "stim_mode" in cmd:
+                            state.stim_mode = cmd["stim_mode"]
+                        if "stim_gain" in cmd:
+                            state.stim_gain = float(cmd["stim_gain"])
+                        if _ESN_STREAMER is not None:
+                            _ESN_STREAMER.configure(stim_mode=state.stim_mode, stim_gain=state.stim_gain)
+                        logger.info(f"Stim updated: mode={state.stim_mode}, gain={state.stim_gain}")
             except Exception as e:
                 logger.error(f"WebSocket RX Error: {e}")
 

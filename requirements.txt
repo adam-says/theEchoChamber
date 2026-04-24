@@ -1,0 +1,11 @@
+numpy
+websockets
+
+# ESN runtime (required for closed-loop ESN)
+scipy
+scikit-learn
+reservoirpy==0.3.11
+mat73
+
+# Optional (hardware)
+# nidaqmx
