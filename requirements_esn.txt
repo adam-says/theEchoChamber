@@ -1,0 +1,5 @@
+numpy
+scipy
+scikit-learn
+reservoirpy==0.3.11
+mat73
