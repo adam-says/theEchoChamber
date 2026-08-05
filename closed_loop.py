@@ -212,7 +212,7 @@ class RealDAQManager(BaseDAQManager):
             
             # Initial zero write to prime the buffer
             initial_zeros = np.zeros((1, CHUNK_SIZE))
-            write_task.write(initial_zeros, auto_start=False)
+            write_task.write(initial_zeros.squeeze(), auto_start=False)
             
             write_task.start()
             read_task.start()
