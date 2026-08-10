@@ -85,6 +85,10 @@ class ESNModel:
         if x.ndim == 1:
             x = x.reshape(1, -1)
         # Graph models in reservoirpy are callable.
-        y = self.model(x)
+        if x.shape[0] == 1:
+            y = self.model(x)
+        else:
+            y = self.model.run(x, reset=False)
+
         return np.asarray(y)
 
