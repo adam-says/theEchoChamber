@@ -52,6 +52,8 @@ class ESNStreamer:
     chunk_size: int = 100
     cutoff_hz: float = 25.0
     fir_numtaps: int = 8000
+    aa_cutoff_hz: float = 500.0
+    aa_numtaps: int = 201
     decim_q: int = 10
     up_method: Literal["linear", "zoh"] = "linear"
 
@@ -76,10 +78,14 @@ class ESNStreamer:
             raise ValueError(
                 f"chunk_size ({self.chunk_size}) must be multiple of decim_q ({self.decim_q}) for fixed-latency chunks."
             )
+        
+        aa_b = build_lowpass_fir(fs=float(self.fs_in),cutoff_hz=self.aa_cutoff_hz,numtaps=self.aa_numtaps)
+        aa_fir = StreamingFIR(b=aa_b)
 
-        b = build_lowpass_fir(fs=float(self.fs_train), cutoff_hz=self.cutoff_hz, numtaps=self.fir_numtaps)
+        self._dec = StreamingDecimator(q=self.decim_q, aa_fir=aa_fir)
+
+        b = build_lowpass_fir(fs=float(self.fs_in), cutoff_hz=self.aa_cutoff_hz, numtaps=self.aa_numtaps)
         self._fir = StreamingFIR(b=b)
-        self._dec = StreamingDecimator(q=self.decim_q, aa_fir=None)  # FIR is applied at fs_train after decimation
         self._up = StreamingUpsampler(q=self.decim_q, method=self.up_method)
 
         maxlen = int(self.pulse_cfg.window_sec * self.fs_train)
@@ -168,11 +174,11 @@ class ESNStreamer:
 
         x_20k = ai_chunk[ctx_index, :]
 
-        # Decimate 20k -> 2k by simple stride; since chunk_size is multiple of q, this is stable.
-        # Optional AA filtering should be done at 20 kHz, but we keep it lightweight here.
+        # Anti-alias filter at 20 kHz, then decimate 20 kHz -> 2 kHz.
+        # StreamingDecimator applies its aa_fir before taking every q-th sample.
         x_2k = self._dec.process(x_20k)  # (10,1)
 
-        # Apply causal lowpass at 2 kHz (matches training path)
+        # Apply the existing ESN-band low-pass at 2 kHz
         x_2k_f = self._fir.process(x_2k)  # (10,1)
 
         # Scale
