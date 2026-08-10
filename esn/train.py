@@ -46,7 +46,7 @@ def train_from_mat(
     fs_native: float,
     common_fs: int = 2000,
     cutoff_hz: float = 25.0,
-    fir_numtaps: int = 8000,
+    fir_numtaps: int = 401,
     out_path: str = "esn_artifact.pkl",
     hyperparams: Dict[str, Any] | None = None,
 ) -> str:

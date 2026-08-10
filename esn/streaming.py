@@ -51,7 +51,7 @@ class ESNStreamer:
     fs_train: int = 2000
     chunk_size: int = 100
     cutoff_hz: float = 25.0
-    fir_numtaps: int = 8000
+    fir_numtaps: int = 401 #Went from 8000 to 401 to avoid the 2 seconds delay
     aa_cutoff_hz: float = 500.0
     aa_numtaps: int = 201
     decim_q: int = 10
