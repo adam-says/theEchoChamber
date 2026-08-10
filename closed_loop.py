@@ -197,13 +197,28 @@ class RealDAQManager(BaseDAQManager):
                 read_task.ai_channels.add_ai_voltage_chan(ai)
             for ao in AO_CHANNEL:
                 write_task.ao_channels.add_ao_voltage_chan(ao)
+             # AI is the timing master.
+            read_task.timing.cfg_samp_clk_timing(
+                rate=SAMPLE_RATE,
+                sample_mode=AcquisitionType.CONTINUOUS,
+                samps_per_chan=CHUNK_SIZE,
+            )
 
-            for task in (read_task, write_task):
-                task.timing.cfg_samp_clk_timing(
-                    rate=SAMPLE_RATE, 
-                    sample_mode=AcquisitionType.CONTINUOUS,
-                    samps_per_chan=CHUNK_SIZE
-                )
+            # AO uses the exact same hardware sample clock as AI.
+            ai_sample_clock = read_task.timing.samp_clk_term
+
+            write_task.timing.cfg_samp_clk_timing(
+                rate=SAMPLE_RATE,
+                source=ai_sample_clock,
+                sample_mode=AcquisitionType.CONTINUOUS,
+                samps_per_chan=CHUNK_SIZE,
+            )
+            # for task in (read_task, write_task):
+            #     task.timing.cfg_samp_clk_timing(
+            #         rate=SAMPLE_RATE, 
+            #         sample_mode=AcquisitionType.CONTINUOUS,
+            #         samps_per_chan=CHUNK_SIZE
+            #     )
 
             # Sync Write task to Read task trigger
             write_task.triggers.start_trigger.cfg_dig_edge_start_trig(
