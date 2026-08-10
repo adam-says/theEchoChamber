@@ -1,4 +1,5 @@
 numpy
+matplotlib
 websockets
 
 # ESN runtime (required for closed-loop ESN)
@@ -7,5 +8,5 @@ scikit-learn
 reservoirpy==0.3.11
 mat73
 
-# Optional (hardware)
-# nidaqmx
+# Hardware
+nidaqmx

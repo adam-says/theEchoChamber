@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Echo Chamber</title>
+    <link rel="icon" type="image/png" href="echoChamberLogo.png">
     <!-- uPlot CSS and JS -->
     <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -47,11 +48,23 @@
             flex-shrink: 0;
         }
 
-        h1 {
-            margin: 0;
-            font-size: 1.25rem;
-            font-weight: 600;
+        .brand {
+            display: block;
+            width: 220px;
+            height: auto;
+            overflow: hidden;
+            flex-grow: 3;
+            padding: 1rem;
         }
+
+        .brand-logo {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            object-position: center bottom;
+        }
+
 
         .status-badge {
             padding: 4px 12px;
@@ -203,7 +216,7 @@
 <body>
 
     <div class="header">
-        <h1>The Echo Chamber</h1>
+        <h1>The Echo Chamber</h1>        
         <span id="status" class="status-badge disconnected">Disconnected</span>
     </div>
 
@@ -232,8 +245,10 @@
                     <div style="width: 52px; text-align:right; font-size: 12px;" id="stim-gain-label">1.0V</div>
                 </div>
             </div>
-
-            <div style="flex-grow: 1;"></div>
+<div class="brand">
+            <img class="brand-logo" src="echoChamberLogo.png" alt="The Echo Chamber">
+        </div>
+            
             <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="fs-info">
                 Waiting for stream info...
             </div>

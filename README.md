@@ -1,5 +1,9 @@
 # The Echo Chamber
 
+<p align="center">
+  <img src="echoChamberLogo.png" alt="The Echo Chamber logo" width="640">
+</p>
+
 This project aims to implement a closed-loop reservoir computing algorithm to prevent epileptic seizure-like activity in rodent brain slices.
 The algorithm will be implemented in Python and will use the NI USB-6343 board for digital interface.
 On the biological side, brain slices (hippocampal-cortical) will be incubated with 4-AP to increase excitability. Seizure-like activity will be triggered by cutting the Schaffer collaterals, disrupting the hipp-ctx loop.
@@ -27,6 +31,23 @@ If in testing mode (no device connected)
 ```
 python closed_loop.py --mock
 ```
+
+### Plot a recording
+
+Select the specific `.npyseq` recording to load:
+
+```
+python readEchoChamberData.py recordings/20260806_163320_394553_echo.npyseq
+```
+
+Plot a time window, or save it without opening a window:
+
+```
+python readEchoChamberData.py recordings/20260806_163320_394553_echo.npyseq --start 10 --duration 30
+python readEchoChamberData.py recordings/20260806_163320_394553_echo.npyseq --save echo-plot.png --no-show
+```
+
+The reader loads only the selected recording and automatically uses its adjacent JSON metadata file.
 
 ## ESN closed-loop setup
 
