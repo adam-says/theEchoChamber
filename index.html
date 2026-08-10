@@ -166,6 +166,22 @@
             background: rgba(255, 255, 255, 0.1);
         }
 
+        button:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        .stop-button {
+            background: rgba(239, 68, 68, 0.12);
+            border-color: rgba(239, 68, 68, 0.55);
+            color: #fca5a5;
+            text-align: center;
+        }
+
+        .stop-button:hover:not(:disabled) {
+            background: rgba(239, 68, 68, 0.24);
+        }
+
         button.active.mode-ctrl {
             background: rgba(59, 130, 246, 0.2);
             border-color: var(--accent);
@@ -252,6 +268,8 @@
             <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="fs-info">
                 Waiting for stream info...
             </div>
+
+            <button id="btn-stop-app" class="stop-button" onclick="stopApplication()">Stop Application</button>
         </div>
 
         <div class="chartsarea">
@@ -325,6 +343,7 @@
         let currentMode = 'control';
         let stimMode = 'passthrough';
         let stimGain = 1.0;
+        let shutdownRequested = false;
 
         // --- WEBSOCKETS ---
         let ws;
@@ -341,6 +360,11 @@
 
             ws.onclose = () => {
                 let badge = document.getElementById("status");
+                if (shutdownRequested) {
+                    badge.textContent = "STOPPED";
+                    badge.className = "status-badge disconnected";
+                    return;
+                }
                 badge.textContent = "DISCONNECTED";
                 badge.className = "status-badge disconnected";
                 setTimeout(connect, 2000); // Reconnect loop
@@ -349,6 +373,11 @@
             ws.onmessage = (e) => {
                 try {
                     let msg = JSON.parse(e.data);
+
+                    if (msg.type === "command_result") {
+                        if (!msg.ok) console.error("Command rejected:", msg.error);
+                        return;
+                    }
 
                     // Sync visually to backend truth
                     isRecording = msg.is_recording;
@@ -449,6 +478,25 @@
             if (isLive && ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ command: 'set_stim', stim_mode: stimMode, stim_gain: stimGain }));
             }
+        }
+
+        function stopApplication() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                window.alert("The application is not connected.");
+                return;
+            }
+            if (!window.confirm("Stop acquisition, set output to zero, and close The Echo Chamber?")) {
+                return;
+            }
+
+            shutdownRequested = true;
+            let button = document.getElementById("btn-stop-app");
+            button.disabled = true;
+            button.textContent = "Stopping…";
+            let badge = document.getElementById("status");
+            badge.textContent = "STOPPING";
+            badge.className = "status-badge disconnected";
+            ws.send(JSON.stringify({ command: "shutdown" }));
         }
 
         // Init App 

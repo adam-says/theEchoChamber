@@ -44,6 +44,7 @@ from typing import Any, Callable, Final, Literal, Optional
 
 import numpy as np
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 try:
     import nidaqmx
@@ -318,11 +319,16 @@ class EsnRuntime:
             expected = getattr(self.streamer, "chunk_size", config.chunk_size)
             if expected != config.chunk_size:
                 raise ValueError(f"artifact chunk_size={expected}, app chunk_size={config.chunk_size}")
-            # Validate the public contract without advancing the live instance.
-            probe = load_artifact(str(artifact))
-            output = np.asarray(probe.process_chunk(np.zeros((2, config.chunk_size)), ctx_index=config.ctx_index))
+            # Validate and warm the live instance before acquisition/watchdog
+            # startup.  ReservoirPy's first call can perform several seconds of
+            # lazy initialization; warming only a disposable probe leaves that
+            # delay in the real-time path.
+            output = np.asarray(
+                self.streamer.process_chunk(np.zeros((2, config.chunk_size)), ctx_index=config.ctx_index)
+            )
             if output.shape != (1, config.chunk_size) or not np.all(np.isfinite(output)):
                 raise ValueError(f"ESN self-test returned invalid output {output.shape}")
+            self.streamer.reset()
             self.streamer.configure(stim_mode="passthrough", stim_gain=1.0)
             LOG.info("ESN artifact loaded and passed startup self-test")
         except Exception as exc:
@@ -573,6 +579,10 @@ class ProcessingCore:
         self.ui_ao: list[np.ndarray] = []
         self.last_ui_ns = time.perf_counter_ns()
         self._last_esn_config: Optional[tuple[str, float]] = None
+        # ESN/filter state belongs exclusively to the DAQ thread.  UI commands
+        # only change RuntimeState; transitions are applied here at a block
+        # boundary so reset() can never race process_chunk().
+        self._active_mode = "control"
 
     def process(self, all_ai: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, Optional[str]]:
         block_start = time.perf_counter_ns()
@@ -583,6 +593,12 @@ class ProcessingCore:
         raw = np.zeros((1, self.config.chunk_size), dtype=np.float64)
         esn_ms = 0.0
         safety_reason: Optional[str] = None
+
+        if snapshot.mode != self._active_mode:
+            self.esn.reset()
+            self.safety.reset()
+            self._last_esn_config = None
+            self._active_mode = snapshot.mode
 
         if snapshot.mode == "closed-loop":
             desired_config = (snapshot.stim_mode, snapshot.stim_gain)
@@ -743,6 +759,11 @@ class RealDaq(BaseDaq):
                         # stale samples.
                         safe = np.zeros((1, self.config.chunk_size), dtype=np.float64)
                         esn_ms = 0.0
+                    # A Control/fault request can arrive after ProcessingCore
+                    # took its block snapshot.  Never write a command computed
+                    # under a stale closed-loop snapshot.
+                    if self.state.snapshot().mode != "closed-loop":
+                        safe = np.zeros_like(safe)
                     write_started = time.perf_counter_ns()
                     writer.write_many_sample(safe.reshape(-1), timeout=1.0)
                     ao_ms = (time.perf_counter_ns() - write_started) / 1e6
@@ -796,6 +817,8 @@ class MockDaq(BaseDaq):
             if self.overload_ms:
                 time.sleep(self.overload_ms / 1_000)
             _, safe, esn_ms, _ = self.core.process(ai)
+            if self.state.snapshot().mode != "closed-loop":
+                safe = np.zeros_like(safe)
             self.last_command = safe
             block_ms = (time.perf_counter_ns() - block_started) / 1e6
             self.telemetry.update_block(
@@ -856,7 +879,7 @@ def serializable_config(config: AppConfig) -> dict[str, Any]:
 
 
 async def websocket_handler(websocket: Any, state: RuntimeState, recorder: BinaryRecorder,
-                            esn: EsnRuntime, hub: UiHub) -> None:
+                            hub: UiHub, shutdown: asyncio.Event) -> None:
     client_queue = hub.subscribe()
     LOG.info("UI client connected")
 
@@ -880,15 +903,21 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: Binar
                     state.set_mode("control")
                     state.set_acquiring(False)
                 elif name == "set_mode":
-                    changed = state.set_mode(str(command.get("mode", "")))
-                    if changed:
-                        esn.reset()
+                    state.set_mode(str(command.get("mode", "")))
                 elif name == "set_stim":
                     stim_mode = str(command.get("stim_mode", state.snapshot().stim_mode))
                     gain = float(command.get("stim_gain", state.snapshot().stim_gain))
                     state.set_stim(stim_mode, gain)
                 elif name == "clear_fault":
                     state.clear_fault()
+                elif name == "shutdown":
+                    # Enter the safe state before asking main() to tear down the
+                    # DAQ tasks, recorder, and WebSocket server.
+                    state.set_mode("control")
+                    state.set_acquiring(False)
+                    state.set_recording(False)
+                    await asyncio.to_thread(recorder.stop_recording)
+                    shutdown.set()
                 else:
                     raise ValueError(f"unknown command: {name}")
                 response = {"type": "command_result", "command": name, "ok": True}
@@ -910,7 +939,7 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: Binar
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)
         for task in done:
-            with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+            with contextlib.suppress(ConnectionClosed):
                 task.result()
     finally:
         hub.unsubscribe(client_queue)
@@ -1002,8 +1031,9 @@ async def main() -> int:
     daq_thread.start()
     watchdog.start()
 
+    shutdown = asyncio.Event()
     server = await websockets.serve(
-        lambda websocket: websocket_handler(websocket, state, recorder, esn, hub),
+        lambda websocket: websocket_handler(websocket, state, recorder, hub, shutdown),
         config.ws_host,
         config.ws_port,
     )
@@ -1011,7 +1041,6 @@ async def main() -> int:
     if config.open_browser:
         webbrowser.open((BASE_DIR / "index.html").as_uri())
 
-    shutdown = asyncio.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, shutdown.set)
