@@ -1,12 +1,14 @@
-numpy
-matplotlib
-websockets
+# Echo Chamber and HDF5 recording reader (Python 3.9+)
+numpy==1.26.4
+h5py==3.14.0
+matplotlib==3.9.4
+websockets==15.0.1
 
-# ESN runtime (required for closed-loop ESN)
-scipy
-scikit-learn
+# Frozen collaborator ESN runtime
+scipy==1.13.1
+scikit-learn==1.6.1
 reservoirpy==0.3.11
-mat73
+mat73==0.65
 
-# Hardware
-nidaqmx
+# National Instruments acquisition (Python package; NI-DAQmx driver is separate)
+nidaqmx==1.4.1

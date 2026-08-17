@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Echo Chamber</title>
-    <link rel="icon" type="image/png" href="echoChamberLogo.png">
+    <link rel="icon" type="image/png" href="assets/echoChamberLogo.png">
     <!-- uPlot CSS and JS -->
     <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
     <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
@@ -59,10 +59,9 @@
 
         .brand-logo {
             display: block;
-            width: 100%;
-            height: 100%;
+            width: auto;
+            height: 10dvh;
             object-fit: contain;
-            object-position: center bottom;
         }
 
 
@@ -137,17 +136,49 @@
             font-weight: 600;
         }
 
-        select, input[type="range"] {
+        select, input[type="range"], input[type="text"] {
             width: 100%;
+        }
+
+        input[type="text"] {
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            border: 1px solid var(--border);
+            padding: 0.55rem;
+            border-radius: 6px;
+            font-family: inherit;
+        }
+
+        input[type="text"]::placeholder {
+            color: #64748b;
+        }
+
+        .filename-hint {
+            color: #64748b;
+            font-size: 10px;
+            line-height: 1.35;
         }
 
         select {
             background: rgba(255, 255, 255, 0.05);
             color: white;
+            color-scheme: dark;
             border: 1px solid var(--border);
             padding: 0.5rem;
             border-radius: 6px;
             font-weight: 600;
+        }
+
+        /* Chromium on Windows may otherwise use white native-menu colours. */
+        select option {
+            background-color: #111827;
+            color: #f8fafc;
+        }
+
+        select option:checked,
+        select option:hover {
+            background-color: #1d4ed8;
+            color: #ffffff;
         }
 
         button {
@@ -232,7 +263,7 @@
 <body>
 
     <div class="header">
-        <h1>The Echo Chamber</h1>        
+        <img class="brand-logo" src="assets/echoChamberLogo.png" alt="The Echo Chamber">
         <span id="status" class="status-badge disconnected">Disconnected</span>
     </div>
 
@@ -240,6 +271,9 @@
         <div class="controls">
             <div class="controls-group">
                 <label>Recording</label>
+                <input id="recording-filename" type="text" maxlength="80"
+                       autocomplete="off" spellcheck="false" placeholder="Optional filename">
+                <div class="filename-hint">Saved as YYYYMMDD_HHMMSS_NAME.h5</div>
                 <button id="btn-rec" onclick="toggleRecording()">Start Recording</button>
             </div>
 
@@ -250,20 +284,43 @@
             </div>
 
             <div class="controls-group">
+                <label>Cortex input</label>
+                <select id="cortex-channel" onchange="setCortexChannel()">
+                    <option value="ai0">AI0</option>
+                    <option value="ai1" selected>AI1</option>
+                </select>
+            </div>
+
+            <div class="controls-group">
                 <label>Stimulation (Closed-Loop)</label>
                 <select id="stim-mode" onchange="setStim()">
                     <option value="off">Off</option>
                     <option value="passthrough" selected>ESN Passthrough</option>
                     <option value="threshold_pulse">ESN Threshold Pulse</option>
                 </select>
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
+                Stim gain
+            </div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
-                    <input id="stim-gain" type="range" min="0" max="10" step="0.1" value="1.0" oninput="setStim(true)" />
-                    <div style="width: 52px; text-align:right; font-size: 12px;" id="stim-gain-label">1.0V</div>
+                    <input id="stim-gain" type="range" min="0" max="10" step="0.001" value="1.0" oninput="setStim(true)" />
+                    <div style="width: 64px; text-align:right; font-size: 12px;" id="stim-gain-label">×1.000</div>
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
+                Noise threshold for pulse generation
+            </div>
+                <div style="display:flex; gap: 0.5rem; align-items:center;">
+                    <input id="pulse-threshold" type="range" min="0.1" max="10" step="0.1" value="1.0" oninput="setPulseThreshold()" />
+                    <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-threshold-label">1.0 SD</div>
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
+                Noise calculation window
+            </div>
+                <div style="display:flex; gap: 0.5rem; align-items:center;">
+                    <input id="pulse-window" type="range" min="1" max="60" step="1" value="10" oninput="setPulseWindow()" />
+                    <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-window-label">10 s</div>
                 </div>
             </div>
-<div class="brand">
-            <img class="brand-logo" src="echoChamberLogo.png" alt="The Echo Chamber">
-        </div>
+
             
             <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="fs-info">
                 Waiting for stream info...
@@ -304,9 +361,20 @@
             };
         }
 
-        uplotAi0 = new uPlot(makeOpts("CA3 (AI0)", "#3b82f6"), [[], []], document.getElementById("chart-ai0"));
-        uplotAi1 = new uPlot(makeOpts("Cortex (AI1)", "#10b981"), [[], []], document.getElementById("chart-ai1"));
-        uplotAo0 = new uPlot(makeOpts("Stimulation (AO0)", "#ef4444"), [[], []], document.getElementById("chart-ao0"));
+        uplotAi0 = new uPlot(makeOpts("CA3 (AI0, mV)", "#3b82f6"), [[], []], document.getElementById("chart-ai0"));
+        uplotAi1 = new uPlot(makeOpts("Cortex (AI1, mV)", "#10b981"), [[], []], document.getElementById("chart-ai1"));
+        function makeAoOpts() {
+            const opts = makeOpts("Stimulation (AO0, V)", "#ef4444");
+            opts.series = [
+                {},
+                { label: "Passthrough preview", stroke: "rgba(148, 163, 184, 0.8)", width: 1 },
+                { label: "Pulse threshold", stroke: "rgba(203, 213, 225, 0.9)", width: 1, dash: [6, 4] },
+                { label: "AO command", stroke: "#ef4444", width: 2 },
+            ];
+            return opts;
+        }
+
+        uplotAo0 = new uPlot(makeAoOpts(), [[], [], [], []], document.getElementById("chart-ao0"));
 
         function resizeCharts() {
             let boxes = [
@@ -336,6 +404,8 @@
         let ai0Array = [];
         let ai1Array = [];
         let ao0Array = [];
+        let previewArray = [];
+        let thresholdArray = [];
         let totalSamplesReceived = 0;
 
         // UI STATE
@@ -343,6 +413,9 @@
         let currentMode = 'control';
         let stimMode = 'passthrough';
         let stimGain = 1.0;
+        let pulseThresholdStd = 1.0;
+        let pulseWindowSec = 10.0;
+        let cortexAi = 'ai1';
         let shutdownRequested = false;
 
         // --- WEBSOCKETS ---
@@ -363,6 +436,11 @@
                 if (shutdownRequested) {
                     badge.textContent = "STOPPED";
                     badge.className = "status-badge disconnected";
+                    const button = document.getElementById("btn-stop-app");
+                    button.textContent = "Stopped";
+                    // The server is deliberately gone, so leaving this
+                    // disabled avoids presenting a control that cannot act.
+                    button.disabled = true;
                     return;
                 }
                 badge.textContent = "DISCONNECTED";
@@ -375,7 +453,14 @@
                     let msg = JSON.parse(e.data);
 
                     if (msg.type === "command_result") {
-                        if (!msg.ok) console.error("Command rejected:", msg.error);
+                        if (!msg.ok) {
+                            console.error("Command rejected:", msg.error);
+                            if (msg.command === "start_recording") {
+                                isRecording = false;
+                                updateButtonsVisually();
+                            }
+                            window.alert(msg.error);
+                        }
                         return;
                     }
 
@@ -384,6 +469,14 @@
                     currentMode = msg.mode;
                     if (msg.stim_mode) stimMode = msg.stim_mode;
                     if (typeof msg.stim_gain === "number") stimGain = msg.stim_gain;
+                    if (typeof msg.pulse_threshold_std === "number") pulseThresholdStd = msg.pulse_threshold_std;
+                    if (typeof msg.pulse_window_sec === "number") pulseWindowSec = msg.pulse_window_sec;
+                    if (msg.cortex_ai === "ai0" || msg.cortex_ai === "ai1") cortexAi = msg.cortex_ai;
+                    if (Array.isArray(msg.channels) && msg.channels.length === 2) {
+                        const aiUnit = msg.ai_unit || "mV";
+                        uplotAi0.root.querySelector('.u-title').textContent = `${msg.channels[0]} (AI0) — ${aiUnit}`;
+                        uplotAi1.root.querySelector('.u-title').textContent = `${msg.channels[1]} (AI1) — ${aiUnit}`;
+                    }
                     updateButtonsVisually();
 
                     if (msg.fs) {
@@ -394,6 +487,8 @@
                     let ai0 = msg.ai[0];
                     let ai1 = msg.ai[1];
                     let ao0 = msg.ao[0];
+                    let preview = (msg.passthrough_preview || [[]])[0];
+                    let threshold = (msg.pulse_threshold_preview || [[]])[0];
                     let numPoints = ai0.length;
                     if (!numPoints) return;
 
@@ -402,6 +497,8 @@
                         ai0Array.push(ai0[i]);
                         ai1Array.push(ai1[i]);
                         ao0Array.push(ao0[i]);
+                        previewArray.push(preview[i] ?? null);
+                        thresholdArray.push(threshold[i] ?? null);
                     }
                     totalSamplesReceived += numPoints;
 
@@ -412,12 +509,14 @@
                         ai0Array = ai0Array.slice(-maxP);
                         ai1Array = ai1Array.slice(-maxP);
                         ao0Array = ao0Array.slice(-maxP);
+                        previewArray = previewArray.slice(-maxP);
+                        thresholdArray = thresholdArray.slice(-maxP);
                     }
 
                     // Plot immediately directly from standard JS arrays
                     uplotAi0.setData([tArray, ai0Array]);
                     uplotAi1.setData([tArray, ai1Array]);
-                    uplotAo0.setData([tArray, ao0Array]);
+                    uplotAo0.setData([tArray, previewArray, thresholdArray, ao0Array]);
 
                 } catch (err) {
                     console.error("RX Err:", err);
@@ -432,13 +531,28 @@
             let stimModeSel = document.getElementById('stim-mode');
             let stimGainSlider = document.getElementById('stim-gain');
             let stimGainLabel = document.getElementById('stim-gain-label');
+            let pulseThreshold = document.getElementById('pulse-threshold');
+            let pulseThresholdLabel = document.getElementById('pulse-threshold-label');
+            let pulseWindow = document.getElementById('pulse-window');
+            let pulseWindowLabel = document.getElementById('pulse-window-label');
+            let cortexChannel = document.getElementById('cortex-channel');
+            let recordingFilename = document.getElementById('recording-filename');
 
             btnCtrl.className = currentMode === 'control' ? 'active mode-ctrl' : '';
             btnLoop.className = currentMode === 'closed-loop' ? 'active mode-loop' : '';
 
             if (stimModeSel) stimModeSel.value = stimMode;
             if (stimGainSlider) stimGainSlider.value = stimGain;
-            if (stimGainLabel) stimGainLabel.textContent = `${Number(stimGain).toFixed(1)}V`;
+            if (stimGainLabel) stimGainLabel.textContent = `×${Number(stimGain).toFixed(3)}`;
+            if (pulseThreshold) pulseThreshold.value = pulseThresholdStd;
+            if (pulseThresholdLabel) pulseThresholdLabel.textContent = `${Number(pulseThresholdStd).toFixed(1)} SD`;
+            if (pulseWindow) pulseWindow.value = pulseWindowSec;
+            if (pulseWindowLabel) pulseWindowLabel.textContent = `${Number(pulseWindowSec).toFixed(0)} s`;
+            if (cortexChannel) {
+                cortexChannel.value = cortexAi;
+                cortexChannel.disabled = isRecording;
+            }
+            if (recordingFilename) recordingFilename.disabled = isRecording;
 
             if (isRecording) {
                 btnRec.className = 'active rec-on';
@@ -463,7 +577,11 @@
             updateButtonsVisually();
             if (ws && ws.readyState === WebSocket.OPEN) {
                 let cmd = isRecording ? 'start_recording' : 'stop_recording';
-                ws.send(JSON.stringify({ command: cmd }));
+                let payload = { command: cmd };
+                if (isRecording) {
+                    payload.filename = document.getElementById('recording-filename').value;
+                }
+                ws.send(JSON.stringify(payload));
             }
         }
 
@@ -477,6 +595,29 @@
             // For slider live updates, throttle-ish: send on input too
             if (isLive && ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ command: 'set_stim', stim_mode: stimMode, stim_gain: stimGain }));
+            }
+        }
+
+        function setCortexChannel() {
+            cortexAi = document.getElementById('cortex-channel').value;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_cortex_channel', channel: cortexAi }));
+            }
+        }
+
+        function setPulseThreshold() {
+            pulseThresholdStd = parseFloat(document.getElementById('pulse-threshold').value);
+            document.getElementById('pulse-threshold-label').textContent = `${pulseThresholdStd.toFixed(1)} SD`;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_pulse_threshold', pulse_threshold_std: pulseThresholdStd }));
+            }
+        }
+
+        function setPulseWindow() {
+            pulseWindowSec = parseFloat(document.getElementById('pulse-window').value);
+            document.getElementById('pulse-window-label').textContent = `${pulseWindowSec.toFixed(0)} s`;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_pulse_window', pulse_window_sec: pulseWindowSec }));
             }
         }
 

@@ -1,0 +1,24 @@
+# Operating-system and editor files
+.DS_Store
+.vscode/
+
+# Python-generated files and environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+
+# Recorded experimental data and incomplete writes
+recordings/
+*.h5.partial
+
+# Local logs and generated plots
+*.log
+echo-plot.png

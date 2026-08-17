@@ -1,23 +1,15 @@
-"""Fail-safe closed-loop LFP acquisition for the Echo Chamber.
+"""The Echo Chamber
 
+Main script.
 This module intentionally treats ``esn`` as a read-only black box.  It adds the
-hardware, safety, recording, monitoring, and test boundaries that are missing
-from the original prototype in ``closed_loop.py``.
+hardware, safety, recording, monitoring, and test boundaries around it.
 
 Recording format
 ----------------
-Each recording has a JSON metadata sidecar and a ``.npyseq`` data file.  The
-data file is a sequence of ordinary, non-pickled NumPy arrays.  Read it with::
-
-    with open(path, "rb") as stream:
-        while True:
-            try:
-                block = np.load(stream, allow_pickle=False)
-            except (EOFError, ValueError):
-                break
-
-Rows are documented in the metadata file.  This keeps the runtime dependency
-free while retaining chunked binary writes and exact sample indices.
+Each recording is one portable HDF5 file containing compressed ``float32`` AI
+and AO signals, calibration metadata, block-rate diagnostics, and sparse event
+tables. Writes are batched on a dedicated thread so file I/O never runs in the
+acquisition path.
 """
 
 from __future__ import annotations
@@ -32,7 +24,9 @@ import logging
 import math
 import os
 import queue
+import re
 import signal
+import sys
 import threading
 import time
 import traceback
@@ -40,8 +34,21 @@ import webbrowser
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Final, Literal, Optional
+from typing import Any, Final, Optional
 
+# The runtime ESN consists of very small matrix operations.  Allowing a BLAS
+# library to create a worker pool for them is slower than one thread and can
+# starve the NI AO scheduler.  These must be set before NumPy/SciPy load.
+for _thread_env in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ[_thread_env] = "1"
+
+import h5py
 import numpy as np
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -67,22 +74,48 @@ except (ImportError, OSError):
 LOG = logging.getLogger("echoChamber")
 BASE_DIR: Final = Path(__file__).resolve().parent
 ESN_ARTIFACT: Final = BASE_DIR / "esn_artifact.pkl"
+DEFAULT_MOCK_REPLAY: Final = BASE_DIR / "sample" / "test_AI0_CA3_AI1_CTX.h5"
+H5_FORMAT_TAG: Final = "echoChamber_H5_v3"
 VALID_MODES: Final = {"control", "closed-loop"}
 VALID_STIM_MODES: Final = {"off", "passthrough", "threshold_pulse"}
+RECORDED_MODE_VALUES: Final = {
+    ("control", "off"): 0.0,
+    ("control", "passthrough"): 0.0,
+    ("control", "threshold_pulse"): 0.0,
+    ("closed-loop", "off"): 1.0,
+    ("closed-loop", "passthrough"): 2.0,
+    ("closed-loop", "threshold_pulse"): 3.0,
+}
+
+# Scope/dummy-load tests only. Set this back to False before connecting AO to
+# an isolator, electrode, or any biological preparation.
+DRY_TEST_ALLOW_SUSTAINED_AO = False
+# Removes the ESN prediction's DC baseline before passthrough gain/AO. Set to
+# 0.0 only to compare the raw model output on a scope.
+DEFAULT_PASSTHROUGH_DC_BLOCK_HZ = 0.5
+# Pulse fires when the ESN output peak exceeds its recent mean by this many
+# standard deviations. Scope-testing default; validate before stimulation.
+DEFAULT_PULSE_THRESHOLD_STD = 3.0
+# Length of the rolling ESN-output baseline used by threshold-pulse mode.
+# It is collected continuously in all closed-loop stimulation modes.
+DEFAULT_PULSE_WINDOW_SEC = 10.0
 
 
 @dataclass(frozen=True)
 class SafetyConfig:
     """Independent limits applied after the unmodified ESN runtime."""
+# These parameters should work with the ISO-Flex stimulus isolator
+# This should be for pulse-only mode, for now.
 
-    max_command_v: float = 1.0
-    max_slew_v_per_s: float = 2_000.0
-    max_abs_area_v_s: float = 0.010
-    area_window_s: float = 1.0
-    max_active_fraction: float = 0.25
-    active_threshold_v: float = 1e-3
-    max_consecutive_active_s: float = 0.100
+    max_command_v: float = 5.0
+    max_slew_v_per_s: float = 2_000.0 # Not needed for pulse only
+    max_abs_area_v_s: float = 0.010 # Not needed for pulse only
+    area_window_s: float = 1.0 
+    max_active_fraction: float = 0.10
+    active_threshold_v: float = 3.5 # Value specific for the ISO-Flex
+    max_consecutive_active_s: float = 0.050
     isolator_command_v_per_output_unit: Optional[float] = None
+    allow_sustained_output_for_dry_test: bool = False
 
     def validate(self) -> None:
         positive = {
@@ -108,24 +141,32 @@ class AppConfig:
     ai_channels: tuple[str, str] = ("ai0", "ai1")
     ao_channel: str = "ao0"
     electrode_labels: tuple[str, str] = ("CA3", "Cortex")
-    lfp_units_per_volt: tuple[float, float] = (1.0, 1.0)
-    lfp_unit_label: str = "unscaled_V"
+    # MultiClamp Primary Output voltage gain (output mV / electrode mV).
+    # Electrode-referred input is therefore DAQ_V * 1000 / gain, in mV.
+    amplifier_gain: tuple[float, float] = (10.0, 10.0)
+    # AO remains a voltage command. This maps one numeric ESN output unit
+    # (currently assumed to be mV) to NI AO volts before the UI stim gain.
+    ao_command_gain_v_per_esn_unit: float = 1.0
     ctx_index: int = 1
     sample_rate: int = 20_000
-    chunk_size: int = 100
-    ao_lead_chunks: int = 4
+    processing_block_ms: float = 10.0
+    ao_target_lead_ms: float = 100.0
+    passthrough_dc_block_hz: float = DEFAULT_PASSTHROUGH_DC_BLOCK_HZ
+    pulse_threshold_std: float = DEFAULT_PULSE_THRESHOLD_STD
+    pulse_window_sec: float = DEFAULT_PULSE_WINDOW_SEC
     ai_min_v: float = -10.0
     ai_max_v: float = 10.0
-    terminal_config: str = "DIFFERENTIAL"
-    visual_downsample: int = 100
+    terminal_config: str = "RSE"
+    visual_downsample: int = 2
     ui_interval_s: float = 0.1
     ws_host: str = "127.0.0.1"
     ws_port: int = 8765
     record_dir: Path = BASE_DIR / "recordings"
     logger_queue_blocks: int = 2_000
+    recorder_batch_s: float = 0.25
+    recorder_flush_s: float = 1.0
     ui_queue_packets: int = 1
     watchdog_timeout_s: float = 0.250
-    mock_seed: int = 7
     mock_replay: Optional[Path] = None
     actual_stim_monitor_channel: Optional[str] = None
     start_paused: bool = False
@@ -143,28 +184,69 @@ class AppConfig:
     def physical_ao_channel(self) -> str:
         return self._physical(self.ao_channel)
 
+    @property
+    def chunk_size(self) -> int:
+        return int(round(self.sample_rate * self.processing_block_ms / 1_000.0))
+
+    @property
+    def ao_lead_samples(self) -> int:
+        return int(round(self.sample_rate * self.ao_target_lead_ms / 1_000.0))
+
+    @property
+    def ao_lead_chunks(self) -> int:
+        return self.ao_lead_samples // self.chunk_size
+
+    @property
+    def ao_deadline_samples(self) -> int:
+        """Derived safe-command deadline; not an experiment setting."""
+        return max(2 * self.chunk_size, self.ao_lead_samples // 2)
+
     def _physical(self, channel: str) -> str:
         return channel if "/" in channel else f"{self.device}/{channel}"
 
     def validate(self) -> None:
         if len(self.ai_channels) != 2 or len(set(self.ai_channels)) != 2:
             raise ValueError("exactly two distinct LFP AI channels are required")
-        if len(self.lfp_units_per_volt) != 2 or not all(
-            math.isfinite(value) and value > 0 for value in self.lfp_units_per_volt
+        if len(self.amplifier_gain) != 2 or not all(
+            math.isfinite(value) and value > 0 for value in self.amplifier_gain
         ):
-            raise ValueError("two finite positive LFP scaling factors are required")
+            raise ValueError("two finite positive amplifier gains are required")
+        if not math.isfinite(self.ao_command_gain_v_per_esn_unit) or self.ao_command_gain_v_per_esn_unit <= 0:
+            raise ValueError("AO command gain must be finite and positive")
         if self.ctx_index not in (0, 1):
             raise ValueError("ctx_index must be 0 or 1")
-        if self.sample_rate <= 0 or self.chunk_size <= 0:
-            raise ValueError("sample rate and chunk size must be positive")
-        if self.ao_lead_chunks < 2:
-            raise ValueError("ao_lead_chunks must be at least 2")
+        if self.sample_rate <= 0:
+            raise ValueError("sample rate must be positive")
+        if not math.isfinite(self.processing_block_ms) or self.processing_block_ms <= 0:
+            raise ValueError("processing_block_ms must be finite and positive")
+        exact_chunk_samples = self.sample_rate * self.processing_block_ms / 1_000.0
+        if not math.isclose(exact_chunk_samples, round(exact_chunk_samples)):
+            raise ValueError("processing_block_ms must resolve to a whole number of samples")
+        if not math.isfinite(self.ao_target_lead_ms) or self.ao_target_lead_ms <= 0:
+            raise ValueError("ao_target_lead_ms must be finite and positive")
+        exact_lead_samples = self.sample_rate * self.ao_target_lead_ms / 1_000.0
+        if not math.isclose(exact_lead_samples, round(exact_lead_samples)):
+            raise ValueError("ao_target_lead_ms must resolve to a whole number of samples")
+        if self.ao_lead_samples % self.chunk_size:
+            raise ValueError("AO target lead must resolve to a whole number of processing chunks")
+        if self.ao_lead_chunks < 4:
+            raise ValueError("AO target lead must contain at least four processing chunks")
+        if self.passthrough_dc_block_hz < 0:
+            raise ValueError("passthrough_dc_block_hz must be non-negative")
+        if not math.isfinite(self.pulse_threshold_std) or self.pulse_threshold_std <= 0:
+            raise ValueError("pulse_threshold_std must be finite and positive")
+        if not math.isfinite(self.pulse_window_sec) or self.pulse_window_sec < 1:
+            raise ValueError("pulse_window_sec must be finite and at least one second")
         if self.sample_rate % 2_000 or self.chunk_size % (self.sample_rate // 2_000):
             raise ValueError("configuration is incompatible with the fixed ESN runtime")
         if self.ai_min_v >= self.ai_max_v:
             raise ValueError("invalid AI range")
         if self.visual_downsample <= 0 or self.logger_queue_blocks <= 0:
             raise ValueError("queue and downsample values must be positive")
+        if not math.isfinite(self.recorder_batch_s) or self.recorder_batch_s <= 0:
+            raise ValueError("recorder_batch_s must be finite and positive")
+        if not math.isfinite(self.recorder_flush_s) or self.recorder_flush_s <= 0:
+            raise ValueError("recorder_flush_s must be finite and positive")
         self.safety.validate()
 
 
@@ -176,12 +258,18 @@ class StateSnapshot:
     mode: str
     stim_mode: str
     stim_gain: float
+    pulse_threshold_std: float
+    pulse_window_sec: float
     fault: Optional[str]
     esn_ready: bool
+    electrode_labels: tuple[str, str]
+    ctx_index: int
 
 
 class RuntimeState:
-    def __init__(self, *, esn_ready: bool, start_paused: bool) -> None:
+    def __init__(self, *, esn_ready: bool, start_paused: bool,
+                 electrode_labels: tuple[str, str], ctx_index: int,
+                 pulse_threshold_std: float, pulse_window_sec: float) -> None:
         self._lock = threading.RLock()
         self._running = True
         self._acquiring = not start_paused
@@ -189,8 +277,12 @@ class RuntimeState:
         self._mode = "control"
         self._stim_mode = "passthrough"
         self._stim_gain = 1.0
+        self._pulse_threshold_std = pulse_threshold_std
+        self._pulse_window_sec = pulse_window_sec
         self._fault: Optional[str] = None
         self._esn_ready = esn_ready
+        self._electrode_labels = electrode_labels
+        self._ctx_index = ctx_index
 
     def snapshot(self) -> StateSnapshot:
         with self._lock:
@@ -201,8 +293,12 @@ class RuntimeState:
                 self._mode,
                 self._stim_mode,
                 self._stim_gain,
+                self._pulse_threshold_std,
+                self._pulse_window_sec,
                 self._fault,
                 self._esn_ready,
+                self._electrode_labels,
+                self._ctx_index,
             )
 
     def stop(self) -> None:
@@ -241,6 +337,29 @@ class RuntimeState:
         with self._lock:
             self._stim_mode = stim_mode
             self._stim_gain = float(gain)
+
+    def set_pulse_threshold_std(self, value: float) -> None:
+        if not math.isfinite(value) or not 0 < value <= 20:
+            raise ValueError("pulse threshold must be finite and in (0, 20] standard deviations")
+        with self._lock:
+            self._pulse_threshold_std = float(value)
+
+    def set_pulse_window_sec(self, value: float) -> None:
+        if not math.isfinite(value) or not 1 <= value <= 120:
+            raise ValueError("pulse baseline window must be finite and between 1 and 120 seconds")
+        with self._lock:
+            self._pulse_window_sec = float(value)
+
+    def set_cortex_channel(self, channel: str) -> tuple[str, str]:
+        """Assign Cortex/CA3 to physical AI0/AI1 before recording begins."""
+        if channel not in {"ai0", "ai1"}:
+            raise ValueError("Cortex channel must be ai0 or ai1")
+        with self._lock:
+            if self._recording:
+                raise ValueError("stop recording before changing the Cortex/CA3 channel assignment")
+            self._ctx_index = 0 if channel == "ai0" else 1
+            self._electrode_labels = ("Cortex", "CA3") if self._ctx_index == 0 else ("CA3", "Cortex")
+            return self._electrode_labels
 
     def fault(self, message: str) -> None:
         with self._lock:
@@ -307,28 +426,60 @@ class Telemetry:
 
 
 class EsnRuntime:
-    """The only boundary that calls collaborator-owned ESN code."""
+    """The only boundary that calls ESN code."""
 
     def __init__(self, artifact: Path, config: AppConfig) -> None:
         self.streamer: Any = None
         self.error: Optional[str] = None
         try:
-            from esn import load_artifact
+            from esn_bridge import EchoChamberEsnBridge
 
-            self.streamer = load_artifact(str(artifact))
-            expected = getattr(self.streamer, "chunk_size", config.chunk_size)
+            self.streamer = EchoChamberEsnBridge.load(
+                artifact,
+                runtime_chunk_size=config.chunk_size,
+                sample_rate=config.sample_rate,
+                passthrough_dc_block_hz=config.passthrough_dc_block_hz,
+                pulse_threshold_std=config.pulse_threshold_std,
+                pulse_window_sec=config.pulse_window_sec,
+                ao_command_gain_v_per_esn_unit=config.ao_command_gain_v_per_esn_unit,
+            )
+            expected = self.streamer.preferred_chunk_size
             if expected != config.chunk_size:
-                raise ValueError(f"artifact chunk_size={expected}, app chunk_size={config.chunk_size}")
+                LOG.info(
+                    "ESN bridge adapting artifact chunk_size=%d to runtime chunk_size=%d",
+                    expected,
+                    config.chunk_size,
+                )
             # Validate and warm the live instance before acquisition/watchdog
             # startup.  ReservoirPy's first call can perform several seconds of
             # lazy initialization; warming only a disposable probe leaves that
             # delay in the real-time path.
             output = np.asarray(
-                self.streamer.process_chunk(np.zeros((2, config.chunk_size)), ctx_index=config.ctx_index)
+                self.streamer.process(np.zeros((2, config.chunk_size)), ctx_index=config.ctx_index)
             )
             if output.shape != (1, config.chunk_size) or not np.all(np.isfinite(output)):
                 raise ValueError(f"ESN self-test returned invalid output {output.shape}")
             self.streamer.reset()
+            # Measure the live artifact, rather than guessing from its model
+            # size.  This is run only at startup and state is reset afterward.
+            probe = np.zeros((2, config.chunk_size), dtype=np.float64)
+            timings_ms: list[float] = []
+            for _ in range(20):
+                started = time.perf_counter_ns()
+                self.streamer.process(probe, ctx_index=config.ctx_index)
+                timings_ms.append((time.perf_counter_ns() - started) / 1e6)
+            self.streamer.reset()
+            deadline_ms = 1_000 * config.chunk_size / config.sample_rate
+            LOG.info(
+                "ESN timing benchmark: median=%.3f ms, p95=%.3f ms, block deadline=%.3f ms",
+                float(np.median(timings_ms)), float(np.percentile(timings_ms, 95)), deadline_ms,
+            )
+            LOG.info("Pulse threshold configured at %.3f SD above a %.1f s rolling baseline", config.pulse_threshold_std, config.pulse_window_sec)
+            if float(np.percentile(timings_ms, 95)) >= deadline_ms:
+                LOG.warning(
+                    "ESN timing benchmark exceeds the %.3f ms block deadline; "
+                    "closed-loop output is not sustainable at this chunk size", deadline_ms,
+                )
             self.streamer.configure(stim_mode="passthrough", stim_gain=1.0)
             LOG.info("ESN artifact loaded and passed startup self-test")
         except Exception as exc:
@@ -340,10 +491,16 @@ class EsnRuntime:
     def ready(self) -> bool:
         return self.streamer is not None
 
-    def configure(self, stim_mode: str, gain: float) -> None:
+    def configure(self, stim_mode: str, gain: float, pulse_threshold_std: float | None = None,
+                  pulse_window_sec: float | None = None) -> None:
         if not self.streamer:
             raise RuntimeError(self.error or "ESN unavailable")
-        self.streamer.configure(stim_mode=stim_mode, stim_gain=gain)
+        self.streamer.configure(
+            stim_mode=stim_mode,
+            stim_gain=gain,
+            pulse_threshold_std=pulse_threshold_std,
+            pulse_window_sec=pulse_window_sec,
+        )
 
     def reset(self) -> None:
         if self.streamer:
@@ -352,10 +509,16 @@ class EsnRuntime:
     def process(self, data: np.ndarray, ctx_index: int) -> np.ndarray:
         if not self.streamer:
             raise RuntimeError(self.error or "ESN unavailable")
-        output = np.asarray(self.streamer.process_chunk(data, ctx_index=ctx_index), dtype=np.float64)
+        output = np.asarray(self.streamer.process(data, ctx_index=ctx_index), dtype=np.float64)
         if output.shape != (1, data.shape[1]):
             raise ValueError(f"ESN returned {output.shape}, expected {(1, data.shape[1])}")
         return output
+
+    def diagnostics(self, samples: int) -> tuple[np.ndarray, float, float, bool]:
+        """Return pre-stimulation model output and pulse-decision metrics."""
+        if not self.streamer:
+            return np.zeros((1, samples)), float("nan"), float("nan"), False
+        return self.streamer.diagnostics(samples)
 
 
 class StimulusSafetyAdapter:
@@ -398,14 +561,15 @@ class StimulusSafetyAdapter:
             self.active_history.append(active)
             self.consecutive_active = self.consecutive_active + 1 if active else 0
 
-        if abs(sum(self.area_history)) > self.config.max_abs_area_v_s:
-            return self._trip(safe.size, "net command area limit exceeded")
-        if len(self.active_history) == self.active_history.maxlen and (
-            sum(self.active_history) / len(self.active_history) > self.config.max_active_fraction
-        ):
-            return self._trip(safe.size, "stimulation duty-cycle limit exceeded")
-        if self.consecutive_active > int(self.config.max_consecutive_active_s * self.sample_rate):
-            return self._trip(safe.size, "continuous stimulation limit exceeded")
+        if not self.config.allow_sustained_output_for_dry_test:
+            if abs(sum(self.area_history)) > self.config.max_abs_area_v_s:
+                return self._trip(safe.size, "net command area limit exceeded")
+            if len(self.active_history) == self.active_history.maxlen and (
+                sum(self.active_history) / len(self.active_history) > self.config.max_active_fraction
+            ):
+                return self._trip(safe.size, "stimulation duty-cycle limit exceeded")
+            if self.consecutive_active > int(self.config.max_consecutive_active_s * self.sample_rate):
+                return self._trip(safe.size, "continuous stimulation limit exceeded")
 
         self.last_reason = None
         return safe.reshape(1, -1), None
@@ -423,23 +587,44 @@ class RecordBlock:
     ai: np.ndarray
     calibrated_lfp: np.ndarray
     raw_esn: np.ndarray
+    model_esn: np.ndarray
+    pulse_threshold: np.ndarray
+    pulse_peak: np.ndarray
+    pulse_fired: np.ndarray
     safe_ao: np.ndarray
     actual_stim: Optional[np.ndarray]
     mode_value: float
 
 
-class BinaryRecorder:
+class H5Recorder:
+    """Asynchronous, batched HDF5 recorder owned by one writer thread."""
+
     def __init__(self, config: AppConfig, metadata: dict[str, Any]) -> None:
         self.config = config
         self.metadata = metadata
         self.items: queue.Queue[Optional[RecordBlock]] = queue.Queue(maxsize=config.logger_queue_blocks)
         self._lock = threading.RLock()
-        self._file: Optional[Any] = None
+        self._file: Optional[h5py.File] = None
+        self._ai_dataset: Optional[h5py.Dataset] = None
+        self._ao_dataset: Optional[h5py.Dataset] = None
+        self._actual_dataset: Optional[h5py.Dataset] = None
+        self._diagnostics_dataset: Optional[h5py.Dataset] = None
+        self._mode_dataset: Optional[h5py.Dataset] = None
+        self._pulse_dataset: Optional[h5py.Dataset] = None
+        self._gap_dataset: Optional[h5py.Dataset] = None
         self._data_path: Optional[Path] = None
-        self._meta_path: Optional[Path] = None
         self._accepting = False
         self._error: Optional[str] = None
-        self._thread = threading.Thread(target=self._writer_loop, name="binary-recorder", daemon=True)
+        self._committed_samples = 0
+        self._last_source_end: Optional[int] = None
+        self._last_mode: Optional[int] = None
+        self._last_flush = time.monotonic()
+        self._batch_samples = max(
+            config.chunk_size,
+            int(math.ceil(config.recorder_batch_s * config.sample_rate / config.chunk_size))
+            * config.chunk_size,
+        )
+        self._thread = threading.Thread(target=self._writer_loop, name="hdf5-recorder", daemon=True)
         self._thread.start()
 
     @property
@@ -451,37 +636,135 @@ class BinaryRecorder:
         with self._lock:
             return self._error
 
-    def start(self) -> tuple[Path, Path]:
+    @staticmethod
+    def safe_custom_name(value: Optional[str]) -> str:
+        if value is None or not value.strip():
+            return "echo"
+        cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip()).strip("_-")
+        cleaned = re.sub(r"_+", "_", cleaned)[:80].rstrip("_-")
+        if not cleaned:
+            raise ValueError("recording name must contain at least one letter or number")
+        return cleaned
+
+    def start(self, custom_name: Optional[str] = None) -> Path:
         with self._lock:
             if self._accepting or self._file:
                 raise RuntimeError("recording is already active")
             self.config.record_dir.mkdir(parents=True, exist_ok=True)
-            stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            self._data_path = self.config.record_dir / f"{stamp}_echo.npyseq"
-            self._meta_path = self.config.record_dir / f"{stamp}_echo.json"
-            self._file = self._data_path.open("xb")
+            stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            suffix = self.safe_custom_name(custom_name)
+            self._data_path = self.config.record_dir / f"{stamp}_{suffix}.h5"
+            if self._data_path.exists():
+                try:
+                    with h5py.File(self._data_path, "r") as existing:
+                        is_echo_chamber = existing.attrs.get("schema") == "echo-chamber-recording"
+                        committed = int(existing.attrs.get("committed_samples", self.config.sample_rate))
+                except (OSError, ValueError, TypeError) as exc:
+                    raise FileExistsError(
+                        f"refusing to replace unrecognized recording: {self._data_path.name}"
+                    ) from exc
+                if not is_echo_chamber or committed >= self.config.sample_rate:
+                    raise FileExistsError(
+                        f"refusing to replace recording with at least one second of data: "
+                        f"{self._data_path.name}"
+                    )
+                LOG.warning(
+                    "Replacing premature same-second recording %s (%d committed samples)",
+                    self._data_path.name, committed,
+                )
+                self._data_path.unlink()
+            self._file = h5py.File(self._data_path, "x", libver="latest")
             meta = dict(self.metadata)
             meta.update({
                 "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "data_file": self._data_path.name,
-                "format": "sequential NumPy arrays; float64; no pickle",
-                "rows": [
-                    "ai_sample_index",
-                    "ao_target_sample_index",
-                    *(f"{label}_raw_V" for label in self.config.electrode_labels),
-                    *(f"{label}_{self.config.lfp_unit_label}" for label in self.config.electrode_labels),
-                    "raw_esn_mapped_output",
-                    "safe_ao_command_V",
-                    "actual_stim_monitor_V" if self.config.actual_stim_monitor_channel else "actual_stim_unavailable",
-                    "mode",
-                ],
-                "ao_pipeline_delay_samples": self.config.ao_lead_chunks * self.config.chunk_size,
-                "ao_pipeline_delay_seconds": self.config.ao_lead_chunks * self.config.chunk_size / self.config.sample_rate,
+                "format": "Echo Chamber HDF5 v3; compact typed signals and sparse events",
+                "format_tag": H5_FORMAT_TAG,
+                "ao_pipeline_delay_samples": self.config.ao_lead_samples,
+                "ao_pipeline_delay_seconds": self.config.ao_lead_samples / self.config.sample_rate,
+                "lfp_scaling": {
+                    "formula": "electrode_mV = ai_raw_V * 1000 / amplifier_gain",
+                    "amplifier_gain": list(self.config.amplifier_gain),
+                    "electrode_labels": list(self.config.electrode_labels),
+                },
             })
-            self._meta_path.write_text(json.dumps(meta, indent=2, default=str) + "\n", encoding="utf-8")
+            string_type = h5py.string_dtype(encoding="utf-8")
+            signals = self._file.create_group("signals")
+            events = self._file.create_group("events")
+            diagnostics = self._file.create_group("diagnostics")
+            compression = {"compression": "gzip", "compression_opts": 1, "shuffle": True}
+            self._ai_dataset = signals.create_dataset(
+                "ai_raw_V", shape=(2, 0), maxshape=(2, None),
+                chunks=(2, self._batch_samples), dtype=np.float32, **compression,
+            )
+            self._ai_dataset.attrs["channel_labels"] = np.asarray(
+                self.config.electrode_labels, dtype=string_type
+            )
+            self._ai_dataset.attrs["unit"] = "V"
+            self._ao_dataset = signals.create_dataset(
+                "ao_command_V", shape=(1, 0), maxshape=(1, None),
+                chunks=(1, self._batch_samples), dtype=np.float32, **compression,
+            )
+            self._ao_dataset.attrs["unit"] = "V"
+            if self.config.actual_stim_monitor_channel:
+                self._actual_dataset = signals.create_dataset(
+                    "actual_stim_monitor_V", shape=(1, 0), maxshape=(1, None),
+                    chunks=(1, self._batch_samples), dtype=np.float32, **compression,
+                )
+                self._actual_dataset.attrs["unit"] = "V"
+            diagnostic_dtype = np.dtype([
+                ("sample_offset", "<u8"), ("ai_sample_index", "<u8"), ("sample_count", "<u4"),
+                ("raw_esn_mean_V", "<f4"), ("raw_esn_min_V", "<f4"),
+                ("raw_esn_max_V", "<f4"), ("model_esn_mean_mV", "<f4"),
+                ("pulse_threshold_mV", "<f4"), ("pulse_peak_mV", "<f4"),
+            ])
+            self._diagnostics_dataset = diagnostics.create_dataset(
+                "blocks", shape=(0,), maxshape=(None,), chunks=(max(1, self._batch_samples // self.config.chunk_size),),
+                dtype=diagnostic_dtype, **compression,
+            )
+            self._mode_dataset = events.create_dataset(
+                "mode_changes", shape=(0,), maxshape=(None,), chunks=(128,),
+                dtype=np.dtype([("sample_offset", "<u8"), ("mode", "u1")]), **compression,
+            )
+            self._pulse_dataset = events.create_dataset(
+                "pulses", shape=(0,), maxshape=(None,), chunks=(128,),
+                dtype=np.dtype([
+                    ("sample_offset", "<u8"), ("ai_sample_index", "<u8"),
+                    ("threshold_mV", "<f4"), ("peak_mV", "<f4"),
+                ]), **compression,
+            )
+            self._gap_dataset = events.create_dataset(
+                "sample_discontinuities", shape=(0,), maxshape=(None,), chunks=(64,),
+                dtype=np.dtype([
+                    ("sample_offset", "<u8"), ("expected_ai_sample_index", "<u8"),
+                    ("actual_ai_sample_index", "<u8"),
+                ]), **compression,
+            )
+            self._file.attrs["schema"] = "echo-chamber-recording"
+            self._file.attrs["schema_version"] = 3
+            self._file.attrs["format_tag"] = H5_FORMAT_TAG
+            self._file.attrs["metadata_json"] = json.dumps(meta, default=str)
+            self._file.attrs["sample_rate_hz"] = self.config.sample_rate
+            self._file.attrs["first_ai_sample_index"] = np.uint64(0)
+            self._file.attrs["committed_samples"] = 0
+            # uint8 remains readable across older and newer HDF5/h5py versions.
+            self._file.attrs["complete"] = np.uint8(0)
+            self._file.flush()
             self._error = None
+            self._committed_samples = 0
+            self._last_source_end = None
+            self._last_mode = None
+            self._last_flush = time.monotonic()
             self._accepting = True
-            return self._data_path, self._meta_path
+            return self._data_path
+
+    def set_electrode_labels(self, labels: tuple[str, str]) -> None:
+        """Apply a UI assignment to the next recording's metadata."""
+        with self._lock:
+            if self._accepting or self._file:
+                raise RuntimeError("cannot change recording labels while recording")
+            self.metadata["configuration"] = dict(self.metadata["configuration"], electrode_labels=list(labels))
+            self.config = dataclasses.replace(self.config, electrode_labels=labels)
 
     def submit(self, block: RecordBlock) -> None:
         with self._lock:
@@ -502,10 +785,17 @@ class BinaryRecorder:
         self.items.join()
         with self._lock:
             if self._file:
+                self._file.attrs["committed_samples"] = self._committed_samples
+                self._file.attrs["completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                self._file.attrs.modify("complete", np.uint8(self._error is None))
                 self._file.flush()
-                os.fsync(self._file.fileno())
+                with contextlib.suppress(Exception):
+                    os.fsync(self._file.id.get_vfd_handle())
                 self._file.close()
                 self._file = None
+                self._ai_dataset = self._ao_dataset = self._actual_dataset = None
+                self._diagnostics_dataset = self._mode_dataset = None
+                self._pulse_dataset = self._gap_dataset = None
         if self._error:
             raise RuntimeError(self._error)
 
@@ -516,29 +806,125 @@ class BinaryRecorder:
 
     def _writer_loop(self) -> None:
         while True:
-            item = self.items.get()
-            try:
+            first = self.items.get()
+            if first is None:
+                self.items.task_done()
+                return
+            batch = [first]
+            sample_count = first.ai.shape[1]
+            deadline = time.monotonic() + self.config.recorder_batch_s
+            closing = False
+            while sample_count < self._batch_samples:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    item = self.items.get(timeout=remaining)
+                except queue.Empty:
+                    break
                 if item is None:
-                    return
-                sample_ids = np.arange(item.sample_index, item.sample_index + item.ai.shape[1], dtype=np.float64)
-                target_ids = sample_ids + self.config.ao_lead_chunks * self.config.chunk_size
-                actual = item.actual_stim if item.actual_stim is not None else np.full((1, item.ai.shape[1]), np.nan)
-                matrix = np.vstack((
-                    sample_ids.reshape(1, -1), target_ids.reshape(1, -1), item.ai, item.calibrated_lfp,
-                    item.raw_esn, item.safe_ao, actual,
-                    np.full((1, item.ai.shape[1]), item.mode_value),
-                ))
+                    closing = True
+                    break
+                batch.append(item)
+                sample_count += item.ai.shape[1]
+            try:
                 with self._lock:
-                    if not self._file:
+                    if self._file is None or self._ai_dataset is None or self._ao_dataset is None:
                         raise RuntimeError("recording file closed before queued blocks drained")
-                    np.save(self._file, matrix, allow_pickle=False)
+                    start = self._committed_samples
+                    ai = np.hstack([item.ai for item in batch]).astype(np.float32, copy=False)
+                    ao = np.hstack([item.safe_ao for item in batch]).astype(np.float32, copy=False)
+                    stop = start + ai.shape[1]
+                    self._ai_dataset.resize(stop, axis=1)
+                    self._ao_dataset.resize(stop, axis=1)
+                    self._ai_dataset[:, start:stop] = ai
+                    self._ao_dataset[:, start:stop] = ao
+                    if self._actual_dataset is not None:
+                        actual = np.hstack([
+                            item.actual_stim if item.actual_stim is not None
+                            else np.full((1, item.ai.shape[1]), np.nan)
+                            for item in batch
+                        ]).astype(np.float32, copy=False)
+                        self._actual_dataset.resize(stop, axis=1)
+                        self._actual_dataset[:, start:stop] = actual
+                    offset = start
+                    for item in batch:
+                        self._append_block_records(item, offset)
+                        offset += item.ai.shape[1]
+                    self._committed_samples = stop
+                    self._file.attrs.modify("committed_samples", stop)
+                    if time.monotonic() - self._last_flush >= self.config.recorder_flush_s:
+                        self._file.flush()
+                        self._last_flush = time.monotonic()
             except Exception as exc:
                 with self._lock:
                     self._error = f"recording writer failed: {type(exc).__name__}: {exc}"
                     self._accepting = False
                 LOG.exception("Recording writer failed")
             finally:
-                self.items.task_done()
+                for _ in batch:
+                    self.items.task_done()
+                if closing:
+                    self.items.task_done()
+            if closing:
+                return
+
+    @staticmethod
+    def _finite_mean(values: np.ndarray) -> float:
+        finite = values[np.isfinite(values)]
+        return float(np.mean(finite)) if finite.size else math.nan
+
+    @staticmethod
+    def _finite_min(values: np.ndarray) -> float:
+        finite = values[np.isfinite(values)]
+        return float(np.min(finite)) if finite.size else math.nan
+
+    @staticmethod
+    def _finite_max(values: np.ndarray) -> float:
+        finite = values[np.isfinite(values)]
+        return float(np.max(finite)) if finite.size else math.nan
+
+    @staticmethod
+    def _append_records(dataset: h5py.Dataset, records: np.ndarray) -> None:
+        if not records.size:
+            return
+        start = dataset.shape[0]
+        dataset.resize(start + records.shape[0], axis=0)
+        dataset[start:] = records
+
+    def _append_block_records(self, item: RecordBlock, offset: int) -> None:
+        assert self._file is not None
+        count = item.ai.shape[1]
+        if self._last_source_end is None:
+            self._file.attrs.modify("first_ai_sample_index", np.uint64(item.sample_index))
+        elif item.sample_index != self._last_source_end:
+            record = np.asarray(
+                [(offset, self._last_source_end, item.sample_index)], dtype=self._gap_dataset.dtype
+            )
+            self._append_records(self._gap_dataset, record)
+        self._last_source_end = item.sample_index + count
+
+        mode = int(item.mode_value)
+        if mode != self._last_mode:
+            self._append_records(
+                self._mode_dataset, np.asarray([(offset, mode)], dtype=self._mode_dataset.dtype)
+            )
+            self._last_mode = mode
+
+        diagnostic = np.asarray([(
+            offset, item.sample_index, count,
+            self._finite_mean(item.raw_esn), self._finite_min(item.raw_esn),
+            self._finite_max(item.raw_esn), self._finite_mean(item.model_esn),
+            self._finite_mean(item.pulse_threshold), self._finite_mean(item.pulse_peak),
+        )], dtype=self._diagnostics_dataset.dtype)
+        self._append_records(self._diagnostics_dataset, diagnostic)
+
+        if np.any(item.pulse_fired > 0.5):
+            pulse = np.asarray([(
+                offset, item.sample_index,
+                self._finite_mean(item.pulse_threshold), self._finite_mean(item.pulse_peak),
+            )], dtype=self._pulse_dataset.dtype)
+            self._append_records(self._pulse_dataset, pulse)
 
 
 class UiHub:
@@ -563,8 +949,17 @@ class UiHub:
                 client.put_nowait(packet)
 
 
+def ui_series(values: np.ndarray, downsample: int) -> list[list[float | None]]:
+    """JSON-safe display data: non-finite values become browser nulls."""
+    display = np.asarray(values, dtype=np.float64)[:, ::downsample]
+    return [
+        [float(value) if np.isfinite(value) else None for value in row]
+        for row in display
+    ]
+
+
 class ProcessingCore:
-    def __init__(self, config: AppConfig, state: RuntimeState, esn: EsnRuntime, recorder: BinaryRecorder,
+    def __init__(self, config: AppConfig, state: RuntimeState, esn: EsnRuntime, recorder: H5Recorder,
                  hub: UiHub, event_loop: asyncio.AbstractEventLoop, telemetry: Telemetry) -> None:
         self.config = config
         self.state = state
@@ -577,20 +972,27 @@ class ProcessingCore:
         self.sample_index = 0
         self.ui_ai: list[np.ndarray] = []
         self.ui_ao: list[np.ndarray] = []
+        self.ui_preview: list[np.ndarray] = []
+        self.ui_threshold: list[np.ndarray] = []
         self.last_ui_ns = time.perf_counter_ns()
-        self._last_esn_config: Optional[tuple[str, float]] = None
+        self._last_esn_config: Optional[tuple[str, float, float]] = None
         # ESN/filter state belongs exclusively to the DAQ thread.  UI commands
         # only change RuntimeState; transitions are applied here at a block
         # boundary so reset() can never race process_chunk().
         self._active_mode = "control"
 
     def process(self, all_ai: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, Optional[str]]:
-        block_start = time.perf_counter_ns()
         snapshot = self.state.snapshot()
         lfp = np.asarray(all_ai[:2], dtype=np.float64)
-        calibrated_lfp = lfp * np.asarray(self.config.lfp_units_per_volt, dtype=np.float64).reshape(2, 1)
+        electrode_lfp_mv = lfp * (
+            1_000.0 / np.asarray(self.config.amplifier_gain, dtype=np.float64)
+        ).reshape(2, 1)
         actual_stim = np.asarray(all_ai[2:3], dtype=np.float64) if all_ai.shape[0] > 2 else None
         raw = np.zeros((1, self.config.chunk_size), dtype=np.float64)
+        model_esn = np.full((1, self.config.chunk_size), np.nan)
+        pulse_threshold = np.full((1, self.config.chunk_size), np.nan)
+        pulse_peak = np.full((1, self.config.chunk_size), np.nan)
+        pulse_fired = np.zeros((1, self.config.chunk_size), dtype=np.float64)
         esn_ms = 0.0
         safety_reason: Optional[str] = None
 
@@ -601,13 +1003,17 @@ class ProcessingCore:
             self._active_mode = snapshot.mode
 
         if snapshot.mode == "closed-loop":
-            desired_config = (snapshot.stim_mode, snapshot.stim_gain)
+            desired_config = (snapshot.stim_mode, snapshot.stim_gain, snapshot.pulse_threshold_std, snapshot.pulse_window_sec)
             if desired_config != self._last_esn_config:
                 self.esn.configure(*desired_config)
                 self._last_esn_config = desired_config
             started = time.perf_counter_ns()
-            raw = self.esn.process(lfp, self.config.ctx_index)
+            raw = self.esn.process(electrode_lfp_mv, snapshot.ctx_index)
             esn_ms = (time.perf_counter_ns() - started) / 1e6
+            model_esn, threshold, peak, fired = self.esn.diagnostics(self.config.chunk_size)
+            pulse_threshold.fill(threshold)
+            pulse_peak.fill(peak)
+            pulse_fired.fill(float(fired))
             safe, safety_reason = self.safety.process(raw)
             if safety_reason:
                 self.telemetry.trip()
@@ -619,47 +1025,134 @@ class ProcessingCore:
 
         if snapshot.recording:
             self.recorder.submit(RecordBlock(
-                self.sample_index, lfp.copy(), calibrated_lfp.copy(), raw.copy(), safe.copy(),
+                self.sample_index, lfp.copy(), electrode_lfp_mv.copy(), raw.copy(), model_esn.copy(),
+                pulse_threshold.copy(), pulse_peak.copy(), pulse_fired.copy(), safe.copy(),
                 actual_stim.copy() if actual_stim is not None else None,
-                1.0 if snapshot.mode == "closed-loop" else 0.0,
+                RECORDED_MODE_VALUES[(snapshot.mode, snapshot.stim_mode)],
             ))
 
-        self._publish_ui(lfp, safe, snapshot, safety_reason)
-        block_ms = (time.perf_counter_ns() - block_start) / 1e6
-        start_index = self.sample_index
+        # Display-only pulse context: centre the model output for legibility,
+        # then show its adaptive threshold relative to that same baseline.
+        # This does not affect thresholding, safety, or AO output.
+        if snapshot.stim_mode == "threshold_pulse" and np.all(np.isfinite(model_esn)):
+            baseline = float(np.mean(model_esn))
+            preview = ((model_esn - baseline) * snapshot.stim_gain
+                       * self.config.ao_command_gain_v_per_esn_unit)
+            threshold_preview = np.full_like(
+                preview,
+                (threshold - baseline) * snapshot.stim_gain
+                * self.config.ao_command_gain_v_per_esn_unit,
+            )
+        else:
+            preview = np.full_like(safe, np.nan)
+            threshold_preview = np.full_like(safe, np.nan)
+        self._publish_ui(electrode_lfp_mv, safe, preview, threshold_preview, snapshot, safety_reason)
         self.sample_index += self.config.chunk_size
         return raw, safe, esn_ms, safety_reason
 
-    def _publish_ui(self, ai: np.ndarray, ao: np.ndarray, snapshot: StateSnapshot,
+    def _publish_ui(self, ai: np.ndarray, ao: np.ndarray, preview: np.ndarray, threshold: np.ndarray,
+                    snapshot: StateSnapshot,
                     safety_reason: Optional[str]) -> None:
+        raise NotImplementedError("Echo Chamber requires the off-thread UI processing core")
+
+
+@dataclass(frozen=True)
+class UiJob:
+    """A best-effort display update, independent of real-time acquisition."""
+
+    ai: np.ndarray
+    ao: np.ndarray
+    preview: np.ndarray
+    threshold: np.ndarray
+    snapshot: StateSnapshot
+    safety_reason: Optional[str]
+
+
+class AsyncUiProcessingCore(ProcessingCore):
+    """Moves UI downsampling and JSON serialization off the DAQ thread."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._ui_jobs: queue.Queue[Optional[UiJob]] = queue.Queue(maxsize=self.config.ui_queue_packets)
+        self._ui_stopping = threading.Event()
+        self._ui_thread = threading.Thread(target=self._ui_worker, name="ui-serializer", daemon=True)
+        self._ui_thread.start()
+
+    def close_ui(self) -> None:
+        self._ui_stopping.set()
+        with contextlib.suppress(queue.Empty):
+            if self._ui_jobs.full():
+                self._ui_jobs.get_nowait()
+        with contextlib.suppress(queue.Full):
+            self._ui_jobs.put_nowait(None)
+        self._ui_thread.join(timeout=3.0)
+
+    def _publish_ui(self, ai: np.ndarray, ao: np.ndarray, preview: np.ndarray, threshold: np.ndarray,
+                    snapshot: StateSnapshot,
+                    safety_reason: Optional[str]) -> None:
+        # The DAQ thread copies data and queues a bounded latest-only job. It
+        # never converts arrays to lists or JSON, and stale display data is
+        # deliberately discarded rather than delaying hardware timing.
         self.ui_ai.append(ai.copy())
         self.ui_ao.append(ao.copy())
+        self.ui_preview.append(preview.copy())
+        self.ui_threshold.append(threshold.copy())
         now = time.perf_counter_ns()
         if (now - self.last_ui_ns) / 1e9 < self.config.ui_interval_s:
             return
-        combined_ai = np.hstack(self.ui_ai)
-        combined_ao = np.hstack(self.ui_ao)
-        telemetry = self.telemetry.snapshot()
-        packet = json.dumps({
-            "ai": combined_ai[:, ::self.config.visual_downsample].tolist(),
-            "ao": combined_ao[:, ::self.config.visual_downsample].tolist(),
-            "mode": snapshot.mode,
-            "is_recording": snapshot.recording,
-            "is_acquiring": snapshot.acquiring,
-            "stim_mode": snapshot.stim_mode,
-            "stim_gain": snapshot.stim_gain,
-            "fs": self.config.sample_rate / self.config.visual_downsample,
-            "fault": snapshot.fault,
-            "esn_ready": snapshot.esn_ready,
-            "safety_trip": safety_reason,
-            "telemetry": telemetry,
-            "channels": list(self.config.electrode_labels),
-            "ao_is_command": True,
-        })
-        self.event_loop.call_soon_threadsafe(self.hub.publish, packet)
+        job = UiJob(
+            np.hstack(self.ui_ai), np.hstack(self.ui_ao), np.hstack(self.ui_preview),
+            np.hstack(self.ui_threshold), snapshot, safety_reason,
+        )
         self.ui_ai.clear()
         self.ui_ao.clear()
+        self.ui_preview.clear()
+        self.ui_threshold.clear()
         self.last_ui_ns = now
+        if self._ui_jobs.full():
+            with contextlib.suppress(queue.Empty):
+                self._ui_jobs.get_nowait()
+        with contextlib.suppress(queue.Full):
+            self._ui_jobs.put_nowait(job)
+
+    def _ui_worker(self) -> None:
+        while not self._ui_stopping.is_set():
+            try:
+                job = self._ui_jobs.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if job is None:
+                return
+            try:
+                snapshot = job.snapshot
+                packet = json.dumps({
+                    "ai": job.ai[:, ::self.config.visual_downsample].tolist(),
+                    "ao": job.ao[:, ::self.config.visual_downsample].tolist(),
+                    "passthrough_preview": ui_series(job.preview, self.config.visual_downsample),
+                    "pulse_threshold_preview": ui_series(job.threshold, self.config.visual_downsample),
+                    "mode": snapshot.mode,
+                    "is_recording": snapshot.recording,
+                    "is_acquiring": snapshot.acquiring,
+                    "stim_mode": snapshot.stim_mode,
+                    "stim_gain": snapshot.stim_gain,
+                    "pulse_threshold_std": snapshot.pulse_threshold_std,
+                    "pulse_window_sec": snapshot.pulse_window_sec,
+                    "fs": self.config.sample_rate / self.config.visual_downsample,
+                    "fault": snapshot.fault,
+                    "esn_ready": snapshot.esn_ready,
+                    "safety_trip": job.safety_reason,
+                    "telemetry": self.telemetry.snapshot(),
+                    "channels": list(snapshot.electrode_labels),
+                    "cortex_ai": f"ai{snapshot.ctx_index}",
+                    "ao_is_command": True,
+                    "ai_unit": "mV",
+                    "ao_unit": "V",
+                    "amplifier_gain": list(self.config.amplifier_gain),
+                    "ao_command_gain_v_per_esn_unit": self.config.ao_command_gain_v_per_esn_unit,
+                })
+                self.event_loop.call_soon_threadsafe(self.hub.publish, packet)
+            except Exception:
+                LOG.exception("UI serialization failed")
 
 
 class BaseDaq:
@@ -677,7 +1170,226 @@ class BaseDaq:
         self.last_command.fill(0.0)
 
 
+@dataclass
+class AoScheduleStats:
+    submitted_blocks: int = 0
+    zero_substitutions: int = 0
+    late_commands: int = 0
+    min_queued_samples: Optional[int] = None
+    max_write_ms: float = 0.0
+    max_loop_pause_ms: float = 0.0
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def submitted(self, late: bool) -> None:
+        with self.lock:
+            self.submitted_blocks += 1
+            self.late_commands += int(late)
+
+    def refill(self, queued: int, zeros: int, write_ms: float, pause_ms: float) -> None:
+        with self.lock:
+            self.zero_substitutions += zeros
+            self.min_queued_samples = queued if self.min_queued_samples is None else min(self.min_queued_samples, queued)
+            self.max_write_ms = max(self.max_write_ms, write_ms)
+            self.max_loop_pause_ms = max(self.max_loop_pause_ms, pause_ms)
+
+    def snapshot(self) -> dict[str, Any]:
+        with self.lock:
+            return {
+                "submitted_blocks": self.submitted_blocks,
+                "zero_substitutions": self.zero_substitutions,
+                "late_commands": self.late_commands,
+                "min_queued_samples": self.min_queued_samples,
+                "max_write_ms": self.max_write_ms,
+                "max_loop_pause_ms": self.max_loop_pause_ms,
+            }
+
+
+class ScheduledAo:
+    """Sole owner of a non-regenerating AO task with proactive safe refills."""
+
+    def __init__(self, config: AppConfig, state: RuntimeState, trigger_terminal: str) -> None:
+        self.config = config
+        self.state = state
+        self.trigger_terminal = trigger_terminal
+        self.commands: dict[int, np.ndarray] = {}
+        self.command_lock = threading.Lock()
+        self.ready = threading.Event()
+        self.clock_started = threading.Event()
+        self.stop_requested = threading.Event()
+        self.force_safe = threading.Event()
+        self.error: Optional[Exception] = None
+        self.stats = AoScheduleStats()
+        self._next_block = 0
+        self.thread = threading.Thread(target=self._run, name="ao-writer", daemon=True)
+
+    def start(self) -> None:
+        self.thread.start()
+        if not self.ready.wait(10.0):
+            raise RuntimeError("AO scheduler did not become ready")
+        if self.error:
+            raise RuntimeError(f"AO scheduler setup failed: {self.error}") from self.error
+
+    def notify_clock_started(self) -> None:
+        self.clock_started.set()
+
+    def submit(self, target_block: int, command: np.ndarray) -> None:
+        value = np.asarray(command, dtype=np.float64).reshape(-1)
+        if value.size != self.config.chunk_size:
+            raise ValueError(f"AO command has {value.size} samples; expected {self.config.chunk_size}")
+        with self.command_lock:
+            late = target_block < self._next_block
+            self.stats.submitted(late)
+            if not late and not self.force_safe.is_set():
+                self.commands[target_block] = value.copy()
+
+    def request_safe_zero(self) -> None:
+        self.force_safe.set()
+        with self.command_lock:
+            self.commands.clear()
+
+    def stop(self) -> None:
+        self.request_safe_zero()
+        self.stop_requested.set()
+        self.clock_started.set()
+        self.thread.join(5.0)
+        self._force_zero()
+
+    def _take(self, target: int) -> Optional[np.ndarray]:
+        if self.force_safe.is_set():
+            return None
+        with self.command_lock:
+            return self.commands.pop(target, None)
+
+    def _take_contiguous(self, first_target: int, maximum: int) -> list[np.ndarray]:
+        """Remove every immediately available command, up to ``maximum``."""
+        if self.force_safe.is_set():
+            return []
+        with self.command_lock:
+            blocks: list[np.ndarray] = []
+            for target in range(first_target, first_target + maximum):
+                block = self.commands.get(target)
+                if block is None:
+                    break
+                blocks.append(self.commands.pop(target))
+            return blocks
+
+    def _discard_committed_commands(self) -> None:
+        """Remove commands whose output positions were already committed."""
+        with self.command_lock:
+            stale = [target for target in self.commands if target < self._next_block]
+            for target in stale:
+                self.commands.pop(target, None)
+
+    def _run(self) -> None:
+        chunk = self.config.chunk_size
+        lead_samples = self.config.ao_lead_samples
+        deadline_samples = self.config.ao_deadline_samples
+        last_loop_ns = time.perf_counter_ns()
+        try:
+            with nidaqmx.Task("echo-chamber-ao") as task:
+                task.ao_channels.add_ao_voltage_chan(
+                    self.config.physical_ao_channel,
+                    min_val=-self.config.safety.max_command_v,
+                    max_val=self.config.safety.max_command_v,
+                )
+                task.timing.cfg_samp_clk_timing(
+                    self.config.sample_rate,
+                    source=f"/{self.config.device}/ai/SampleClock",
+                    sample_mode=AcquisitionType.CONTINUOUS,
+                    samps_per_chan=lead_samples * 2,
+                )
+                task.out_stream.regen_mode = RegenerationMode.DONT_ALLOW_REGENERATION
+                # ``OutStream`` exposes the output-buffer setting as a
+                # property in nidaqmx-python; it has no cfg_output_buffer()
+                # method.
+                task.out_stream.output_buf_size = lead_samples * 2
+                task.triggers.start_trigger.cfg_dig_edge_start_trig(self.trigger_terminal)
+                writer = AnalogSingleChannelWriter(task.out_stream, auto_start=False)
+                writer.write_many_sample(np.zeros(lead_samples, dtype=np.float64), timeout=5.0)
+                self._next_block = self.config.ao_lead_chunks
+                task.start()
+                self.ready.set()
+                self.clock_started.wait()
+
+                while not self.stop_requested.is_set():
+                    now_ns = time.perf_counter_ns()
+                    pause_ms = (now_ns - last_loop_ns) / 1e6
+                    last_loop_ns = now_ns
+                    generated = int(task.out_stream.total_samp_per_chan_generated)
+                    queued = self._next_block * chunk - generated
+                    deficit_blocks = max(0, math.ceil((lead_samples - queued) / chunk))
+                    if deficit_blocks and (queued <= deadline_samples or self.force_safe.is_set()):
+                        first_target = self._next_block
+                        refill = self._take_contiguous(first_target, deficit_blocks)
+                        zero_count = deficit_blocks - len(refill)
+                        if zero_count:
+                            refill.extend(np.zeros(chunk, dtype=np.float64) for _ in range(zero_count))
+                        snapshot = self.state.snapshot()
+                        active_miss = (
+                            zero_count > 0
+                            and not self.force_safe.is_set()
+                            and snapshot.mode == "closed-loop"
+                            and snapshot.stim_mode != "off"
+                        )
+
+                        if refill:
+                            if active_miss:
+                                # Once an active command misses its deadline,
+                                # the complete refill and every future command
+                                # are forced safe before the fault is published.
+                                self.request_safe_zero()
+                                refill = [np.zeros_like(block) for block in refill]
+                                zero_count = len(refill)
+                            write_started = time.perf_counter_ns()
+                            writer.write_many_sample(np.concatenate(refill), timeout=0.5)
+                            write_ms = (time.perf_counter_ns() - write_started) / 1e6
+                            self._next_block += len(refill)
+                            self._discard_committed_commands()
+                            self.stats.refill(queued, zero_count, write_ms, pause_ms)
+                            if zero_count:
+                                LOG.warning(
+                                    "AO deadline substituted %d safe block(s), first target=%d, queued=%d samples",
+                                    zero_count, first_target, queued,
+                                )
+                            if active_miss:
+                                self.state.fault(
+                                    "AO command missed its derived half-lead deadline; safe zeros were written"
+                                )
+                    time.sleep(min(0.001, chunk / self.config.sample_rate / 8))
+        except Exception as exc:
+            self.error = exc
+            LOG.error("AO scheduler failed: %s\n%s", exc, traceback.format_exc())
+            self.state.fault(f"AO scheduler failure: {type(exc).__name__}: {exc}")
+        finally:
+            self.ready.set()
+
+    def _force_zero(self) -> None:
+        try:
+            with nidaqmx.Task("echo-chamber-ao-zero") as task:
+                task.ao_channels.add_ao_voltage_chan(
+                    self.config.physical_ao_channel,
+                    min_val=-self.config.safety.max_command_v,
+                    max_val=self.config.safety.max_command_v,
+                )
+                task.write(0.0, auto_start=True)
+        except Exception:
+            LOG.exception("Could not explicitly return AO to zero")
+
+
+@dataclass(frozen=True)
+class InputBatch:
+    sample_index: int
+    values: np.ndarray
+    read_ms: float
+
+
 class RealDaq(BaseDaq):
+    """Independent AI reader, processor, and proactive AO scheduling pipeline."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.scheduler: Optional[ScheduledAo] = None
+
     def preflight(self) -> dict[str, Any]:
         if not HAS_NIDAQMX:
             raise RuntimeError("nidaqmx and the native NI-DAQmx driver are required")
@@ -696,7 +1408,7 @@ class RealDaq(BaseDaq):
         return {
             "device": device.name,
             "product_type": device.product_type,
-            "serial_number": getattr(device, "dev_serial_num", None),
+            "serial_number": getattr(device, "serial_num", None),
             "ai": self.config.physical_ai_channels,
             "ao": self.config.physical_ao_channel,
         }
@@ -704,105 +1416,169 @@ class RealDaq(BaseDaq):
     def run(self) -> None:
         info = self.preflight()
         LOG.info("Hardware preflight passed: %s", info)
-        terminal = getattr(TerminalConfiguration, self.config.terminal_config.upper(), None)
+        terminal_name = {"DIFFERENTIAL": "DIFF", "PSEUDODIFFERENTIAL": "PSEUDO_DIFF"}.get(
+            self.config.terminal_config.upper(), self.config.terminal_config.upper()
+        )
+        terminal = getattr(TerminalConfiguration, terminal_name, None)
         if terminal is None:
             raise ValueError(f"unknown terminal configuration: {self.config.terminal_config}")
 
-        with nidaqmx.Task("echo-ai") as read_task, nidaqmx.Task("echo-ao") as write_task:
+        with nidaqmx.Task("echo-chamber-ai") as read_task:
             for channel in self.config.physical_ai_channels:
                 read_task.ai_channels.add_ai_voltage_chan(
                     channel, terminal_config=terminal, min_val=self.config.ai_min_v, max_val=self.config.ai_max_v,
                 )
-            write_task.ao_channels.add_ao_voltage_chan(
-                self.config.physical_ao_channel,
-                min_val=-self.config.safety.max_command_v,
-                max_val=self.config.safety.max_command_v,
-            )
             read_task.timing.cfg_samp_clk_timing(
                 self.config.sample_rate,
                 sample_mode=AcquisitionType.CONTINUOUS,
-                samps_per_chan=self.config.chunk_size * self.config.ao_lead_chunks * 4,
+                samps_per_chan=self.config.ao_lead_samples * 4,
             )
-            write_task.timing.cfg_samp_clk_timing(
-                self.config.sample_rate,
-                source=f"/{self.config.device}/ai/SampleClock",
-                sample_mode=AcquisitionType.CONTINUOUS,
-                samps_per_chan=self.config.chunk_size * self.config.ao_lead_chunks * 4,
-            )
-            write_task.out_stream.regen_mode = RegenerationMode.DONT_ALLOW_REGENERATION
-            write_task.out_stream.cfg_output_buffer(self.config.chunk_size * self.config.ao_lead_chunks * 4)
-            write_task.triggers.start_trigger.cfg_dig_edge_start_trig(read_task.triggers.start_trigger.term)
-
             reader = AnalogMultiChannelReader(read_task.in_stream)
-            writer = AnalogSingleChannelWriter(write_task.out_stream, auto_start=False)
-            ai = np.empty((len(self.config.physical_ai_channels), self.config.chunk_size), dtype=np.float64)
-            zeros = np.zeros((self.config.chunk_size * self.config.ao_lead_chunks,), dtype=np.float64)
-            writer.write_many_sample(zeros, timeout=5.0)
-            write_task.start()
+            input_queue: queue.Queue[InputBatch] = queue.Queue(maxsize=self.config.ao_lead_chunks * 2)
+            reader_stop = threading.Event()
+            reader_errors: list[Exception] = []
+            scheduler = ScheduledAo(self.config, self.state, read_task.triggers.start_trigger.term)
+            self.scheduler = scheduler
+            scheduler.start()
             read_task.start()
-            LOG.info("Synchronized hardware acquisition started with %d queued zero chunks", self.config.ao_lead_chunks)
+            scheduler.notify_clock_started()
+
+            def ai_reader() -> None:
+                sample_index = 0
+                buffer = np.empty((len(self.config.physical_ai_channels), self.config.chunk_size), dtype=np.float64)
+                try:
+                    while not reader_stop.is_set() and self.state.snapshot().running:
+                        started = time.perf_counter_ns()
+                        reader.read_many_sample(
+                            buffer,
+                            number_of_samples_per_channel=self.config.chunk_size,
+                            timeout=max(1.0, 4 * self.config.chunk_size / self.config.sample_rate),
+                        )
+                        batch = InputBatch(sample_index, buffer.copy(), (time.perf_counter_ns() - started) / 1e6)
+                        sample_index += self.config.chunk_size
+                        input_queue.put(batch, timeout=0.1)
+                except Exception as exc:
+                    if not reader_stop.is_set():
+                        reader_errors.append(exc)
+                        self.state.fault(f"AI reader failure: {type(exc).__name__}: {exc}")
+
+            reader_thread = threading.Thread(target=ai_reader, name="ai-reader", daemon=True)
+            reader_thread.start()
+            LOG.info(
+                "AO pipeline started: chunk=%d samples (%.1f ms), target lead=%d samples (%.1f ms), derived deadline=%.1f ms",
+                self.config.chunk_size,
+                1_000 * self.config.chunk_size / self.config.sample_rate,
+                self.config.ao_lead_samples,
+                self.config.ao_target_lead_ms,
+                1_000 * self.config.ao_deadline_samples / self.config.sample_rate,
+            )
 
             try:
                 while self.state.snapshot().running:
                     block_started = time.perf_counter_ns()
-                    read_started = time.perf_counter_ns()
-                    reader.read_many_sample(
-                        ai, number_of_samples_per_channel=self.config.chunk_size,
-                        timeout=max(1.0, 4 * self.config.chunk_size / self.config.sample_rate),
-                    )
-                    ai_ms = (time.perf_counter_ns() - read_started) / 1e6
+                    try:
+                        batch = input_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        if reader_errors:
+                            raise RuntimeError(f"AI reader failure: {reader_errors[0]}") from reader_errors[0]
+                        continue
                     if self.state.snapshot().acquiring:
-                        _, safe, esn_ms, _ = self.core.process(ai)
+                        _, safe, esn_ms, _ = self.core.process(batch.values)
                     else:
-                        # Continue draining the hardware AI buffer while paused so
-                        # that a later restart cannot begin with an overflow or
-                        # stale samples.
                         safe = np.zeros((1, self.config.chunk_size), dtype=np.float64)
                         esn_ms = 0.0
-                    # A Control/fault request can arrive after ProcessingCore
-                    # took its block snapshot.  Never write a command computed
-                    # under a stale closed-loop snapshot.
                     if self.state.snapshot().mode != "closed-loop":
                         safe = np.zeros_like(safe)
-                    write_started = time.perf_counter_ns()
-                    writer.write_many_sample(safe.reshape(-1), timeout=1.0)
-                    ao_ms = (time.perf_counter_ns() - write_started) / 1e6
+                    target = batch.sample_index // self.config.chunk_size + self.config.ao_lead_chunks
+                    scheduler.submit(target, safe)
                     self.last_command = safe
                     block_ms = (time.perf_counter_ns() - block_started) / 1e6
                     self.telemetry.update_block(
-                        sample_index=self.core.sample_index, ai_ms=ai_ms, esn_ms=esn_ms, ao_ms=ao_ms,
+                        sample_index=self.core.sample_index, ai_ms=batch.read_ms, esn_ms=esn_ms, ao_ms=0.0,
                         block_ms=block_ms, deadline_ms=1_000 * self.config.chunk_size / self.config.sample_rate,
                         logger_backlog=self.core.recorder.backlog,
                     )
+                    if scheduler.error:
+                        raise RuntimeError(f"AO scheduler failure: {scheduler.error}") from scheduler.error
                     if self.core.recorder.error:
                         raise RuntimeError(self.core.recorder.error)
             finally:
-                with contextlib.suppress(Exception):
-                    self._write_zero(writer)
-                    write_task.stop()
+                reader_stop.set()
                 with contextlib.suppress(Exception):
                     read_task.stop()
+                reader_thread.join(3.0)
+                scheduler.stop()
+                self.scheduler = None
                 self.request_safe_zero()
+                LOG.info("AO scheduler statistics: %s", scheduler.stats.snapshot())
 
-    def _write_zero(self, writer: Any) -> None:
-        writer.write_many_sample(np.zeros(self.config.chunk_size, dtype=np.float64), timeout=1.0)
+    def request_safe_zero(self) -> None:
+        super().request_safe_zero()
+        if self.scheduler is not None:
+            self.scheduler.request_safe_zero()
+
+
+def load_mock_replay(path: Path, electrode_labels: tuple[str, str], sample_rate: int) -> np.ndarray:
+    """Load an HDF5 recording and return named raw LFP rows."""
+    if path.suffix not in {".h5", ".hdf5"}:
+        raise ValueError("mock replay must be an Echo Chamber .h5 or .hdf5 recording")
+    if path.suffix in {".h5", ".hdf5"}:
+        with h5py.File(path, "r") as source:
+            if source.attrs.get("format_tag") == H5_FORMAT_TAG:
+                labels = tuple(
+                    value.decode("utf-8") if isinstance(value, bytes) else str(value)
+                    for value in source["signals/ai_raw_V"].attrs["channel_labels"]
+                )
+                requested_indices = [labels.index(label) for label in electrode_labels]
+                committed = min(
+                    int(source.attrs.get("committed_samples", source["signals/ai_raw_V"].shape[1])),
+                    source["signals/ai_raw_V"].shape[1],
+                )
+                replay = np.vstack([
+                    np.asarray(source["signals/ai_raw_V"][index, :committed])
+                    for index in requested_indices
+                ])
+                if replay.shape[1] == 0:
+                    raise ValueError(f"mock replay contains no committed data: {path}")
+                return replay
+            rows = tuple(
+                value.decode("utf-8") if isinstance(value, bytes) else str(value)
+                for value in source["row_names"][:]
+            )
+            requested = tuple(f"{label}_raw_V" for label in electrode_labels)
+            if not all(name in rows for name in requested):
+                available = [name for name in rows if name.endswith("_raw_V")]
+                raise ValueError(f"mock replay requires rows {requested}; available raw rows={available}")
+            committed = min(
+                int(source.attrs.get("committed_samples", source["data"].shape[1])),
+                source["data"].shape[1],
+            )
+            replay = np.vstack([
+                np.asarray(source["data"][rows.index(name), :committed])
+                for name in requested
+            ])
+        if replay.shape[1] == 0:
+            raise ValueError(f"mock replay contains no committed data: {path}")
+        LOG.info(
+            "Loaded repeating HDF5 mock replay %s: rows=%s, samples=%d, duration=%.3f s",
+            path, requested, replay.shape[1], replay.shape[1] / sample_rate,
+        )
+        return replay
 
 
 class MockDaq(BaseDaq):
     def __init__(self, *args: Any, overload_ms: float = 0.0, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.overload_ms = overload_ms
-        self.rng = np.random.default_rng(self.config.mock_seed)
-        self.replay: Optional[np.ndarray] = None
         self.replay_index = 0
-        if self.config.mock_replay:
-            replay = np.load(self.config.mock_replay, allow_pickle=False)
-            if replay.ndim != 2 or replay.shape[0] < 2:
-                raise ValueError("mock replay must have shape (at least 2, samples)")
-            self.replay = np.asarray(replay[:2], dtype=np.float64)
+        if self.config.mock_replay is None:
+            raise ValueError("mock mode requires a replay recording")
+        self.replay = load_mock_replay(
+            self.config.mock_replay, self.config.electrode_labels, self.config.sample_rate
+        )
 
     def run(self) -> None:
-        LOG.info("Deterministic mock acquisition started (seed=%d)", self.config.mock_seed)
+        LOG.info("Mock replay acquisition started: %s", self.config.mock_replay)
         period_s = self.config.chunk_size / self.config.sample_rate
         next_deadline = time.perf_counter()
         while self.state.snapshot().running:
@@ -833,18 +1609,9 @@ class MockDaq(BaseDaq):
         self.request_safe_zero()
 
     def _next_input(self) -> np.ndarray:
-        if self.replay is not None:
-            indices = (np.arange(self.config.chunk_size) + self.replay_index) % self.replay.shape[1]
-            self.replay_index = int((self.replay_index + self.config.chunk_size) % self.replay.shape[1])
-            return self.replay[:, indices].copy()
-        t = (np.arange(self.config.chunk_size) + self.core.sample_index) / self.config.sample_rate
-        common = 0.05 * np.sin(2 * np.pi * 8 * t)
-        seizure = np.zeros_like(t)
-        phase = t % 10.0
-        active = (phase >= 6.0) & (phase < 7.0)
-        seizure[active] = 0.25 * np.sin(2 * np.pi * 18 * t[active])
-        noise = self.rng.normal(0.0, 0.01, (2, self.config.chunk_size))
-        return np.vstack((common + seizure, 0.8 * common + 0.9 * seizure)) + noise
+        indices = (np.arange(self.config.chunk_size) + self.replay_index) % self.replay.shape[1]
+        self.replay_index = int((self.replay_index + self.config.chunk_size) % self.replay.shape[1])
+        return self.replay[:, indices].copy()
 
 
 class Watchdog:
@@ -873,12 +1640,15 @@ class Watchdog:
 
 def serializable_config(config: AppConfig) -> dict[str, Any]:
     result = dataclasses.asdict(config)
+    result["chunk_size"] = config.chunk_size
+    result["ao_lead_samples"] = config.ao_lead_samples
+    result["ao_deadline_samples"] = config.ao_deadline_samples
     result["record_dir"] = str(config.record_dir)
     result["mock_replay"] = str(config.mock_replay) if config.mock_replay else None
     return result
 
 
-async def websocket_handler(websocket: Any, state: RuntimeState, recorder: BinaryRecorder,
+async def websocket_handler(websocket: Any, state: RuntimeState, recorder: H5Recorder,
                             hub: UiHub, shutdown: asyncio.Event) -> None:
     client_queue = hub.subscribe()
     LOG.info("UI client connected")
@@ -891,9 +1661,11 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: Binar
                 if not isinstance(command, dict) or not isinstance(command.get("command"), str):
                     raise ValueError("command must be a JSON object with a command string")
                 name = command["command"]
+                response_extra: dict[str, Any] = {}
                 if name == "start_recording":
-                    recorder.start()
+                    recording_path = recorder.start(command.get("filename"))
                     state.set_recording(True)
+                    response_extra["filename"] = recording_path.name
                 elif name == "stop_recording":
                     state.set_recording(False)
                     await asyncio.to_thread(recorder.stop_recording)
@@ -908,6 +1680,13 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: Binar
                     stim_mode = str(command.get("stim_mode", state.snapshot().stim_mode))
                     gain = float(command.get("stim_gain", state.snapshot().stim_gain))
                     state.set_stim(stim_mode, gain)
+                elif name == "set_pulse_threshold":
+                    state.set_pulse_threshold_std(float(command.get("pulse_threshold_std")))
+                elif name == "set_pulse_window":
+                    state.set_pulse_window_sec(float(command.get("pulse_window_sec")))
+                elif name == "set_cortex_channel":
+                    labels = state.set_cortex_channel(str(command.get("channel", "")))
+                    recorder.set_electrode_labels(labels)
                 elif name == "clear_fault":
                     state.clear_fault()
                 elif name == "shutdown":
@@ -920,9 +1699,9 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: Binar
                     shutdown.set()
                 else:
                     raise ValueError(f"unknown command: {name}")
-                response = {"type": "command_result", "command": name, "ok": True}
+                response = {"type": "command_result", "command": name, "ok": True, **response_extra}
             except Exception as exc:
-                response = {"type": "command_result", "command": "unknown", "ok": False, "error": str(exc)}
+                response = {"type": "command_result", "command": locals().get("name", "unknown"), "ok": False, "error": str(exc)}
                 LOG.warning("Rejected UI command: %s", exc)
             await websocket.send(json.dumps(response))
 
@@ -947,23 +1726,39 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: Binar
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Fail-safe closed-loop LFP system")
-    parser.add_argument("--mock", action="store_true", help="run deterministic simulated acquisition")
-    parser.add_argument("--mock-replay", type=Path, help="replay a NumPy array shaped (2, samples)")
+    parser = argparse.ArgumentParser(description="Echo Chamber compact HDF5 closed-loop LFP system")
+    parser.add_argument(
+        "--mock", action="store_true",
+        help=f"replay the bundled sample recording ({DEFAULT_MOCK_REPLAY.relative_to(BASE_DIR)})",
+    )
+    parser.add_argument(
+        "--mock-replay", type=Path,
+        help="replay another Echo Chamber .h5 recording; implies --mock",
+    )
     parser.add_argument("--mock-overload-ms", type=float, default=0.0, help="inject processing delay for overload tests")
     parser.add_argument("--device", default="Dev1")
     parser.add_argument("--ai", nargs=2, default=("ai0", "ai1"), metavar=("ELECTRODE_1", "ELECTRODE_2"))
     parser.add_argument("--ao", default="ao0")
-    parser.add_argument("--lfp-units-per-volt", nargs=2, type=float, default=(1.0, 1.0),
-                        metavar=("ELECTRODE_1", "ELECTRODE_2"))
-    parser.add_argument("--lfp-unit-label", default="unscaled_V")
+    parser.add_argument("--amplifier-gain", nargs=2, type=float, default=(10.0, 10.0),
+                        metavar=("ELECTRODE_1", "ELECTRODE_2"),
+                        help="MultiClamp Primary Output voltage gain for AI0 and AI1")
+    parser.add_argument("--ao-command-gain", type=float, default=1.0,
+                        help="NI AO volts per numeric ESN output unit (default: 1)")
     parser.add_argument("--stim-monitor-ai", help="optional AI channel measuring actual stimulus")
-    parser.add_argument("--terminal-config", default="DIFFERENTIAL", choices=("DIFFERENTIAL", "RSE", "NRSE"))
+    parser.add_argument("--terminal-config", default="RSE", choices=("DIFFERENTIAL", "RSE", "NRSE"))
     parser.add_argument("--sample-rate", type=int, default=20_000)
-    parser.add_argument("--chunk-size", type=int, default=100)
-    parser.add_argument("--ao-lead-chunks", type=int, default=4)
+    parser.add_argument("--processing-block-ms", type=float, default=10.0,
+                        help="DAQ/ESN processing interval in milliseconds")
+    parser.add_argument("--ao-target-lead-ms", type=float, default=100.0,
+                        help="desired queued AO duration; refill and batching are automatic")
+    parser.add_argument("--passthrough-dc-block-hz", type=float, default=DEFAULT_PASSTHROUGH_DC_BLOCK_HZ)
+    parser.add_argument("--pulse-threshold-std", type=float, default=DEFAULT_PULSE_THRESHOLD_STD)
+    parser.add_argument("--pulse-window-sec", type=float, default=DEFAULT_PULSE_WINDOW_SEC)
     parser.add_argument("--max-command-v", type=float, default=1.0)
     parser.add_argument("--max-slew-v-per-s", type=float, default=2_000.0)
+    parser.add_argument("--dry-test-allow-sustained-ao", action="store_true",
+                        default=DRY_TEST_ALLOW_SUSTAINED_AO,
+                        help="scope/dummy-load only: disable charge, duty-cycle, and continuous-output trips")
     parser.add_argument("--record-dir", type=Path, default=BASE_DIR / "recordings")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
@@ -974,24 +1769,32 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def config_from_args(args: argparse.Namespace) -> AppConfig:
+    mock_replay = args.mock_replay.resolve() if args.mock_replay else (DEFAULT_MOCK_REPLAY if args.mock else None)
     return AppConfig(
         device=args.device,
         ai_channels=tuple(args.ai),
         ao_channel=args.ao,
-        lfp_units_per_volt=tuple(args.lfp_units_per_volt),
-        lfp_unit_label=args.lfp_unit_label,
+        amplifier_gain=tuple(args.amplifier_gain),
+        ao_command_gain_v_per_esn_unit=args.ao_command_gain,
         sample_rate=args.sample_rate,
-        chunk_size=args.chunk_size,
-        ao_lead_chunks=args.ao_lead_chunks,
+        processing_block_ms=args.processing_block_ms,
+        ao_target_lead_ms=args.ao_target_lead_ms,
+        passthrough_dc_block_hz=args.passthrough_dc_block_hz,
+        pulse_threshold_std=args.pulse_threshold_std,
+        pulse_window_sec=args.pulse_window_sec,
         terminal_config=args.terminal_config,
         record_dir=args.record_dir.resolve(),
         ws_host=args.host,
         ws_port=args.port,
-        mock_replay=args.mock_replay.resolve() if args.mock_replay else None,
+        mock_replay=mock_replay,
         actual_stim_monitor_channel=args.stim_monitor_ai,
         start_paused=args.start_paused,
         open_browser=not args.no_browser,
-        safety=SafetyConfig(max_command_v=args.max_command_v, max_slew_v_per_s=args.max_slew_v_per_s),
+        safety=SafetyConfig(
+            max_command_v=args.max_command_v,
+            max_slew_v_per_s=args.max_slew_v_per_s,
+            allow_sustained_output_for_dry_test=args.dry_test_allow_sustained_ao,
+        ),
     )
 
 
@@ -1000,9 +1803,21 @@ async def main() -> int:
     config = config_from_args(args)
     config.validate()
     LOG.info("Configuration: %s", json.dumps(serializable_config(config), default=str))
+    if config.safety.allow_sustained_output_for_dry_test:
+        LOG.warning(
+            "DRY TEST MODE: sustained AO is allowed; use only with a scope or dummy load. "
+            "Amplitude and slew limits remain active."
+        )
 
     esn = EsnRuntime(ESN_ARTIFACT, config)
-    state = RuntimeState(esn_ready=esn.ready, start_paused=config.start_paused)
+    state = RuntimeState(
+        esn_ready=esn.ready,
+        start_paused=config.start_paused,
+        electrode_labels=config.electrode_labels,
+        ctx_index=config.ctx_index,
+        pulse_threshold_std=config.pulse_threshold_std,
+        pulse_window_sec=config.pulse_window_sec,
+    )
     telemetry = Telemetry()
     hub = UiHub(config.ui_queue_packets)
     metadata = {
@@ -1011,11 +1826,14 @@ async def main() -> int:
         "esn_artifact": str(ESN_ARTIFACT),
         "esn_ready": esn.ready,
         "esn_error": esn.error,
+        "esn_bridge": "application-owned chunk adaptation and stimulation mapping",
+        "ao_scheduler": "dynamic non-regenerating writer; no fixed refill count or mandatory batch size",
     }
-    recorder = BinaryRecorder(config, metadata)
+    recorder = H5Recorder(config, metadata)
     loop = asyncio.get_running_loop()
-    core = ProcessingCore(config, state, esn, recorder, hub, loop, telemetry)
-    daq: BaseDaq = MockDaq(config, state, core, telemetry, overload_ms=args.mock_overload_ms) if args.mock else RealDaq(config, state, core, telemetry)
+    core = AsyncUiProcessingCore(config, state, esn, recorder, hub, loop, telemetry)
+    replay_mode = args.mock or args.mock_replay is not None
+    daq: BaseDaq = MockDaq(config, state, core, telemetry, overload_ms=args.mock_overload_ms) if replay_mode else RealDaq(config, state, core, telemetry)
     watchdog = Watchdog(config, state, telemetry, daq)
 
     def daq_worker() -> None:
@@ -1064,6 +1882,7 @@ async def main() -> int:
         daq.request_safe_zero()
         await asyncio.to_thread(recorder.close)
         daq_thread.join(timeout=3.0)
+        core.close_ui()
         server.close()
         await server.wait_closed()
         if timer:
@@ -1073,6 +1892,8 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(threadName)s %(message)s")
     try:
         raise SystemExit(asyncio.run(main()))
