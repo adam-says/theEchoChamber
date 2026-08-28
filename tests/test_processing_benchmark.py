@@ -11,6 +11,28 @@ import benchmarkEchoChamberProcessing as benchmark
 
 
 class ProcessingBenchmarkTests(unittest.TestCase):
+    def test_processing_converts_raw_volts_to_electrode_millivolts(self) -> None:
+        class Bridge:
+            received = None
+
+            def process(self, values, *, ctx_index):
+                self.received = values.copy()
+                return np.zeros((1, values.shape[1]))
+
+        class Safety:
+            @staticmethod
+            def process(command):
+                return command, None
+
+        bridge = Bridge()
+        source = benchmark.BlockSource(np.ones((2, 100)), 100)
+        benchmark.process_once(
+            bridge, Safety(), source, ctx_index=1,
+            amplifier_gain=(10.0, 20.0), injected_delay_ms=0.0,
+        )
+        np.testing.assert_allclose(bridge.received[0], 100.0)
+        np.testing.assert_allclose(bridge.received[1], 50.0)
+
     def test_synthetic_source_returns_repeatable_two_channel_blocks(self) -> None:
         first = benchmark.synthetic_lfp(20_000, 0.1, seed=7)
         second = benchmark.synthetic_lfp(20_000, 0.1, seed=7)

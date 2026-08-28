@@ -1,8 +1,7 @@
-"""Application-owned compatibility layer between Echo Chamber and the ESN.
+"""Application boundary between Echo Chamber and numeric ESN inference.
 
-The `esn` package is treated as a frozen prediction engine.  
-This module adapts DAQ-sized blocks to the artifact's preferred chunk
-size and owns all Echo Chamber stimulation mapping and diagnostics.
+This module adapts DAQ-sized blocks to the artifact's preferred chunk size and
+owns all stimulation mapping and diagnostics.
 """
 
 from __future__ import annotations
@@ -16,6 +15,7 @@ import numpy as np
 
 
 StimMode = Literal["off", "passthrough", "threshold_pulse"]
+PulsePolarity = Literal["absolute", "positive", "negative"]
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,7 @@ class EchoChamberEsnBridge:
         passthrough_dc_block_hz: float = 0.5,
         pulse_threshold_std: float = 3.0,
         pulse_window_sec: float = 10.0,
+        pulse_polarity: PulsePolarity = "absolute",
         ao_command_gain_v_per_esn_unit: float = 1.0,
     ) -> None:
         self.streamer = streamer
@@ -72,6 +73,7 @@ class EchoChamberEsnBridge:
         self.passthrough_dc_block_hz = 0.0
         self.pulse_threshold_std = 1.0
         self.pulse_window_sec = 10.0
+        self.pulse_polarity: PulsePolarity = "absolute"
         pulse_cfg = getattr(streamer, "pulse_cfg", None)
         self.pulse_min_interval_sec = float(getattr(pulse_cfg, "min_interval_sec", 0.5))
         self.pulse_duration_ms = float(getattr(pulse_cfg, "pulse_duration_ms", 5.0))
@@ -83,6 +85,8 @@ class EchoChamberEsnBridge:
         self._samples_since_pulse = 10**9
         self._dc_previous_input: Optional[float] = None
         self._dc_previous_output = 0.0
+        self._previous_pulse_metric: Optional[float] = None
+        self._pending_pulse = np.empty(0, dtype=np.float64)
         self._diagnostics = BridgeDiagnostics(
             np.full((1, self.runtime_chunk_size), np.nan), float("nan"), float("nan"), False
         )
@@ -104,6 +108,7 @@ class EchoChamberEsnBridge:
             passthrough_dc_block_hz=passthrough_dc_block_hz,
             pulse_threshold_std=pulse_threshold_std,
             pulse_window_sec=pulse_window_sec,
+            pulse_polarity=pulse_polarity,
         )
 
     @classmethod
@@ -112,16 +117,10 @@ class EchoChamberEsnBridge:
         artifact: Path | str,
         **kwargs: Any,
     ) -> "EchoChamberEsnBridge":
-        # Progress bars and terminal output do not belong in the real-time path.
-        try:
-            from reservoirpy.utils import verbosity
-
-            verbosity(0)
-        except Exception:
-            pass
         from esn import load_artifact
 
-        return cls(load_artifact(str(artifact)), **kwargs)
+        backend = str(kwargs.pop("esn_backend", "auto"))
+        return cls(load_artifact(str(artifact), backend=backend), **kwargs)
 
     def configure(
         self,
@@ -131,6 +130,7 @@ class EchoChamberEsnBridge:
         passthrough_dc_block_hz: Optional[float] = None,
         pulse_threshold_std: Optional[float] = None,
         pulse_window_sec: Optional[float] = None,
+        pulse_polarity: Optional[PulsePolarity] = None,
     ) -> None:
         if stim_mode is not None:
             if stim_mode not in {"off", "passthrough", "threshold_pulse"}:
@@ -154,6 +154,10 @@ class EchoChamberEsnBridge:
             self.pulse_window_sec = float(pulse_window_sec)
             maxlen = max(1, int(self.pulse_window_sec * self.model_rate))
             self._recent = deque(self._recent, maxlen=maxlen)
+        if pulse_polarity is not None:
+            if pulse_polarity not in {"absolute", "positive", "negative"}:
+                raise ValueError(f"invalid pulse polarity: {pulse_polarity}")
+            self.pulse_polarity = pulse_polarity
 
     def reset(self) -> None:
         self.streamer.reset()
@@ -161,6 +165,8 @@ class EchoChamberEsnBridge:
         self._samples_since_pulse = 10**9
         self._dc_previous_input = None
         self._dc_previous_output = 0.0
+        self._previous_pulse_metric = None
+        self._pending_pulse = np.empty(0, dtype=np.float64)
         self._diagnostics = BridgeDiagnostics(
             np.full((1, self.runtime_chunk_size), np.nan), float("nan"), float("nan"), False
         )
@@ -183,13 +189,14 @@ class EchoChamberEsnBridge:
             predictions.append(prediction)
         model_output = np.concatenate(predictions, axis=1)
 
-        threshold, peak, fired = self._update_pulse_state(model_output)
+        conditioned = self._condition_model_output(model_output)
+        threshold, peak, fired, trigger_sample = self._update_pulse_state(conditioned)
         if self.stim_mode == "off":
             command = np.zeros_like(model_output)
         elif self.stim_mode == "threshold_pulse":
-            command = self._pulse_command(model_output.shape[1]) if fired else np.zeros_like(model_output)
+            command = self._pulse_command(model_output.shape[1], trigger_sample if fired else None)
         else:
-            command = self._passthrough_command(model_output)
+            command = self._passthrough_command(conditioned)
 
         self._diagnostics = BridgeDiagnostics(model_output.copy(), threshold, peak, fired)
         return command
@@ -201,26 +208,44 @@ class EchoChamberEsnBridge:
             model = np.full((1, samples), np.nan)
         return model.copy(), diagnostics.pulse_threshold, diagnostics.pulse_peak, diagnostics.pulse_fired
 
-    def _update_pulse_state(self, model_output: np.ndarray) -> tuple[float, float, bool]:
-        # The frozen ESN exposes only its 20 kHz prediction. Sampling it at the
-        # model rate establishes an explicit, public application boundary.
-        values = np.asarray(model_output[0, ::self.decim_q], dtype=np.float64)
-        peak = float(np.max(values))
+    def _update_pulse_state(
+        self, conditioned_output: np.ndarray
+    ) -> tuple[float, float, bool, Optional[int]]:
+        values = np.asarray(conditioned_output[0, ::self.decim_q], dtype=np.float64)
+        if self.pulse_polarity == "positive":
+            metric = values
+        elif self.pulse_polarity == "negative":
+            metric = -values
+        else:
+            metric = np.abs(values)
+        peak = float(np.max(metric))
         warmup = max(5, int(min(1.0, self.pulse_window_sec) * self.model_rate))
         threshold = float("nan")
         fired = False
+        trigger_index: Optional[int] = None
+        self._samples_since_pulse += values.size
         if len(self._recent) >= warmup:
             history = np.fromiter(self._recent, dtype=np.float64)
             threshold = float(np.mean(history) + self.pulse_threshold_std * (np.std(history) + 1e-12))
             interval = int(self.pulse_min_interval_sec * self.model_rate)
-            self._samples_since_pulse += values.size
-            fired = peak > threshold and self._samples_since_pulse >= interval
-            if fired:
+            previous = self._previous_pulse_metric
+            crossings = np.flatnonzero(
+                (metric > threshold)
+                & np.r_[previous is None or previous <= threshold, metric[:-1] <= threshold]
+            )
+            if crossings.size and self._samples_since_pulse >= interval:
+                fired = True
+                trigger_index = int(crossings[0])
                 self._samples_since_pulse = 0
-        self._recent.extend(float(value) for value in values)
-        return threshold, peak, fired
+        self._previous_pulse_metric = float(metric[-1]) if metric.size else self._previous_pulse_metric
+        # Detected-event blocks are excluded so the event cannot inflate its
+        # own adaptive threshold and suppress subsequent genuine events.
+        if not fired:
+            self._recent.extend(float(value) for value in metric)
+        trigger_sample = trigger_index * self.decim_q if trigger_index is not None else None
+        return threshold, peak, fired, trigger_sample
 
-    def _passthrough_command(self, model_output: np.ndarray) -> np.ndarray:
+    def _condition_model_output(self, model_output: np.ndarray) -> np.ndarray:
         source = model_output.reshape(-1)
         if self.passthrough_dc_block_hz > 0:
             dt_s = 1.0 / self.sample_rate
@@ -240,17 +265,33 @@ class EchoChamberEsnBridge:
             self._dc_previous_input = previous_input
             self._dc_previous_output = previous_output
             source = blocked
+        return source.reshape(1, -1)
+
+    def _passthrough_command(self, conditioned_output: np.ndarray) -> np.ndarray:
+        source = conditioned_output.reshape(-1)
         command = (source.reshape(1, -1) * self.stim_gain
                    * self.ao_command_gain_v_per_esn_unit)
         return np.clip(command, float(self.stim_clip_v[0]), float(self.stim_clip_v[1]))
 
-    def _pulse_command(self, samples: int) -> np.ndarray:
-        duration = min(samples, max(1, int(self.pulse_duration_ms * self.sample_rate / 1_000.0)))
-        time_s = np.arange(duration, dtype=np.float64) / self.sample_rate
-        phase = 2.0 * np.pi * self.pulse_freq_hz * time_s
-        wave = np.sign(np.sin(phase)) if self.pulse_waveform == "square" else np.sin(phase)
+    def _pulse_command(self, samples: int, trigger_sample: Optional[int]) -> np.ndarray:
         command = np.zeros((1, samples), dtype=np.float64)
-        command[0, :duration] = (
-            wave * self.stim_gain * self.ao_command_gain_v_per_esn_unit
-        )
+        continuation = min(samples, self._pending_pulse.size)
+        if continuation:
+            command[0, :continuation] = self._pending_pulse[:continuation]
+            self._pending_pulse = self._pending_pulse[continuation:].copy()
+        if trigger_sample is not None:
+            # CONFIRMED PENDING TEST: preserve the collaborator-selected 5 ms,
+            # 100 Hz sine half-cycle. Verify its measured polarity, amplitude,
+            # and duration on the NI rig before interpreting biological runs.
+            duration = max(1, int(self.pulse_duration_ms * self.sample_rate / 1_000.0))
+            time_s = np.arange(duration, dtype=np.float64) / self.sample_rate
+            phase = 2.0 * np.pi * self.pulse_freq_hz * time_s
+            wave = np.sign(np.sin(phase)) if self.pulse_waveform == "square" else np.sin(phase)
+            wave = wave * self.stim_gain * self.ao_command_gain_v_per_esn_unit
+            start = min(samples, max(0, int(trigger_sample)))
+            available = samples - start
+            copied = min(available, duration)
+            if copied:
+                command[0, start:start + copied] = wave[:copied]
+            self._pending_pulse = wave[copied:].copy()
         return np.clip(command, float(self.stim_clip_v[0]), float(self.stim_clip_v[1]))

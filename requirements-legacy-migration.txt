@@ -1,0 +1,5 @@
+# Offline migration only; never required by echoChamber.py.
+numpy==1.26.4
+scipy==1.13.1
+scikit-learn==1.6.1
+reservoirpy==0.3.11

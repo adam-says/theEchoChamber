@@ -1,0 +1,55 @@
+{
+  "created_utc": "2026-08-27T13:02:18.805407+00:00",
+  "format_tag": "echo-chamber-esn-inference-v1",
+  "model": {
+    "activation": "tanh",
+    "leak_rate": 0.3665234728579373,
+    "readout": "linear_with_bias",
+    "units": 10
+  },
+  "npz_sha256": "3e8e666f8422646e2c63ccca9dcf92d80a7e12d821374c10a84da9f174252b50",
+  "preprocessing": {
+    "anti_alias": {
+      "cutoff_hz": 500.0,
+      "family": "fir",
+      "numtaps": 201
+    },
+    "filter_state": "zeros",
+    "fs_input_hz": 20000,
+    "fs_model_hz": 2000,
+    "model_lowpass": {
+      "cutoff_hz": 25.0,
+      "family": "fir",
+      "numtaps": 401
+    },
+    "preferred_chunk_size": 100,
+    "upsampling": "causal_linear"
+  },
+  "production_eligible": false,
+  "pulse": {
+    "duration_ms": 5.0,
+    "frequency_hz": 100.0,
+    "waveform": "sine_half_cycle"
+  },
+  "purpose": "legacy_replay_and_numpy_equivalence_only",
+  "scaling": {
+    "formula": "scaled = physical * scale + offset",
+    "separate_input_target_scalers": false,
+    "warning": "Historical notebook serialized only the CA3-fitted scaler; its coefficients are duplicated for CTX solely to reproduce legacy behavior."
+  },
+  "sources": {
+    "primary_pickle": {
+      "name": "model.pkl",
+      "sha256": "05067a4f80bdda5ca2b63e78e4163e0a639ec0255e7d5a7fe877f140f46b84cc"
+    },
+    "secondary_pickle": {
+      "name": "secondary_objs.pkl",
+      "sha256": "2197028c74630c9c3b95ccbcf19848fe37c1e657566133424da5784bd5a5eb61"
+    }
+  },
+  "training": {
+    "ridge": 4.4065269894699847e-10,
+    "status": "requires_corrected_refit_from_paired_source_recordings",
+    "washout_seconds": 1.0
+  }
+}

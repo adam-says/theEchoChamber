@@ -1,0 +1,16 @@
+{
+  "format_tag": "echo-chamber-replay-sidecar-v1",
+  "data_file": "test_AI0_CA3_AI1_CTX.h5",
+  "data_sha256": "40c7fbb780ff97979dbc6507bb3613b186d87c528942769faf6f7a8769ff1dd1",
+  "sample_rate_hz": 20000,
+  "channel_labels_by_index": [
+    "CA3",
+    "Cortex"
+  ],
+  "ctx_index": 1,
+  "provenance": {
+    "recording_description": "Whole-slice 4-AP recording supplied for realistic mock replay",
+    "mapping_basis": "The filename and handoff identify AI0=CA3 and AI1=CTX.",
+    "embedded_metadata_conflict": "The HDF5 v3 channel_labels and embedded configuration say AI0=Cortex and AI1=CA3. The sidecar is authoritative for mock replay so the conflict is explicit and auditable. Confirm against the acquisition notes before biological interpretation."
+  }
+}

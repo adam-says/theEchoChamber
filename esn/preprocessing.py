@@ -44,7 +44,7 @@ class StreamingFIR:
         x: shape (n,) or (n, channels)
         returns same shape as x
         """
-        from scipy.signal import lfilter, lfilter_zi
+        from scipy.signal import lfilter
 
         x = np.asarray(x, dtype=np.float64)
         orig_shape = x.shape
@@ -57,8 +57,12 @@ class StreamingFIR:
 
         n_ch = x2.shape[1]
         if self.zi is None:
-            zi_1ch = lfilter_zi(self.b, self.a).astype(np.float64)
-            self.zi = np.tile(zi_1ch[:, None], (1, n_ch))
+            # A zero state is explicit, reproducible, and matches offline
+            # causal ``lfilter`` preprocessing.  ``lfilter_zi`` represents the
+            # steady state for a unit step; using it unscaled injected an
+            # arbitrary startup transient into every recording.
+            state_size = max(self.a.size, self.b.size) - 1
+            self.zi = np.zeros((state_size, n_ch), dtype=np.float64)
 
         y = np.empty_like(x2, dtype=np.float64)
         for ch in range(n_ch):

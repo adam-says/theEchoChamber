@@ -1,0 +1,32 @@
+{
+  "format_tag": "echo-chamber-hardware-profile-v1",
+  "validated_for_real_hardware": false,
+  "profile_name": "COPY_AND_MEASURE_DO_NOT_ENABLE",
+  "validation": {
+    "date": null,
+    "reviewer": null,
+    "daq_serial": null,
+    "amplifier_identifier": null,
+    "stimulus_isolator_identifier": null,
+    "scope_or_dummy_load_evidence": null
+  },
+  "electrode_labels": [
+    "CA3",
+    "Cortex"
+  ],
+  "ctx_index": 1,
+  "amplifier_gain": [
+    null,
+    null
+  ],
+  "ao_command_gain_v_per_esn_unit": null,
+  "safety": {
+    "max_command_v": null,
+    "max_slew_v_per_s": null,
+    "max_abs_area_v_s": null,
+    "area_window_s": null,
+    "max_active_fraction": null,
+    "active_threshold_v": null,
+    "max_consecutive_active_s": null
+  }
+}

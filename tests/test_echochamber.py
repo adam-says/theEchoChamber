@@ -19,8 +19,8 @@ class EchoChamberRecorderTests(unittest.TestCase):
         single = np.full((1, count), value, dtype=np.float64)
         return app.RecordBlock(
             sample_index=start,
+            ao_target_sample_index=start + count,
             ai=pair,
-            calibrated_lfp=pair * 100.0,
             raw_esn=single,
             model_esn=single + 1.0,
             pulse_threshold=single + 2.0,
@@ -28,10 +28,11 @@ class EchoChamberRecorderTests(unittest.TestCase):
             pulse_fired=np.full((1, count), float(fired)),
             safe_ao=single + 4.0,
             actual_stim=None,
+            armed=mode > 1,
             mode_value=mode,
         )
 
-    def test_compact_v3_layout_scaling_and_sparse_events(self) -> None:
+    def test_compact_v4_layout_scaling_and_sparse_events(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             config = app.AppConfig(
                 record_dir=Path(directory), processing_block_ms=10.0,
@@ -48,8 +49,8 @@ class EchoChamberRecorderTests(unittest.TestCase):
             recorder.close()
 
             with h5py.File(path, "r") as recording:
-                self.assertEqual(recording.attrs["format_tag"], "echoChamber_H5_v3")
-                self.assertEqual(int(recording.attrs["schema_version"]), 3)
+                self.assertEqual(recording.attrs["format_tag"], "echoChamber_H5_v4")
+                self.assertEqual(int(recording.attrs["schema_version"]), 4)
                 self.assertNotIn("data", recording)
                 ai = recording["signals/ai_raw_V"]
                 self.assertEqual(ai.dtype, np.dtype("float32"))
@@ -59,8 +60,14 @@ class EchoChamberRecorderTests(unittest.TestCase):
                 self.assertEqual(recording["events/pulses"].shape[0], 1)
                 self.assertEqual(recording["events/sample_discontinuities"].shape[0], 1)
                 self.assertEqual(recording["diagnostics/blocks"].shape[0], 2)
+                blocks = recording["diagnostics/blocks"][:]
+                np.testing.assert_array_equal(blocks["armed"], [1, 1])
+                np.testing.assert_array_equal(
+                    blocks["ao_target_sample_index"],
+                    [100 + config.chunk_size, 100 + 2 * config.chunk_size + 5],
+                )
                 metadata = json.loads(recording.attrs["metadata_json"])
-                self.assertEqual(metadata["format_tag"], "echoChamber_H5_v3")
+                self.assertEqual(metadata["format_tag"], "echoChamber_H5_v4")
 
             loaded = load_recording(path)
             self.assertEqual(

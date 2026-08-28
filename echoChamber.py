@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import dataclasses
 import datetime as dt
+import hashlib
 import json
 import logging
 import math
@@ -73,9 +74,10 @@ except (ImportError, OSError):
 
 LOG = logging.getLogger("echoChamber")
 BASE_DIR: Final = Path(__file__).resolve().parent
-ESN_ARTIFACT: Final = BASE_DIR / "esn_artifact.pkl"
+ESN_ARTIFACT: Final = BASE_DIR / "artifacts" / "esn_corrected_v1.npz"
 DEFAULT_MOCK_REPLAY: Final = BASE_DIR / "sample" / "test_AI0_CA3_AI1_CTX.h5"
-H5_FORMAT_TAG: Final = "echoChamber_H5_v3"
+DEFAULT_HARDWARE_PROFILE: Final = BASE_DIR / "hardware_profiles" / "lab_pending_test.json"
+H5_FORMAT_TAG: Final = "echoChamber_H5_v4"
 VALID_MODES: Final = {"control", "closed-loop"}
 VALID_STIM_MODES: Final = {"off", "passthrough", "threshold_pulse"}
 RECORDED_MODE_VALUES: Final = {
@@ -104,8 +106,9 @@ DEFAULT_PULSE_WINDOW_SEC = 10.0
 @dataclass(frozen=True)
 class SafetyConfig:
     """Independent limits applied after the unmodified ESN runtime."""
-# These parameters should work with the ISO-Flex stimulus isolator
-# This should be for pulse-only mode, for now.
+# CONFIRMED PENDING TEST: these are the current ISO-Flex/pulse-mode working
+# values. They must be checked on the NI rig with a scope or dummy load; the
+# application warns but does not block hardware testing with them.
 
     max_command_v: float = 5.0
     max_slew_v_per_s: float = 2_000.0 # Not needed for pulse only
@@ -130,9 +133,13 @@ class SafetyConfig:
                 raise ValueError(f"{name} must be finite and positive")
         if not 0 < self.max_active_fraction <= 1:
             raise ValueError("max_active_fraction must be in (0, 1]")
+        if not math.isfinite(self.active_threshold_v) or not 0 < self.active_threshold_v <= self.max_command_v:
+            raise ValueError("active_threshold_v must be in (0, max_command_v]")
         if self.isolator_command_v_per_output_unit is not None:
-            if not math.isfinite(self.isolator_command_v_per_output_unit) or self.isolator_command_v_per_output_unit <= 0:
-                raise ValueError("isolator conversion must be finite and positive")
+            raise ValueError(
+                "isolator_command_v_per_output_unit is obsolete; express the single conversion "
+                "with ao_command_gain_v_per_esn_unit"
+            )
 
 
 @dataclass(frozen=True)
@@ -140,20 +147,30 @@ class AppConfig:
     device: str = "Dev1"
     ai_channels: tuple[str, str] = ("ai0", "ai1")
     ao_channel: str = "ao0"
+    # CONFIRMED PENDING TEST: AI0=CA3 and AI1=Cortex, based on the filename and
+    # collaborator handoff despite conflicting metadata in the sample HDF5.
     electrode_labels: tuple[str, str] = ("CA3", "Cortex")
     # MultiClamp Primary Output voltage gain (output mV / electrode mV).
     # Electrode-referred input is therefore DAQ_V * 1000 / gain, in mV.
+    # CONFIRMED PENDING TEST: use gain 10 until the reported "100 mV/mV"
+    # setting (which would imply gain 100) is checked on the amplifier.
     amplifier_gain: tuple[float, float] = (10.0, 10.0)
     # AO remains a voltage command. This maps one numeric ESN output unit
     # (currently assumed to be mV) to NI AO volts before the UI stim gain.
+    # CONFIRMED PENDING TEST: one NI AO volt per physical ESN output unit.
     ao_command_gain_v_per_esn_unit: float = 1.0
     ctx_index: int = 1
     sample_rate: int = 20_000
-    processing_block_ms: float = 10.0
+    processing_block_ms: float = 5.0
     ao_target_lead_ms: float = 100.0
     passthrough_dc_block_hz: float = DEFAULT_PASSTHROUGH_DC_BLOCK_HZ
     pulse_threshold_std: float = DEFAULT_PULSE_THRESHOLD_STD
     pulse_window_sec: float = DEFAULT_PULSE_WINDOW_SEC
+    # CONFIRMED PENDING TEST: trigger either positive or negative excursions.
+    pulse_polarity: str = "absolute"
+    esn_backend: str = "auto"
+    model_artifact: Path = ESN_ARTIFACT
+    hardware_profile: Optional[Path] = None
     ai_min_v: float = -10.0
     ai_max_v: float = 10.0
     terminal_config: str = "RSE"
@@ -237,6 +254,10 @@ class AppConfig:
             raise ValueError("pulse_threshold_std must be finite and positive")
         if not math.isfinite(self.pulse_window_sec) or self.pulse_window_sec < 1:
             raise ValueError("pulse_window_sec must be finite and at least one second")
+        if self.pulse_polarity not in {"absolute", "positive", "negative"}:
+            raise ValueError("pulse_polarity must be absolute, positive, or negative")
+        if self.esn_backend not in {"auto", "numpy", "numba"}:
+            raise ValueError("esn_backend must be auto, numpy, or numba")
         if self.sample_rate % 2_000 or self.chunk_size % (self.sample_rate // 2_000):
             raise ValueError("configuration is incompatible with the fixed ESN runtime")
         if self.ai_min_v >= self.ai_max_v:
@@ -260,6 +281,8 @@ class StateSnapshot:
     stim_gain: float
     pulse_threshold_std: float
     pulse_window_sec: float
+    pulse_polarity: str
+    armed: bool
     fault: Optional[str]
     esn_ready: bool
     electrode_labels: tuple[str, str]
@@ -269,16 +292,19 @@ class StateSnapshot:
 class RuntimeState:
     def __init__(self, *, esn_ready: bool, start_paused: bool,
                  electrode_labels: tuple[str, str], ctx_index: int,
-                 pulse_threshold_std: float, pulse_window_sec: float) -> None:
+                 pulse_threshold_std: float, pulse_window_sec: float,
+                 pulse_polarity: str = "absolute") -> None:
         self._lock = threading.RLock()
         self._running = True
         self._acquiring = not start_paused
         self._recording = False
         self._mode = "control"
-        self._stim_mode = "passthrough"
-        self._stim_gain = 1.0
+        self._stim_mode = "off"
+        self._stim_gain = 0.0
         self._pulse_threshold_std = pulse_threshold_std
         self._pulse_window_sec = pulse_window_sec
+        self._pulse_polarity = pulse_polarity
+        self._armed = False
         self._fault: Optional[str] = None
         self._esn_ready = esn_ready
         self._electrode_labels = electrode_labels
@@ -295,6 +321,8 @@ class RuntimeState:
                 self._stim_gain,
                 self._pulse_threshold_std,
                 self._pulse_window_sec,
+                self._pulse_polarity,
+                self._armed,
                 self._fault,
                 self._esn_ready,
                 self._electrode_labels,
@@ -306,12 +334,15 @@ class RuntimeState:
             self._running = False
             self._acquiring = False
             self._mode = "control"
+            self._armed = False
 
     def set_acquiring(self, value: bool) -> None:
         with self._lock:
             if self._fault and value:
                 raise ValueError("cannot start acquisition while faulted")
             self._acquiring = bool(value)
+            if not value:
+                self._armed = False
 
     def set_recording(self, value: bool) -> None:
         with self._lock:
@@ -327,6 +358,8 @@ class RuntimeState:
                 raise ValueError("closed-loop unavailable while faulted")
             changed = self._mode != mode
             self._mode = mode
+            if mode != "closed-loop":
+                self._armed = False
             return changed
 
     def set_stim(self, stim_mode: str, gain: float, max_gain: float = 10.0) -> None:
@@ -337,6 +370,21 @@ class RuntimeState:
         with self._lock:
             self._stim_mode = stim_mode
             self._stim_gain = float(gain)
+            if stim_mode == "off" or gain == 0:
+                self._armed = False
+
+    def set_armed(self, value: bool) -> None:
+        with self._lock:
+            if value:
+                if self._fault:
+                    raise ValueError("cannot arm stimulation while faulted")
+                if not self._acquiring or self._mode != "closed-loop":
+                    raise ValueError("start acquisition and closed-loop computation before arming")
+                if self._stim_mode == "off" or self._stim_gain <= 0:
+                    raise ValueError("select a non-zero stimulation mode and gain before arming")
+                if not self._esn_ready:
+                    raise ValueError("cannot arm stimulation while the ESN is unavailable")
+            self._armed = bool(value)
 
     def set_pulse_threshold_std(self, value: float) -> None:
         if not math.isfinite(value) or not 0 < value <= 20:
@@ -349,6 +397,12 @@ class RuntimeState:
             raise ValueError("pulse baseline window must be finite and between 1 and 120 seconds")
         with self._lock:
             self._pulse_window_sec = float(value)
+
+    def set_pulse_polarity(self, value: str) -> None:
+        if value not in {"absolute", "positive", "negative"}:
+            raise ValueError("pulse polarity must be absolute, positive, or negative")
+        with self._lock:
+            self._pulse_polarity = value
 
     def set_cortex_channel(self, channel: str) -> tuple[str, str]:
         """Assign Cortex/CA3 to physical AI0/AI1 before recording begins."""
@@ -366,6 +420,7 @@ class RuntimeState:
             self._fault = message
             self._mode = "control"
             self._acquiring = False
+            self._armed = False
 
     def clear_fault(self) -> None:
         with self._lock:
@@ -431,6 +486,7 @@ class EsnRuntime:
     def __init__(self, artifact: Path, config: AppConfig) -> None:
         self.streamer: Any = None
         self.error: Optional[str] = None
+        self.production_eligible = False
         try:
             from esn_bridge import EchoChamberEsnBridge
 
@@ -441,6 +497,8 @@ class EsnRuntime:
                 passthrough_dc_block_hz=config.passthrough_dc_block_hz,
                 pulse_threshold_std=config.pulse_threshold_std,
                 pulse_window_sec=config.pulse_window_sec,
+                pulse_polarity=config.pulse_polarity,
+                esn_backend=config.esn_backend,
                 ao_command_gain_v_per_esn_unit=config.ao_command_gain_v_per_esn_unit,
             )
             expected = self.streamer.preferred_chunk_size
@@ -481,6 +539,9 @@ class EsnRuntime:
                     "closed-loop output is not sustainable at this chunk size", deadline_ms,
                 )
             self.streamer.configure(stim_mode="passthrough", stim_gain=1.0)
+            artifact_object = getattr(self.streamer.streamer, "artifact", None)
+            manifest = getattr(artifact_object, "manifest", {})
+            self.production_eligible = bool(manifest.get("production_eligible", False))
             LOG.info("ESN artifact loaded and passed startup self-test")
         except Exception as exc:
             self.streamer = None
@@ -492,7 +553,7 @@ class EsnRuntime:
         return self.streamer is not None
 
     def configure(self, stim_mode: str, gain: float, pulse_threshold_std: float | None = None,
-                  pulse_window_sec: float | None = None) -> None:
+                  pulse_window_sec: float | None = None, pulse_polarity: str | None = None) -> None:
         if not self.streamer:
             raise RuntimeError(self.error or "ESN unavailable")
         self.streamer.configure(
@@ -500,6 +561,7 @@ class EsnRuntime:
             stim_gain=gain,
             pulse_threshold_std=pulse_threshold_std,
             pulse_window_sec=pulse_window_sec,
+            pulse_polarity=pulse_polarity,
         )
 
     def reset(self) -> None:
@@ -540,8 +602,6 @@ class StimulusSafetyAdapter:
 
     def process(self, raw: np.ndarray) -> tuple[np.ndarray, Optional[str]]:
         signal_v = np.asarray(raw, dtype=np.float64).reshape(-1)
-        if self.config.isolator_command_v_per_output_unit:
-            signal_v = signal_v * self.config.isolator_command_v_per_output_unit
         if not np.all(np.isfinite(signal_v)):
             return self._trip(signal_v.size, "non-finite ESN output")
 
@@ -584,8 +644,8 @@ class StimulusSafetyAdapter:
 @dataclass(frozen=True)
 class RecordBlock:
     sample_index: int
+    ao_target_sample_index: int
     ai: np.ndarray
-    calibrated_lfp: np.ndarray
     raw_esn: np.ndarray
     model_esn: np.ndarray
     pulse_threshold: np.ndarray
@@ -593,6 +653,7 @@ class RecordBlock:
     pulse_fired: np.ndarray
     safe_ao: np.ndarray
     actual_stim: Optional[np.ndarray]
+    armed: bool
     mode_value: float
 
 
@@ -678,7 +739,7 @@ class H5Recorder:
             meta.update({
                 "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "data_file": self._data_path.name,
-                "format": "Echo Chamber HDF5 v3; compact typed signals and sparse events",
+                "format": "Echo Chamber HDF5 v4; hardware-indexed signals and sparse events",
                 "format_tag": H5_FORMAT_TAG,
                 "ao_pipeline_delay_samples": self.config.ao_lead_samples,
                 "ao_pipeline_delay_seconds": self.config.ao_lead_samples / self.config.sample_rate,
@@ -713,10 +774,12 @@ class H5Recorder:
                 )
                 self._actual_dataset.attrs["unit"] = "V"
             diagnostic_dtype = np.dtype([
-                ("sample_offset", "<u8"), ("ai_sample_index", "<u8"), ("sample_count", "<u4"),
+                ("sample_offset", "<u8"), ("ai_sample_index", "<u8"),
+                ("ao_target_sample_index", "<u8"), ("sample_count", "<u4"),
                 ("raw_esn_mean_V", "<f4"), ("raw_esn_min_V", "<f4"),
                 ("raw_esn_max_V", "<f4"), ("model_esn_mean_mV", "<f4"),
                 ("pulse_threshold_mV", "<f4"), ("pulse_peak_mV", "<f4"),
+                ("armed", "u1"),
             ])
             self._diagnostics_dataset = diagnostics.create_dataset(
                 "blocks", shape=(0,), maxshape=(None,), chunks=(max(1, self._batch_samples // self.config.chunk_size),),
@@ -741,7 +804,7 @@ class H5Recorder:
                 ]), **compression,
             )
             self._file.attrs["schema"] = "echo-chamber-recording"
-            self._file.attrs["schema_version"] = 3
+            self._file.attrs["schema_version"] = 4
             self._file.attrs["format_tag"] = H5_FORMAT_TAG
             self._file.attrs["metadata_json"] = json.dumps(meta, default=str)
             self._file.attrs["sample_rate_hz"] = self.config.sample_rate
@@ -782,7 +845,16 @@ class H5Recorder:
                 self._accepting = False
                 return
             self._accepting = False
-        self.items.join()
+        deadline = time.monotonic() + timeout
+        while self.items.unfinished_tasks:
+            if not self._thread.is_alive():
+                raise RuntimeError(self._error or "recording writer stopped before its queue drained")
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"recording queue did not drain within {timeout:.1f}s "
+                    f"({self.items.unfinished_tasks} item(s) remain)"
+                )
+            time.sleep(0.01)
         with self._lock:
             if self._file:
                 self._file.attrs["committed_samples"] = self._committed_samples
@@ -801,8 +873,10 @@ class H5Recorder:
 
     def close(self) -> None:
         self.stop_recording()
-        self.items.put(None)
+        self.items.put(None, timeout=1.0)
         self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise TimeoutError("recording writer did not stop within 5 seconds")
 
     def _writer_loop(self) -> None:
         while True:
@@ -912,10 +986,11 @@ class H5Recorder:
             self._last_mode = mode
 
         diagnostic = np.asarray([(
-            offset, item.sample_index, count,
+            offset, item.sample_index, item.ao_target_sample_index, count,
             self._finite_mean(item.raw_esn), self._finite_min(item.raw_esn),
             self._finite_max(item.raw_esn), self._finite_mean(item.model_esn),
             self._finite_mean(item.pulse_threshold), self._finite_mean(item.pulse_peak),
+            int(item.armed),
         )], dtype=self._diagnostics_dataset.dtype)
         self._append_records(self._diagnostics_dataset, diagnostic)
 
@@ -931,16 +1006,20 @@ class UiHub:
     def __init__(self, queue_size: int) -> None:
         self.queue_size = queue_size
         self._clients: set[asyncio.Queue[str]] = set()
+        self._latest: Optional[str] = None
 
     def subscribe(self) -> asyncio.Queue[str]:
         client: asyncio.Queue[str] = asyncio.Queue(maxsize=self.queue_size)
         self._clients.add(client)
+        if self._latest is not None:
+            client.put_nowait(self._latest)
         return client
 
     def unsubscribe(self, client: asyncio.Queue[str]) -> None:
         self._clients.discard(client)
 
     def publish(self, packet: str) -> None:
+        self._latest = packet
         for client in tuple(self._clients):
             if client.full():
                 with contextlib.suppress(asyncio.QueueEmpty):
@@ -974,15 +1053,27 @@ class ProcessingCore:
         self.ui_ao: list[np.ndarray] = []
         self.ui_preview: list[np.ndarray] = []
         self.ui_threshold: list[np.ndarray] = []
+        self.ui_sample_indices: list[np.ndarray] = []
         self.last_ui_ns = time.perf_counter_ns()
-        self._last_esn_config: Optional[tuple[str, float, float]] = None
+        self._last_esn_config: Optional[tuple[str, float, float, float, str]] = None
         # ESN/filter state belongs exclusively to the DAQ thread.  UI commands
         # only change RuntimeState; transitions are applied here at a block
         # boundary so reset() can never race process_chunk().
         self._active_mode = "control"
 
-    def process(self, all_ai: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, Optional[str]]:
+    def process(
+        self,
+        all_ai: np.ndarray,
+        *,
+        sample_index: Optional[int] = None,
+        ao_target_sample_index: Optional[int] = None,
+    ) -> tuple[np.ndarray, np.ndarray, float, Optional[str]]:
         snapshot = self.state.snapshot()
+        source_sample_index = self.sample_index if sample_index is None else int(sample_index)
+        self.sample_index = source_sample_index
+        command_target_index = (
+            source_sample_index if ao_target_sample_index is None else int(ao_target_sample_index)
+        )
         lfp = np.asarray(all_ai[:2], dtype=np.float64)
         electrode_lfp_mv = lfp * (
             1_000.0 / np.asarray(self.config.amplifier_gain, dtype=np.float64)
@@ -1003,7 +1094,10 @@ class ProcessingCore:
             self._active_mode = snapshot.mode
 
         if snapshot.mode == "closed-loop":
-            desired_config = (snapshot.stim_mode, snapshot.stim_gain, snapshot.pulse_threshold_std, snapshot.pulse_window_sec)
+            desired_config = (
+                snapshot.stim_mode, snapshot.stim_gain, snapshot.pulse_threshold_std,
+                snapshot.pulse_window_sec, snapshot.pulse_polarity,
+            )
             if desired_config != self._last_esn_config:
                 self.esn.configure(*desired_config)
                 self._last_esn_config = desired_config
@@ -1014,7 +1108,9 @@ class ProcessingCore:
             pulse_threshold.fill(threshold)
             pulse_peak.fill(peak)
             pulse_fired.fill(float(fired))
-            safe, safety_reason = self.safety.process(raw)
+            safe, safety_reason = (
+                self.safety.process(raw) if snapshot.armed else (np.zeros_like(raw), None)
+            )
             if safety_reason:
                 self.telemetry.trip()
                 LOG.error("Stimulation safety trip: %s", safety_reason)
@@ -1025,9 +1121,10 @@ class ProcessingCore:
 
         if snapshot.recording:
             self.recorder.submit(RecordBlock(
-                self.sample_index, lfp.copy(), electrode_lfp_mv.copy(), raw.copy(), model_esn.copy(),
+                source_sample_index, command_target_index, lfp.copy(), raw.copy(), model_esn.copy(),
                 pulse_threshold.copy(), pulse_peak.copy(), pulse_fired.copy(), safe.copy(),
                 actual_stim.copy() if actual_stim is not None else None,
+                snapshot.armed,
                 RECORDED_MODE_VALUES[(snapshot.mode, snapshot.stim_mode)],
             ))
 
@@ -1047,7 +1144,7 @@ class ProcessingCore:
             preview = np.full_like(safe, np.nan)
             threshold_preview = np.full_like(safe, np.nan)
         self._publish_ui(electrode_lfp_mv, safe, preview, threshold_preview, snapshot, safety_reason)
-        self.sample_index += self.config.chunk_size
+        self.sample_index = source_sample_index + self.config.chunk_size
         return raw, safe, esn_ms, safety_reason
 
     def _publish_ui(self, ai: np.ndarray, ao: np.ndarray, preview: np.ndarray, threshold: np.ndarray,
@@ -1064,6 +1161,7 @@ class UiJob:
     ao: np.ndarray
     preview: np.ndarray
     threshold: np.ndarray
+    sample_indices: np.ndarray
     snapshot: StateSnapshot
     safety_reason: Optional[str]
 
@@ -1097,17 +1195,21 @@ class AsyncUiProcessingCore(ProcessingCore):
         self.ui_ao.append(ao.copy())
         self.ui_preview.append(preview.copy())
         self.ui_threshold.append(threshold.copy())
+        self.ui_sample_indices.append(
+            np.arange(self.sample_index, self.sample_index + ai.shape[1], dtype=np.uint64)
+        )
         now = time.perf_counter_ns()
         if (now - self.last_ui_ns) / 1e9 < self.config.ui_interval_s:
             return
         job = UiJob(
             np.hstack(self.ui_ai), np.hstack(self.ui_ao), np.hstack(self.ui_preview),
-            np.hstack(self.ui_threshold), snapshot, safety_reason,
+            np.hstack(self.ui_threshold), np.hstack(self.ui_sample_indices), snapshot, safety_reason,
         )
         self.ui_ai.clear()
         self.ui_ao.clear()
         self.ui_preview.clear()
         self.ui_threshold.clear()
+        self.ui_sample_indices.clear()
         self.last_ui_ns = now
         if self._ui_jobs.full():
             with contextlib.suppress(queue.Empty):
@@ -1130,6 +1232,7 @@ class AsyncUiProcessingCore(ProcessingCore):
                     "ao": job.ao[:, ::self.config.visual_downsample].tolist(),
                     "passthrough_preview": ui_series(job.preview, self.config.visual_downsample),
                     "pulse_threshold_preview": ui_series(job.threshold, self.config.visual_downsample),
+                    "sample_indices": job.sample_indices[::self.config.visual_downsample].tolist(),
                     "mode": snapshot.mode,
                     "is_recording": snapshot.recording,
                     "is_acquiring": snapshot.acquiring,
@@ -1137,7 +1240,10 @@ class AsyncUiProcessingCore(ProcessingCore):
                     "stim_gain": snapshot.stim_gain,
                     "pulse_threshold_std": snapshot.pulse_threshold_std,
                     "pulse_window_sec": snapshot.pulse_window_sec,
+                    "pulse_polarity": snapshot.pulse_polarity,
+                    "armed": snapshot.armed,
                     "fs": self.config.sample_rate / self.config.visual_downsample,
+                    "sample_rate_hz": self.config.sample_rate,
                     "fault": snapshot.fault,
                     "esn_ready": snapshot.esn_ready,
                     "safety_trip": job.safety_reason,
@@ -1330,6 +1436,7 @@ class ScheduledAo:
                             and not self.force_safe.is_set()
                             and snapshot.mode == "closed-loop"
                             and snapshot.stim_mode != "off"
+                            and snapshot.armed
                         )
 
                         if refill:
@@ -1483,7 +1590,11 @@ class RealDaq(BaseDaq):
                             raise RuntimeError(f"AI reader failure: {reader_errors[0]}") from reader_errors[0]
                         continue
                     if self.state.snapshot().acquiring:
-                        _, safe, esn_ms, _ = self.core.process(batch.values)
+                        _, safe, esn_ms, _ = self.core.process(
+                            batch.values,
+                            sample_index=batch.sample_index,
+                            ao_target_sample_index=batch.sample_index + self.config.ao_lead_samples,
+                        )
                     else:
                         safe = np.zeros((1, self.config.chunk_size), dtype=np.float64)
                         esn_ms = 0.0
@@ -1524,11 +1635,20 @@ def load_mock_replay(path: Path, electrode_labels: tuple[str, str], sample_rate:
         raise ValueError("mock replay must be an Echo Chamber .h5 or .hdf5 recording")
     if path.suffix in {".h5", ".hdf5"}:
         with h5py.File(path, "r") as source:
-            if source.attrs.get("format_tag") == H5_FORMAT_TAG:
-                labels = tuple(
-                    value.decode("utf-8") if isinstance(value, bytes) else str(value)
-                    for value in source["signals/ai_raw_V"].attrs["channel_labels"]
-                )
+            if source.attrs.get("format_tag") in {"echoChamber_H5_v3", "echoChamber_H5_v4"}:
+                sidecar_path = path.with_suffix(".json")
+                if sidecar_path.is_file():
+                    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+                    if sidecar.get("data_sha256") != actual_hash:
+                        raise ValueError(f"mock replay sidecar checksum mismatch: {sidecar_path}")
+                    labels = tuple(str(value) for value in sidecar["channel_labels_by_index"])
+                    LOG.warning("Using authoritative replay channel mapping from %s", sidecar_path.name)
+                else:
+                    labels = tuple(
+                        value.decode("utf-8") if isinstance(value, bytes) else str(value)
+                        for value in source["signals/ai_raw_V"].attrs["channel_labels"]
+                    )
                 requested_indices = [labels.index(label) for label in electrode_labels]
                 committed = min(
                     int(source.attrs.get("committed_samples", source["signals/ai_raw_V"].shape[1])),
@@ -1592,7 +1712,10 @@ class MockDaq(BaseDaq):
             ai = self._next_input()
             if self.overload_ms:
                 time.sleep(self.overload_ms / 1_000)
-            _, safe, esn_ms, _ = self.core.process(ai)
+            source_index = self.core.sample_index
+            _, safe, esn_ms, _ = self.core.process(
+                ai, sample_index=source_index, ao_target_sample_index=source_index
+            )
             if self.state.snapshot().mode != "closed-loop":
                 safe = np.zeros_like(safe)
             self.last_command = safe
@@ -1645,6 +1768,8 @@ def serializable_config(config: AppConfig) -> dict[str, Any]:
     result["ao_deadline_samples"] = config.ao_deadline_samples
     result["record_dir"] = str(config.record_dir)
     result["mock_replay"] = str(config.mock_replay) if config.mock_replay else None
+    result["model_artifact"] = str(config.model_artifact)
+    result["hardware_profile"] = str(config.hardware_profile) if config.hardware_profile else None
     return result
 
 
@@ -1680,15 +1805,19 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: H5Rec
                     stim_mode = str(command.get("stim_mode", state.snapshot().stim_mode))
                     gain = float(command.get("stim_gain", state.snapshot().stim_gain))
                     state.set_stim(stim_mode, gain)
+                elif name == "set_armed":
+                    state.set_armed(bool(command.get("armed", False)))
                 elif name == "set_pulse_threshold":
                     state.set_pulse_threshold_std(float(command.get("pulse_threshold_std")))
                 elif name == "set_pulse_window":
                     state.set_pulse_window_sec(float(command.get("pulse_window_sec")))
+                elif name == "set_pulse_polarity":
+                    state.set_pulse_polarity(str(command.get("pulse_polarity", "")))
                 elif name == "set_cortex_channel":
                     labels = state.set_cortex_channel(str(command.get("channel", "")))
                     recorder.set_electrode_labels(labels)
                 elif name == "clear_fault":
-                    state.clear_fault()
+                    raise ValueError("faults are latched; safely restart the application after correcting the cause")
                 elif name == "shutdown":
                     # Enter the safe state before asking main() to tear down the
                     # DAQ tasks, recorder, and WebSocket server.
@@ -1739,23 +1868,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="Dev1")
     parser.add_argument("--ai", nargs=2, default=("ai0", "ai1"), metavar=("ELECTRODE_1", "ELECTRODE_2"))
     parser.add_argument("--ao", default="ao0")
-    parser.add_argument("--amplifier-gain", nargs=2, type=float, default=(10.0, 10.0),
+    parser.add_argument(
+        "--hardware-profile", type=Path,
+        help="calibration/safety profile (real-hardware default: included pending-test profile)",
+    )
+    parser.add_argument("--amplifier-gain", nargs=2, type=float,
                         metavar=("ELECTRODE_1", "ELECTRODE_2"),
-                        help="MultiClamp Primary Output voltage gain for AI0 and AI1")
-    parser.add_argument("--ao-command-gain", type=float, default=1.0,
-                        help="NI AO volts per numeric ESN output unit (default: 1)")
+                        help="override MultiClamp output gains; logged as pending test on real hardware")
+    parser.add_argument("--ao-command-gain", type=float,
+                        help="override NI AO volts per ESN output unit; logged on real hardware")
     parser.add_argument("--stim-monitor-ai", help="optional AI channel measuring actual stimulus")
     parser.add_argument("--terminal-config", default="RSE", choices=("DIFFERENTIAL", "RSE", "NRSE"))
     parser.add_argument("--sample-rate", type=int, default=20_000)
-    parser.add_argument("--processing-block-ms", type=float, default=10.0,
+    parser.add_argument("--processing-block-ms", type=float, default=5.0,
                         help="DAQ/ESN processing interval in milliseconds")
     parser.add_argument("--ao-target-lead-ms", type=float, default=100.0,
                         help="desired queued AO duration; refill and batching are automatic")
     parser.add_argument("--passthrough-dc-block-hz", type=float, default=DEFAULT_PASSTHROUGH_DC_BLOCK_HZ)
     parser.add_argument("--pulse-threshold-std", type=float, default=DEFAULT_PULSE_THRESHOLD_STD)
     parser.add_argument("--pulse-window-sec", type=float, default=DEFAULT_PULSE_WINDOW_SEC)
-    parser.add_argument("--max-command-v", type=float, default=1.0)
-    parser.add_argument("--max-slew-v-per-s", type=float, default=2_000.0)
+    parser.add_argument("--pulse-polarity", choices=("absolute", "positive", "negative"), default="absolute")
+    parser.add_argument("--model-artifact", type=Path, default=ESN_ARTIFACT)
+    parser.add_argument("--esn-backend", choices=("auto", "numpy", "numba"), default="auto")
+    parser.add_argument("--max-command-v", type=float)
+    parser.add_argument("--max-slew-v-per-s", type=float)
     parser.add_argument("--dry-test-allow-sustained-ao", action="store_true",
                         default=DRY_TEST_ALLOW_SUSTAINED_AO,
                         help="scope/dummy-load only: disable charge, duty-cycle, and continuous-output trips")
@@ -1768,20 +1904,125 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def load_hardware_profile(path: Path) -> dict[str, Any]:
+    resolved = path.expanduser().resolve()
+    profile = json.loads(resolved.read_text(encoding="utf-8"))
+    if profile.get("format_tag") != "echo-chamber-hardware-profile-v1":
+        raise ValueError("unsupported hardware profile format")
+    validation_status = profile.get("validation_status")
+    if profile.get("validated_for_real_hardware") is not True:
+        if validation_status != "confirmed_pending_test":
+            raise ValueError(
+                "hardware profile must be validated or explicitly marked confirmed_pending_test"
+            )
+        LOG.warning(
+            "HARDWARE PROFILE CONFIRMED PENDING TEST: calibration and stimulation limits "
+            "have not yet been verified on the NI rig (%s)", resolved,
+        )
+    required = {
+        "amplifier_gain",
+        "ao_command_gain_v_per_esn_unit",
+        "electrode_labels",
+        "ctx_index",
+        "safety",
+    }
+    missing = sorted(required - set(profile))
+    if missing:
+        raise ValueError(f"hardware profile is missing fields: {missing}")
+    safety_required = {
+        "max_command_v",
+        "max_slew_v_per_s",
+        "max_abs_area_v_s",
+        "area_window_s",
+        "max_active_fraction",
+        "active_threshold_v",
+        "max_consecutive_active_s",
+    }
+    safety = profile.get("safety")
+    if not isinstance(safety, dict):
+        raise ValueError("hardware profile safety must be an object")
+    missing_safety = sorted(safety_required - set(safety))
+    if missing_safety:
+        raise ValueError(f"hardware profile safety is missing fields: {missing_safety}")
+    gains = profile.get("amplifier_gain")
+    labels = profile.get("electrode_labels")
+    if not isinstance(gains, list) or len(gains) != 2:
+        raise ValueError("hardware profile amplifier_gain must contain exactly two values")
+    if not isinstance(labels, list) or len(labels) != 2 or not all(
+        isinstance(label, str) and label.strip() for label in labels
+    ):
+        raise ValueError("hardware profile electrode_labels must contain two non-empty labels")
+    if profile.get("ctx_index") not in (0, 1):
+        raise ValueError("hardware profile ctx_index must be 0 or 1")
+    numeric_values = {
+        "amplifier_gain[0]": gains[0],
+        "amplifier_gain[1]": gains[1],
+        "ao_command_gain_v_per_esn_unit": profile.get("ao_command_gain_v_per_esn_unit"),
+        **{f"safety.{name}": safety[name] for name in safety_required},
+    }
+    for name, value in numeric_values.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"hardware profile {name} must be a finite number")
+    return profile
+
+
 def config_from_args(args: argparse.Namespace) -> AppConfig:
     mock_replay = args.mock_replay.resolve() if args.mock_replay else (DEFAULT_MOCK_REPLAY if args.mock else None)
+    profile_path = (
+        args.hardware_profile.resolve()
+        if args.hardware_profile
+        else (DEFAULT_HARDWARE_PROFILE if mock_replay is None else None)
+    )
+    profile = load_hardware_profile(profile_path) if profile_path else {}
+    if mock_replay is None and not profile:
+        raise ValueError("real NI hardware requires a calibration/safety profile")
+    if mock_replay is None and args.dry_test_allow_sustained_ao:
+        LOG.warning(
+            "REAL-HARDWARE DRY TEST OVERRIDE ENABLED: charge, duty-cycle, and continuous-output "
+            "limits are bypassed; connect only a scope or dummy load"
+        )
+    if mock_replay is None and any(
+        value is not None
+        for value in (
+            args.amplifier_gain,
+            args.ao_command_gain,
+            args.max_command_v,
+            args.max_slew_v_per_s,
+        )
+    ):
+        LOG.warning(
+            "REAL-HARDWARE CALIBRATION/SAFETY OVERRIDE CONFIRMED PENDING TEST: "
+            "command-line values replace the profile for this run"
+        )
+    profile_safety = dict(profile.get("safety", {}))
+    amplifier_gain = tuple(
+        args.amplifier_gain or profile.get("amplifier_gain", (10.0, 10.0))
+    )
+    ao_command_gain = float(
+        args.ao_command_gain
+        if args.ao_command_gain is not None
+        else profile.get("ao_command_gain_v_per_esn_unit", 1.0)
+    )
+    electrode_labels = tuple(profile.get("electrode_labels", ("CA3", "Cortex")))
+    ctx_index = int(profile.get("ctx_index", 1))
     return AppConfig(
         device=args.device,
         ai_channels=tuple(args.ai),
         ao_channel=args.ao,
-        amplifier_gain=tuple(args.amplifier_gain),
-        ao_command_gain_v_per_esn_unit=args.ao_command_gain,
+        electrode_labels=electrode_labels,
+        ctx_index=ctx_index,
+        amplifier_gain=amplifier_gain,
+        ao_command_gain_v_per_esn_unit=ao_command_gain,
         sample_rate=args.sample_rate,
         processing_block_ms=args.processing_block_ms,
         ao_target_lead_ms=args.ao_target_lead_ms,
         passthrough_dc_block_hz=args.passthrough_dc_block_hz,
         pulse_threshold_std=args.pulse_threshold_std,
         pulse_window_sec=args.pulse_window_sec,
+        pulse_polarity=args.pulse_polarity,
+        esn_backend=args.esn_backend,
+        model_artifact=args.model_artifact.resolve(),
+        hardware_profile=profile_path,
         terminal_config=args.terminal_config,
         record_dir=args.record_dir.resolve(),
         ws_host=args.host,
@@ -1791,8 +2032,20 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
         start_paused=args.start_paused,
         open_browser=not args.no_browser,
         safety=SafetyConfig(
-            max_command_v=args.max_command_v,
-            max_slew_v_per_s=args.max_slew_v_per_s,
+            max_command_v=float(
+                args.max_command_v if args.max_command_v is not None
+                else profile_safety.get("max_command_v", 5.0)
+            ),
+            max_slew_v_per_s=float(
+                args.max_slew_v_per_s if args.max_slew_v_per_s is not None
+                else profile_safety.get("max_slew_v_per_s", 2_000.0)
+            ),
+            max_abs_area_v_s=float(profile_safety.get("max_abs_area_v_s", 0.010)),
+            area_window_s=float(profile_safety.get("area_window_s", 1.0)),
+            max_active_fraction=float(profile_safety.get("max_active_fraction", 0.10)),
+            active_threshold_v=float(profile_safety.get("active_threshold_v", 3.5)),
+            max_consecutive_active_s=float(profile_safety.get("max_consecutive_active_s", 0.050)),
+            isolator_command_v_per_output_unit=profile_safety.get("isolator_command_v_per_output_unit"),
             allow_sustained_output_for_dry_test=args.dry_test_allow_sustained_ao,
         ),
     )
@@ -1809,7 +2062,13 @@ async def main() -> int:
             "Amplitude and slew limits remain active."
         )
 
-    esn = EsnRuntime(ESN_ARTIFACT, config)
+    esn = EsnRuntime(config.model_artifact, config)
+    replay_mode = config.mock_replay is not None
+    if not replay_mode and esn.ready and not esn.production_eligible:
+        LOG.warning(
+            "MODEL VALIDATION PENDING: the selected ESN artifact is not marked "
+            "production-eligible; hardware testing is continuing by explicit research choice"
+        )
     state = RuntimeState(
         esn_ready=esn.ready,
         start_paused=config.start_paused,
@@ -1817,13 +2076,30 @@ async def main() -> int:
         ctx_index=config.ctx_index,
         pulse_threshold_std=config.pulse_threshold_std,
         pulse_window_sec=config.pulse_window_sec,
+        pulse_polarity=config.pulse_polarity,
     )
     telemetry = Telemetry()
     hub = UiHub(config.ui_queue_packets)
+    initial = state.snapshot()
+    hub.publish(json.dumps({
+        "ai": [[], []], "ao": [[]], "passthrough_preview": [[]],
+        "pulse_threshold_preview": [[]], "sample_indices": [],
+        "mode": initial.mode, "is_recording": initial.recording,
+        "is_acquiring": initial.acquiring, "stim_mode": initial.stim_mode,
+        "stim_gain": initial.stim_gain, "pulse_threshold_std": initial.pulse_threshold_std,
+        "pulse_window_sec": initial.pulse_window_sec,
+        "pulse_polarity": initial.pulse_polarity, "armed": initial.armed,
+        "fault": initial.fault, "esn_ready": initial.esn_ready,
+        "channels": list(initial.electrode_labels), "cortex_ai": f"ai{initial.ctx_index}",
+        "fs": config.sample_rate / config.visual_downsample,
+        "sample_rate_hz": config.sample_rate, "ai_unit": "mV", "ao_unit": "V",
+        "amplifier_gain": list(config.amplifier_gain),
+        "ao_command_gain_v_per_esn_unit": config.ao_command_gain_v_per_esn_unit,
+    }))
     metadata = {
         "application": "echoChamber.py",
         "configuration": serializable_config(config),
-        "esn_artifact": str(ESN_ARTIFACT),
+        "esn_artifact": str(config.model_artifact),
         "esn_ready": esn.ready,
         "esn_error": esn.error,
         "esn_bridge": "application-owned chunk adaptation and stimulation mapping",
@@ -1831,9 +2107,21 @@ async def main() -> int:
     }
     recorder = H5Recorder(config, metadata)
     loop = asyncio.get_running_loop()
+    shutdown = asyncio.Event()
+    # Bind the UI endpoint before starting any DAQ or AO thread. A port error
+    # therefore cannot leave hardware acquisition running without controls.
+    server = await websockets.serve(
+        lambda websocket: websocket_handler(websocket, state, recorder, hub, shutdown),
+        config.ws_host,
+        config.ws_port,
+    )
+    LOG.info("UI server listening at ws://%s:%d", config.ws_host, config.ws_port)
+
     core = AsyncUiProcessingCore(config, state, esn, recorder, hub, loop, telemetry)
-    replay_mode = args.mock or args.mock_replay is not None
-    daq: BaseDaq = MockDaq(config, state, core, telemetry, overload_ms=args.mock_overload_ms) if replay_mode else RealDaq(config, state, core, telemetry)
+    daq: BaseDaq = (
+        MockDaq(config, state, core, telemetry, overload_ms=args.mock_overload_ms)
+        if replay_mode else RealDaq(config, state, core, telemetry)
+    )
     watchdog = Watchdog(config, state, telemetry, daq)
 
     def daq_worker() -> None:
@@ -1849,13 +2137,6 @@ async def main() -> int:
     daq_thread.start()
     watchdog.start()
 
-    shutdown = asyncio.Event()
-    server = await websockets.serve(
-        lambda websocket: websocket_handler(websocket, state, recorder, hub, shutdown),
-        config.ws_host,
-        config.ws_port,
-    )
-    LOG.info("UI server listening at ws://%s:%d", config.ws_host, config.ws_port)
     if config.open_browser:
         webbrowser.open((BASE_DIR / "index.html").as_uri())
 
@@ -1892,8 +2173,6 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(threadName)s %(message)s")
     try:
         raise SystemExit(asyncio.run(main()))

@@ -1,0 +1,39 @@
+{
+  "format_tag": "echo-chamber-hardware-profile-v1",
+  "validated_for_real_hardware": false,
+  "validation_status": "confirmed_pending_test",
+  "profile_name": "lab_working_values_pending_ni_scope_test",
+  "validation": {
+    "date": null,
+    "reviewer": "research team confirmation pending bench test",
+    "daq_model": "NI USB-6343",
+    "daq_serial": null,
+    "amplifier_identifier": null,
+    "stimulus_isolator_identifier": "ISO-Flex (exact unit pending)",
+    "scope_or_dummy_load_evidence": null,
+    "notes": [
+      "AI0=CA3 and AI1=Cortex is confirmed pending test.",
+      "Amplifier gain 10 is the working value; reconcile it with the reported 100 mV/mV setting during test.",
+      "AO conversion and stimulation limits are working assumptions pending NI/scope validation."
+    ]
+  },
+  "electrode_labels": [
+    "CA3",
+    "Cortex"
+  ],
+  "ctx_index": 1,
+  "amplifier_gain": [
+    10.0,
+    10.0
+  ],
+  "ao_command_gain_v_per_esn_unit": 1.0,
+  "safety": {
+    "max_command_v": 5.0,
+    "max_slew_v_per_s": 2000.0,
+    "max_abs_area_v_s": 0.01,
+    "area_window_s": 1.0,
+    "max_active_fraction": 0.1,
+    "active_threshold_v": 3.5,
+    "max_consecutive_active_s": 0.05
+  }
+}

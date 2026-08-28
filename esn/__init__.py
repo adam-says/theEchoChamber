@@ -1,12 +1,14 @@
-from .streaming import ESNStreamer
-from .io import save_artifact, load_artifact, extract_from_notebook_pkl
-from .train import train_from_mat
+from .artifact import InferenceArtifact, load_inference_artifact, save_inference_artifact
+from .inference import StatefulESN
+from .streaming import InferenceStreamer
+from .io import load_artifact
 
 __all__ = [
-    "ESNStreamer",
-    "save_artifact",
+    "InferenceStreamer",
+    "InferenceArtifact",
+    "StatefulESN",
+    "load_inference_artifact",
+    "save_inference_artifact",
     "load_artifact",
-    "extract_from_notebook_pkl",
-    "train_from_mat",
 ]
 
