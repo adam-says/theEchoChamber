@@ -1,0 +1,49 @@
+{
+  "input": "deterministic synthetic LFP",
+  "configuration": {
+    "artifact": "esn_corrected_v1.npz",
+    "artifact_sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+    "esn_backend": "auto",
+    "sample_rate": 20000,
+    "amplifier_gain": [
+      10.0,
+      10.0
+    ],
+    "chunk_size": 100,
+    "block_deadline_ms": 5.0,
+    "ao_target_lead_ms": 100.0,
+    "stim_mode": "off",
+    "stim_gain": 1.0,
+    "pulse_polarity": "absolute",
+    "injected_delay_ms": 0.0
+  },
+  "throughput": {
+    "count": 5000,
+    "mean_ms": 0.6769506999999999,
+    "median_ms": 0.5773,
+    "p95_ms": 1.4109150000000004,
+    "p99_ms": 2.3119540000000014,
+    "maximum_ms": 3.798,
+    "deadline_ms": 5.0,
+    "over_deadline": 0
+  },
+  "paced": {
+    "timing": {
+      "count": 1000,
+      "mean_ms": 1.0298069999999997,
+      "median_ms": 0.8991,
+      "p95_ms": 1.9284099999999997,
+      "p99_ms": 2.3706129999999996,
+      "maximum_ms": 3.8812,
+      "deadline_ms": 5.0,
+      "over_deadline": 0
+    },
+    "duration_s": 5.0,
+    "produced_blocks": 1000,
+    "consumed_blocks": 1000,
+    "consumer_underruns": 0,
+    "minimum_queued_blocks": 19,
+    "maximum_queued_blocks": 21,
+    "producer_schedule_lag_max_ms": 0.0
+  }
+}

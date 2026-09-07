@@ -13,7 +13,7 @@ import numpy as np
 
 
 SUPPORTED_H5_FORMAT_TAGS = {
-    "echoChamber_H5_v1", "echoChamber_H5_v2", "echoChamber_H5_v3"
+    "echoChamber_H5_v1", "echoChamber_H5_v2", "echoChamber_H5_v3", "echoChamber_H5_v4"
 }
 
 
@@ -56,7 +56,7 @@ def load_hdf5_recording(data_path: Path) -> Recording:
         format_tag = source.attrs.get("format_tag")
         if format_tag is not None and str(format_tag) not in SUPPORTED_H5_FORMAT_TAGS:
             raise ValueError(f"unsupported Echo Chamber HDF5 format tag: {format_tag}")
-        if str(format_tag) == "echoChamber_H5_v3":
+        if str(format_tag) in {"echoChamber_H5_v3", "echoChamber_H5_v4"}:
             return load_hdf5_v3_recording(data_path)
         if "data" not in source or "row_names" not in source:
             raise ValueError(f"HDF5 recording is missing required datasets: {data_path}")
@@ -96,7 +96,7 @@ def load_hdf5_v3_recording(data_path: Path) -> Recording:
         if committed <= 0:
             raise ValueError(f"recording contains no committed samples: {data_path}")
         metadata = json.loads(str(source.attrs.get("metadata_json", "{}")))
-        metadata.setdefault("format_tag", "echoChamber_H5_v3")
+        metadata.setdefault("format_tag", str(source.attrs.get("format_tag", "echoChamber_H5_v3")))
         configuration = metadata.get("configuration", {})
         sample_rate = float(source.attrs.get("sample_rate_hz", configuration.get("sample_rate", 0)))
         labels = tuple(
@@ -215,7 +215,9 @@ def plot_recording(
 
     axes_1d[2].step(plot_time, plot_data[mode_row], where="post", linewidth=0.9)
     axes_1d[2].set_title("Mode", loc="left", fontsize=10, fontweight="bold")
-    if recording.metadata.get("format_tag") == "echoChamber_H5_v2":
+    if recording.metadata.get("format_tag") in {
+        "echoChamber_H5_v2", "echoChamber_H5_v3", "echoChamber_H5_v4"
+    }:
         mode_values = [0, 1, 2, 3]
         mode_labels = [
             "open-loop", "closed-loop off", "closed-loop passthrough", "closed-loop pulse"
@@ -229,8 +231,12 @@ def plot_recording(
     axes_1d[2].set_yticks(mode_values, labels=mode_labels)
     axes_1d[2].grid(True, alpha=0.25)
 
-    axes_1d[3].plot(plot_time, plot_data[ao_row], linewidth=0.8)
-    axes_1d[3].set_title("AO command", loc="left", fontsize=10, fontweight="bold")
+    ao_delay = float(recording.metadata.get("ao_pipeline_delay_seconds", 0.0) or 0.0)
+    axes_1d[3].plot(plot_time + ao_delay, plot_data[ao_row], linewidth=0.8)
+    title = "AO command"
+    if ao_delay:
+        title += f" (target shifted +{ao_delay * 1_000:.1f} ms)"
+    axes_1d[3].set_title(title, loc="left", fontsize=10, fontweight="bold")
     axes_1d[3].set_ylabel("V")
     axes_1d[3].grid(True, alpha=0.25)
 

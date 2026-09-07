@@ -6,10 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>The Echo Chamber</title>
     <link rel="icon" type="image/png" href="assets/echoChamberLogo.png">
-    <!-- uPlot CSS and JS -->
-    <link rel="stylesheet" href="https://unpkg.com/uplot/dist/uPlot.min.css">
-    <script src="https://unpkg.com/uplot/dist/uPlot.iife.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/vendor/uplot/uPlot.min.css">
+    <script src="assets/vendor/uplot/uPlot.iife.min.js"></script>
     <style>
         :root {
             --bg: #0f172a;
@@ -26,7 +24,7 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
             background: var(--bg);
             color: var(--text);
             margin: 0;
@@ -101,6 +99,7 @@
             flex-direction: column;
             gap: 1.5rem;
             flex-shrink: 0;
+            overflow-y: auto;
         }
 
         .chartsarea {
@@ -231,6 +230,31 @@
             color: #6ee7b7;
         }
 
+        button.active.arm-on {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: var(--danger);
+            color: #fecaca;
+        }
+
+        .fault-panel {
+            display: none;
+            padding: 0.65rem;
+            border-radius: 6px;
+            background: rgba(239, 68, 68, 0.14);
+            border: 1px solid rgba(239, 68, 68, 0.55);
+            color: #fecaca;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+
+        @media (max-width: 800px) {
+            body { height: auto; max-height: none; overflow: auto; }
+            .dashboard { flex-direction: column; overflow: visible; }
+            .controls { width: 100%; max-height: none; }
+            .chartsarea { min-height: 70vh; }
+            .brand-logo { max-width: 70vw; height: auto; max-height: 72px; }
+        }
+
         /* uPlot overrides for dark mode */
         .u-title {
             color: #f8fafc;
@@ -270,6 +294,12 @@
     <div class="dashboard">
         <div class="controls">
             <div class="controls-group">
+                <label>Acquisition</label>
+                <button id="btn-acq" onclick="toggleAcquisition()">Start Acquisition</button>
+                <div id="fault-panel" class="fault-panel"></div>
+            </div>
+
+            <div class="controls-group">
                 <label>Recording</label>
                 <input id="recording-filename" type="text" maxlength="80"
                        autocomplete="off" spellcheck="false" placeholder="Optional filename">
@@ -295,22 +325,22 @@
                 <label>Stimulation (Closed-Loop)</label>
                 <select id="stim-mode" onchange="setStim()">
                     <option value="off">Off</option>
-                    <option value="passthrough" selected>ESN Passthrough</option>
+                    <option value="passthrough">ESN Passthrough</option>
                     <option value="threshold_pulse">ESN Threshold Pulse</option>
                 </select>
                 <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
                 Stim gain
             </div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
-                    <input id="stim-gain" type="range" min="0" max="10" step="0.001" value="1.0" oninput="setStim(true)" />
-                    <div style="width: 64px; text-align:right; font-size: 12px;" id="stim-gain-label">×1.000</div>
+                    <input id="stim-gain" type="range" min="0" max="10" step="0.001" value="0" oninput="setStim(true)" onchange="setStim(false)" />
+                    <div style="width: 64px; text-align:right; font-size: 12px;" id="stim-gain-label">×0.000</div>
                 </div>
                 <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
                 Noise threshold for pulse generation
             </div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
-                    <input id="pulse-threshold" type="range" min="0.1" max="10" step="0.1" value="1.0" oninput="setPulseThreshold()" />
-                    <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-threshold-label">1.0 SD</div>
+                    <input id="pulse-threshold" type="range" min="0.1" max="10" step="0.1" value="3.0" oninput="setPulseThreshold()" />
+                    <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-threshold-label">3.0 SD</div>
                 </div>
                 <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
                 Noise calculation window
@@ -319,11 +349,22 @@
                     <input id="pulse-window" type="range" min="1" max="60" step="1" value="10" oninput="setPulseWindow()" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-window-label">10 s</div>
                 </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">Pulse polarity</div>
+                <select id="pulse-polarity" onchange="setPulsePolarity()">
+                    <option value="absolute" selected>Absolute (±)</option>
+                    <option value="positive">Positive</option>
+                    <option value="negative">Negative</option>
+                </select>
+                <button id="btn-arm" onclick="toggleArmed()">Arm Output</button>
+                <div class="filename-hint">Closed-loop computation does not energize AO until output is armed.</div>
             </div>
 
             
             <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="fs-info">
                 Waiting for stream info...
+            </div>
+            <div style="font-size: 11px; color: #64748b; line-height: 1.5;" id="calibration-info">
+                Waiting for calibration profile...
             </div>
 
             <button id="btn-stop-app" class="stop-button" onclick="stopApplication()">Stop Application</button>
@@ -406,23 +447,31 @@
         let ao0Array = [];
         let previewArray = [];
         let thresholdArray = [];
-        let totalSamplesReceived = 0;
 
         // UI STATE
         let isRecording = false;
         let currentMode = 'control';
-        let stimMode = 'passthrough';
-        let stimGain = 1.0;
-        let pulseThresholdStd = 1.0;
+        let stimMode = 'off';
+        let stimGain = 0.0;
+        let pulseThresholdStd = 3.0;
         let pulseWindowSec = 10.0;
+        let pulsePolarity = 'absolute';
         let cortexAi = 'ai1';
+        let isAcquiring = false;
+        let isArmed = false;
+        let currentFault = null;
         let shutdownRequested = false;
+        let stimSendTimer = null;
 
         // --- WEBSOCKETS ---
         let ws;
 
         function connect() {
-            ws = new WebSocket("ws://127.0.0.1:8765");
+            const query = new URLSearchParams(window.location.search);
+            const host = query.get('wsHost') || window.location.hostname || '127.0.0.1';
+            const port = query.get('wsPort') || '8765';
+            const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new WebSocket(`${protocol}://${host}:${port}`);
 
             ws.onopen = () => {
                 let badge = document.getElementById("status");
@@ -465,12 +514,16 @@
                     }
 
                     // Sync visually to backend truth
-                    isRecording = msg.is_recording;
-                    currentMode = msg.mode;
+                    if (typeof msg.is_recording === "boolean") isRecording = msg.is_recording;
+                    if (typeof msg.is_acquiring === "boolean") isAcquiring = msg.is_acquiring;
+                    if (msg.mode) currentMode = msg.mode;
                     if (msg.stim_mode) stimMode = msg.stim_mode;
                     if (typeof msg.stim_gain === "number") stimGain = msg.stim_gain;
                     if (typeof msg.pulse_threshold_std === "number") pulseThresholdStd = msg.pulse_threshold_std;
                     if (typeof msg.pulse_window_sec === "number") pulseWindowSec = msg.pulse_window_sec;
+                    if (msg.pulse_polarity) pulsePolarity = msg.pulse_polarity;
+                    if (typeof msg.armed === "boolean") isArmed = msg.armed;
+                    currentFault = msg.fault || null;
                     if (msg.cortex_ai === "ai0" || msg.cortex_ai === "ai1") cortexAi = msg.cortex_ai;
                     if (Array.isArray(msg.channels) && msg.channels.length === 2) {
                         const aiUnit = msg.ai_unit || "mV";
@@ -483,25 +536,30 @@
                         downsampledFS = msg.fs;
                         document.getElementById("fs-info").innerHTML = `<strong>Data Stream FS:</strong> ${msg.fs} Hz`;
                     }
+                    if (Array.isArray(msg.amplifier_gain) && typeof msg.ao_command_gain_v_per_esn_unit === "number") {
+                        document.getElementById("calibration-info").innerHTML =
+                            `<strong>Calibration:</strong> AI gains ${msg.amplifier_gain.join(' / ')}; AO ${msg.ao_command_gain_v_per_esn_unit} V per ESN unit`;
+                    }
 
-                    let ai0 = msg.ai[0];
-                    let ai1 = msg.ai[1];
-                    let ao0 = msg.ao[0];
+                    let ai0 = (msg.ai || [[], []])[0] || [];
+                    let ai1 = (msg.ai || [[], []])[1] || [];
+                    let ao0 = (msg.ao || [[]])[0] || [];
                     let preview = (msg.passthrough_preview || [[]])[0];
                     let threshold = (msg.pulse_threshold_preview || [[]])[0];
                     let numPoints = ai0.length;
                     if (!numPoints) return;
+                    let sampleIds = msg.sample_indices || [];
+                    let rawFs = msg.sample_rate_hz || (downsampledFS * 2);
 
                     for (let i = 0; i < numPoints; i++) {
-                        tArray.push((totalSamplesReceived + i) / downsampledFS);
+                        const fallback = tArray.length ? (tArray[tArray.length - 1] + 1 / downsampledFS) : 0;
+                        tArray.push(sampleIds.length === numPoints ? sampleIds[i] / rawFs : fallback);
                         ai0Array.push(ai0[i]);
                         ai1Array.push(ai1[i]);
                         ao0Array.push(ao0[i]);
                         previewArray.push(preview[i] ?? null);
                         thresholdArray.push(threshold[i] ?? null);
                     }
-                    totalSamplesReceived += numPoints;
-
                     // Enforce max window using slice
                     let maxP = Math.floor(MAX_SECONDS * downsampledFS);
                     if (tArray.length > maxP) {
@@ -528,6 +586,8 @@
             let btnCtrl = document.getElementById('btn-ctrl');
             let btnLoop = document.getElementById('btn-loop');
             let btnRec = document.getElementById('btn-rec');
+            let btnAcq = document.getElementById('btn-acq');
+            let btnArm = document.getElementById('btn-arm');
             let stimModeSel = document.getElementById('stim-mode');
             let stimGainSlider = document.getElementById('stim-gain');
             let stimGainLabel = document.getElementById('stim-gain-label');
@@ -537,6 +597,8 @@
             let pulseWindowLabel = document.getElementById('pulse-window-label');
             let cortexChannel = document.getElementById('cortex-channel');
             let recordingFilename = document.getElementById('recording-filename');
+            let pulsePolaritySelect = document.getElementById('pulse-polarity');
+            let faultPanel = document.getElementById('fault-panel');
 
             btnCtrl.className = currentMode === 'control' ? 'active mode-ctrl' : '';
             btnLoop.className = currentMode === 'closed-loop' ? 'active mode-loop' : '';
@@ -548,6 +610,20 @@
             if (pulseThresholdLabel) pulseThresholdLabel.textContent = `${Number(pulseThresholdStd).toFixed(1)} SD`;
             if (pulseWindow) pulseWindow.value = pulseWindowSec;
             if (pulseWindowLabel) pulseWindowLabel.textContent = `${Number(pulseWindowSec).toFixed(0)} s`;
+            if (pulsePolaritySelect) pulsePolaritySelect.value = pulsePolarity;
+            if (btnAcq) {
+                btnAcq.textContent = isAcquiring ? 'Stop Acquisition' : 'Start Acquisition';
+                btnAcq.className = isAcquiring ? 'active rec-on' : '';
+            }
+            if (btnArm) {
+                btnArm.textContent = isArmed ? 'Disarm Output' : 'Arm Output';
+                btnArm.className = isArmed ? 'active arm-on' : '';
+                btnArm.disabled = !isAcquiring || currentMode !== 'closed-loop' || stimMode === 'off' || stimGain <= 0 || !!currentFault;
+            }
+            if (faultPanel) {
+                faultPanel.style.display = currentFault ? 'block' : 'none';
+                faultPanel.textContent = currentFault ? `FAULT — ${currentFault}. Output is latched safe; restart after correcting the cause.` : '';
+            }
             if (cortexChannel) {
                 cortexChannel.value = cortexAi;
                 cortexChannel.disabled = isRecording;
@@ -563,22 +639,17 @@
             }
         }
 
-        // Action handles synchronously change UI first to feel "responsive", then push network frame.
         function setMode(modeText) {
-            currentMode = modeText;
-            updateButtonsVisually();
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ command: 'set_mode', mode: modeText }));
             }
         }
 
         function toggleRecording() {
-            isRecording = !isRecording;
-            updateButtonsVisually();
             if (ws && ws.readyState === WebSocket.OPEN) {
-                let cmd = isRecording ? 'start_recording' : 'stop_recording';
+                let cmd = isRecording ? 'stop_recording' : 'start_recording';
                 let payload = { command: cmd };
-                if (isRecording) {
+                if (!isRecording) {
                     payload.filename = document.getElementById('recording-filename').value;
                 }
                 ws.send(JSON.stringify(payload));
@@ -586,22 +657,43 @@
         }
 
         function setStim(isLive = false) {
-            stimMode = document.getElementById('stim-mode').value;
-            stimGain = parseFloat(document.getElementById('stim-gain').value);
-            updateButtonsVisually();
-            if (!isLive && ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ command: 'set_stim', stim_mode: stimMode, stim_gain: stimGain }));
+            const requestedMode = document.getElementById('stim-mode').value;
+            const requestedGain = parseFloat(document.getElementById('stim-gain').value);
+            document.getElementById('stim-gain-label').textContent = `×${requestedGain.toFixed(3)}`;
+            const send = () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ command: 'set_stim', stim_mode: requestedMode, stim_gain: requestedGain }));
+                }
+            };
+            clearTimeout(stimSendTimer);
+            stimSendTimer = isLive ? setTimeout(send, 100) : null;
+            if (!isLive) send();
+        }
+
+        function toggleAcquisition() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: isAcquiring ? 'stop_acquisition' : 'start_acquisition' }));
             }
-            // For slider live updates, throttle-ish: send on input too
-            if (isLive && ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ command: 'set_stim', stim_mode: stimMode, stim_gain: stimGain }));
+        }
+
+        function toggleArmed() {
+            if (!isArmed && !window.confirm('Arm the analog output using the selected mode and gain?')) return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_armed', armed: !isArmed }));
+            }
+        }
+
+        function setPulsePolarity() {
+            const value = document.getElementById('pulse-polarity').value;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_pulse_polarity', pulse_polarity: value }));
             }
         }
 
         function setCortexChannel() {
-            cortexAi = document.getElementById('cortex-channel').value;
+            const requestedChannel = document.getElementById('cortex-channel').value;
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ command: 'set_cortex_channel', channel: cortexAi }));
+                ws.send(JSON.stringify({ command: 'set_cortex_channel', channel: requestedChannel }));
             }
         }
 

@@ -8,6 +8,7 @@ LFP or with one explicitly selected Echo Chamber HDF5 input file.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import queue
@@ -79,6 +80,27 @@ def synthetic_lfp(sample_rate: int, seconds: float, seed: int) -> np.ndarray:
 
 def load_hdf5(path: Path, maximum_samples: int, electrode_labels: tuple[str, str]) -> np.ndarray:
     with h5py.File(path, "r") as source:
+        if source.attrs.get("format_tag") in {"echoChamber_H5_v3", "echoChamber_H5_v4"}:
+            ai = source["signals/ai_raw_V"]
+            sidecar_path = path.with_suffix(".json")
+            if sidecar_path.is_file():
+                sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                if sidecar.get("data_sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+                    raise ValueError(f"replay sidecar checksum mismatch: {sidecar_path}")
+                labels = tuple(str(value) for value in sidecar["channel_labels_by_index"])
+            else:
+                labels = tuple(
+                    value.decode("utf-8") if isinstance(value, bytes) else str(value)
+                    for value in ai.attrs["channel_labels"]
+                )
+            committed = min(
+                int(source.attrs.get("committed_samples", ai.shape[1])),
+                ai.shape[1], maximum_samples,
+            )
+            return np.vstack([
+                np.asarray(ai[labels.index(label), :committed], dtype=np.float64)
+                for label in electrode_labels
+            ])
         if source.attrs.get("schema") != "echo-chamber-recording":
             raise ValueError(f"not an Echo Chamber HDF5 recording: {path}")
         rows = tuple(
@@ -110,7 +132,7 @@ def make_source(args: argparse.Namespace, required_samples: int) -> tuple[BlockS
             values = load_hdf5(path, required_samples, tuple(args.electrode_labels))
         else:
             raise ValueError("--input must be one Echo Chamber .h5 or .hdf5 file")
-        description = str(path)
+        description = path.name
     return BlockSource(values, args.chunk_size), description
 
 
@@ -122,6 +144,8 @@ def make_processor(args: argparse.Namespace) -> tuple[EchoChamberEsnBridge, Stim
         passthrough_dc_block_hz=args.passthrough_dc_block_hz,
         pulse_threshold_std=args.pulse_threshold_std,
         pulse_window_sec=args.pulse_window_sec,
+        pulse_polarity=args.pulse_polarity,
+        esn_backend=args.esn_backend,
     )
     bridge.configure(stim_mode=args.stim_mode, stim_gain=args.stim_gain)
     safety = StimulusSafetyAdapter(
@@ -140,9 +164,16 @@ def process_once(
     safety: StimulusSafetyAdapter,
     source: BlockSource,
     ctx_index: int,
+    amplifier_gain: tuple[float, float],
     injected_delay_ms: float,
 ) -> np.ndarray:
-    command = bridge.process(source.next(), ctx_index=ctx_index)
+    ai_raw_v = source.next()
+    # Match ProcessingCore exactly: convert DAQ volts to electrode-referred mV
+    # before applying the artifact's physical-unit input scaler.
+    electrode_mv = ai_raw_v * (
+        1_000.0 / np.asarray(amplifier_gain, dtype=np.float64)
+    ).reshape(2, 1)
+    command = bridge.process(electrode_mv, ctx_index=ctx_index)
     safe, reason = safety.process(command)
     if reason:
         raise RuntimeError(f"benchmark safety trip: {reason}")
@@ -271,18 +302,24 @@ def print_timing(name: str, timing: TimingSummary) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--artifact", type=Path, default=Path(__file__).resolve().parent / "esn_artifact.pkl")
+    parser.add_argument(
+        "--artifact", type=Path,
+        default=Path(__file__).resolve().parent / "artifacts" / "esn_corrected_v1.npz",
+    )
     parser.add_argument("--input", type=Path, help="one Echo Chamber .h5 recording")
     parser.add_argument("--sample-rate", type=int, default=20_000)
     parser.add_argument("--chunk-size", type=int, default=100)
+    parser.add_argument("--esn-backend", choices=("auto", "numpy", "numba"), default="auto")
     parser.add_argument("--ctx-index", type=int, choices=(0, 1), default=1)
     parser.add_argument("--electrode-labels", nargs=2, default=("CA3", "Cortex"))
+    parser.add_argument("--amplifier-gain", nargs=2, type=float, default=(10.0, 10.0))
     parser.add_argument("--stim-mode", choices=("off", "passthrough", "threshold_pulse"), default="passthrough")
     parser.add_argument("--stim-gain", type=float, default=1.0)
     parser.add_argument("--passthrough-dc-block-hz", type=float, default=0.5)
     parser.add_argument("--pulse-threshold-std", type=float, default=1.0)
     parser.add_argument("--pulse-window-sec", type=float, default=10.0)
-    parser.add_argument("--max-command-v", type=float, default=1.0)
+    parser.add_argument("--pulse-polarity", choices=("absolute", "positive", "negative"), default="absolute")
+    parser.add_argument("--max-command-v", type=float, default=5.0)
     parser.add_argument("--max-slew-v-per-s", type=float, default=2_000.0)
     parser.add_argument("--warmup-blocks", type=int, default=100)
     parser.add_argument("--throughput-blocks", type=int, default=2_000)
@@ -298,6 +335,10 @@ def main() -> int:
     args = build_parser().parse_args()
     if args.sample_rate <= 0 or args.chunk_size <= 0:
         raise ValueError("sample rate and chunk size must be positive")
+    if len(args.amplifier_gain) != 2 or not all(
+        math.isfinite(value) and value > 0 for value in args.amplifier_gain
+    ):
+        raise ValueError("--amplifier-gain requires two finite positive values")
     if args.warmup_blocks < 0 or args.throughput_blocks <= 0 or args.paced_seconds <= 0:
         raise ValueError("benchmark counts and duration must be positive")
     period_s = args.chunk_size / args.sample_rate
@@ -311,7 +352,7 @@ def main() -> int:
     bridge, safety = make_processor(args)
 
     process = lambda: process_once(
-        bridge, safety, source, args.ctx_index, args.inject_delay_ms
+        bridge, safety, source, args.ctx_index, tuple(args.amplifier_gain), args.inject_delay_ms
     )
     print(f"Input: {source_description}")
     print(
@@ -344,12 +385,17 @@ def main() -> int:
     result = {
         "input": source_description,
         "configuration": {
+            "artifact": args.artifact.name,
+            "artifact_sha256": hashlib.sha256(args.artifact.read_bytes()).hexdigest(),
+            "esn_backend": args.esn_backend,
             "sample_rate": args.sample_rate,
+            "amplifier_gain": list(args.amplifier_gain),
             "chunk_size": args.chunk_size,
             "block_deadline_ms": period_s * 1_000.0,
             "ao_target_lead_ms": args.ao_target_lead_ms,
             "stim_mode": args.stim_mode,
             "stim_gain": args.stim_gain,
+            "pulse_polarity": args.pulse_polarity,
             "injected_delay_ms": args.inject_delay_ms,
         },
         "throughput": asdict(throughput),

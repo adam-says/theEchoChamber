@@ -1,5 +1,4 @@
-numpy
-scipy
-scikit-learn
-reservoirpy==0.3.11
-mat73
+# Historical compatibility file. The supported live environment is pinned in
+# requirements.txt. Use requirements-legacy-migration.txt only inside an
+# isolated environment when converting a trusted ReservoirPy pickle.
+-r requirements.txt

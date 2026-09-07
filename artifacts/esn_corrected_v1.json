@@ -1,0 +1,186 @@
+{
+  "created_utc": "2026-08-28T07:36:26.835365+00:00",
+  "format_tag": "echo-chamber-esn-inference-v1",
+  "model": {
+    "activation": "tanh",
+    "leak_rate": 0.3665234728579373,
+    "readout": "ridge_linear_with_bias",
+    "units": 10
+  },
+  "npz_sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+  "preprocessing": {
+    "anti_alias": {
+      "cutoff_hz": 500.0,
+      "family": "fir",
+      "numtaps": 201
+    },
+    "filter_state": "zeros",
+    "fs_input_hz": 20000,
+    "fs_model_hz": 2000,
+    "model_lowpass": {
+      "cutoff_hz": 25.0,
+      "family": "fir",
+      "numtaps": 401
+    },
+    "preferred_chunk_size": 100,
+    "upsampling": "causal_linear"
+  },
+  "production_eligible": true,
+  "pulse": {
+    "duration_ms": 5.0,
+    "frequency_hz": 100.0,
+    "waveform": "sine_half_cycle"
+  },
+  "purpose": "production_closed_loop_inference",
+  "scaling": {
+    "fit_scope": "all paired training recordings only",
+    "formula": "scaled = physical * scale + offset",
+    "input_data_max": 562.5426838290074,
+    "input_data_min": -532.2162337448951,
+    "separate_input_target_scalers": true,
+    "target_data_max": 1384.790817016,
+    "target_data_min": -749.1647925551126
+  },
+  "sources": {
+    "missing_fs_assumption_hz": 2000,
+    "missing_fs_basis": "legacy validation X_data/Y_data omit fs; Paper_figures.py and the pipeline audit identify them as the 2 kHz common-rate data",
+    "recordings": {
+      "training/CA3/20200226_slice04_01_CTRL1_27.mat": "e19a05ac7c55fd5e964f3a25c894ea37d830412284d8a30e32a3b3b79adf961f",
+      "training/CA3/20200226_slice04_01_CTRL1_65.mat": "4f15363afd89e51ab4fbac22140c91fddf21ba18ebbe476682c1aed542a0adde",
+      "training/CA3/20200226_slice04_01_CTRL1_75.mat": "aaef95dd7821183a8544a700c11e2523b97c06d7462805edc188520deacc8ac1",
+      "training/CA3/20200226_slice04_01_CTRL1_77.mat": "190728bc425a190c5e7ec49b13e9d6e8e22b1a89091dfd82921fdb6b238daa7d",
+      "training/CA3/20200226_slice04_02_CTRL2_75.mat": "e50455f8dfa6582f27767da7075956b43a18f2bbbed149f71e8ec11b8224c7d9",
+      "training/CA3/20200226_slice04_02_CTRL2_85.mat": "7e69d174efe126882fd3a9fd68242ba0838936eff12672357b7521e1c93a1f50",
+      "training/CA3/20200323_slice01_01_CTRL1_25.mat": "511a4854456b0822af497f9a29cfabd5414aad211847cc00f42e6fa8efefb031",
+      "training/CA3/20200323_slice01_01_CTRL1_35.mat": "869403d37fc881ef539ad1e425d0935cfa52a6e5e2d9719eb7821f78b7bb2745",
+      "training/CA3/20200323_slice01_02_CTRL2_25.mat": "78ab313abbaa03d5265c5602b836f6e1dfacefd51c7af26b2ddd356709003178",
+      "training/CA3/20200323_slice01_02_CTRL2_35.mat": "3fcada5a3972df77a72ad11ef717b187bbf028a94259c8cd21e7c1e8c469e756",
+      "training/CA3/20200331_slice02_01_CTRL1_65.mat": "6993237086946dd43649c936a97f8ebcbe4c57e6e1d18774bb9b2521f4e773b1",
+      "training/CA3/20200331_slice02_01_CTRL1_75.mat": "ec3487430c69d520b7b3cc4b915c587ed1ab1a93d74eb1fc8e40e1cdf3300dc3",
+      "training/CA3/20200331_slice03_01_CTRL1_25.mat": "bd7a617d794c8fa332c4f83222f9d691ff346084392ec18739f4d17a4204a35d",
+      "training/CA3/20200331_slice03_01_CTRL1_35.mat": "6240fe15c8a878bf667643e4400d195a0f78cda1e12e8d718e46148af9b6f8e7",
+      "training/CTX/20200226_slice04_01_CTRL1_16.mat": "298f8dc15ca37bd241c93a55f120d508c214694240d97a274802a2393dd2455a",
+      "training/CTX/20200226_slice04_01_CTRL1_17.mat": "cfd77aa666f2c5cc50a3ac1fbc2b53f54d3e33aaeac08583ae7525cf5e7f1937",
+      "training/CTX/20200226_slice04_01_CTRL1_28.mat": "7def0b366d4055e1b4e0dbcc5ef8d6e5618d8f0b5dc91de809c8e93bbab61e01",
+      "training/CTX/20200226_slice04_01_CTRL1_36.mat": "2624244fccf540b80c23cf0f5bf580cbed06fbd688272d762da1eb3627df9a25",
+      "training/CTX/20200226_slice04_02_CTRL2_12.mat": "b5b9326c0f380569504deeac8bba1a39dd18214849bb22800a375ff031224272",
+      "training/CTX/20200226_slice04_02_CTRL2_38.mat": "65085bb48370bf304e2929c1fabf4491358fb6bd70551eb93b800352e1712344",
+      "training/CTX/20200323_slice01_01_CTRL1_53.mat": "847491e49a71f9ab9bfd2ad97103dedeeb0983f07c715e99470e6df4d0feebc6",
+      "training/CTX/20200323_slice01_01_CTRL1_68.mat": "a029af1864cda6412bf01d743cb2489986d1d507ca0c9e05ba4ee92020af5124",
+      "training/CTX/20200323_slice01_02_CTRL2_53.mat": "0b6a3c9dc9e04079158c8d2ffe0655fc44a5d143e7d1fcf24d64825260850e06",
+      "training/CTX/20200323_slice01_02_CTRL2_68.mat": "f1dd20b3ff652c3bdc5ad97b85795202facc4fc46de2e67d557b0ce3c98102fb",
+      "training/CTX/20200331_slice02_01_CTRL1_28.mat": "f3d156b1a6d4ab97c33f59cf373fc4722ffa61285d26f427dbe9ebbc1224d788",
+      "training/CTX/20200331_slice02_01_CTRL1_36.mat": "8e6b5a3501fd0f870257cc6c38fd8cf99309e3e7d51251aff54f31fd709d8103",
+      "training/CTX/20200331_slice03_01_CTRL1_43.mat": "a331b07a7fde248a748b09610646eb0a7d0b68818b18fc941aac8811c60553c2",
+      "training/CTX/20200331_slice03_01_CTRL1_44.mat": "c2ab234dea27e6f6bcfdd58506ecc8199114f7c6037798dc7f9abe2f7cebe4b2",
+      "validation/X_data/20171129_slice02_01_CTRL1_12.mat": "0c04ab0844571abc07fd4c75710db5ffe52ba62009afece6ca19c989978d4c31",
+      "validation/X_data/20171212_slice07_01_CTRL1_42.mat": "77ad4dd07d6138ce174d9b5accd185790c6b790808b6ee874839b14eb6383619",
+      "validation/X_data/20200226_slice04_01_CTRL1_12.mat": "002e6f0883c99158adf08054affbf2230743c8a33049fe4ddcd020c0ab33bd0e",
+      "validation/X_data/20200323_slice01_01_CTRL1_53.mat": "fe734610033fe6fbd662c4de4c1e723f3685e6194ef45331eaebe00f0a9b1c83",
+      "validation/X_data/20200331_slice03_01_CTRL1_31.mat": "24c1e36d1ff0b44b1a27a9a33bad5c4014e6cf28f153f0b9c8d1a4a5a6f0d1cd",
+      "validation/Y_data/20171129_slice02_01_CTRL1_65.mat": "167c1656ddc708d10c34929d1f150ba9041dc5ee3ecf3dc8a4e8d352dae31a5e",
+      "validation/Y_data/20171212_slice07_01_CTRL1_16.mat": "c2cd5f092cabc5ca75033114f44f63478b44007dbffbcdbc0628f96e21808418",
+      "validation/Y_data/20200226_slice04_01_CTRL1_27.mat": "c8a0818bb9944b0a7a5d8d7f9bf94b1d162fa6cbb3b4569dfd60591771c5c10b",
+      "validation/Y_data/20200323_slice01_01_CTRL1_25.mat": "1376948b0ee0f7659cad33776d9e05aec3b5e7f2957d170d2e90e38bd73bb277",
+      "validation/Y_data/20200331_slice03_01_CTRL1_25.mat": "892fcc1868948b4fb87182e1feb19fe9a4a8c83ace0cf86ac85cb1b6ad0df8aa"
+    },
+    "seed_artifact": {
+      "name": "esn_legacy_compat_v1.npz",
+      "sha256": "3e8e666f8422646e2c63ccca9dcf92d80a7e12d821374c10a84da9f174252b50"
+    }
+  },
+  "training": {
+    "pairing_rule": "ascending electrode rank within each experiment group",
+    "preserved_reservoir_weights": true,
+    "ridge": 4.4065269894699847e-10,
+    "training_recording_ids": [
+      "training__20200226_slice04_01__ctx16__ca327",
+      "training__20200226_slice04_01__ctx17__ca365",
+      "training__20200226_slice04_01__ctx28__ca375",
+      "training__20200226_slice04_01__ctx36__ca377",
+      "training__20200226_slice04_02__ctx12__ca375",
+      "training__20200226_slice04_02__ctx38__ca385",
+      "training__20200323_slice01_01__ctx53__ca325",
+      "training__20200323_slice01_01__ctx68__ca335",
+      "training__20200323_slice01_02__ctx53__ca325",
+      "training__20200323_slice01_02__ctx68__ca335",
+      "training__20200331_slice02_01__ctx28__ca365",
+      "training__20200331_slice02_01__ctx36__ca375",
+      "training__20200331_slice03_01__ctx43__ca325",
+      "training__20200331_slice03_01__ctx44__ca335"
+    ],
+    "validation_recording_ids": [
+      "validation__20171129_slice02_01__ctx12__ca365",
+      "validation__20171212_slice07_01__ctx42__ca316",
+      "validation__20200226_slice04_01__ctx12__ca327",
+      "validation__20200323_slice01_01__ctx53__ca325",
+      "validation__20200331_slice03_01__ctx31__ca325"
+    ],
+    "washout_seconds": 1.0
+  },
+  "validation": {
+    "corrected_mean_nrmse": 1.0065780798516475,
+    "corrected_mean_pearson_r": 0.2597106704280264,
+    "gate": "mean Pearson r not lower and mean nRMSE not higher than legacy readout",
+    "legacy_mean_nrmse": 2.062019183774045,
+    "legacy_mean_pearson_r": -0.2597119381896183,
+    "passed": true,
+    "recordings": [
+      {
+        "corrected": {
+          "nrmse": 1.0193751231789308,
+          "pearson_r": 0.510745232929378
+        },
+        "legacy_readout": {
+          "nrmse": 2.74616949188431,
+          "pearson_r": -0.5107406549109665
+        },
+        "recording_id": "validation__20171129_slice02_01__ctx12__ca365"
+      },
+      {
+        "corrected": {
+          "nrmse": 1.047318446789071,
+          "pearson_r": 0.16403683651744605
+        },
+        "legacy_readout": {
+          "nrmse": 3.914858681437508,
+          "pearson_r": -0.16403391612097581
+        },
+        "recording_id": "validation__20171212_slice07_01__ctx42__ca316"
+      },
+      {
+        "corrected": {
+          "nrmse": 0.9671582486444855,
+          "pearson_r": 0.3616938613305885
+        },
+        "legacy_readout": {
+          "nrmse": 1.6199944134418054,
+          "pearson_r": -0.3617101160515894
+        },
+        "recording_id": "validation__20200226_slice04_01__ctx12__ca327"
+      },
+      {
+        "corrected": {
+          "nrmse": 0.9989553669825109,
+          "pearson_r": 0.2963762221117176
+        },
+        "legacy_readout": {
+          "nrmse": 1.013421803471828,
+          "pearson_r": -0.29637254865874085
+        },
+        "recording_id": "validation__20200323_slice01_01__ctx53__ca325"
+      },
+      {
+        "corrected": {
+          "nrmse": 1.000083213663239,
+          "pearson_r": -0.03429880074899823
+        },
+        "legacy_readout": {
+          "nrmse": 1.0156515286347754,
+          "pearson_r": 0.03429754479418115
+        },
+        "recording_id": "validation__20200331_slice03_01__ctx31__ca325"
+      }
+    ]
+  }
+}
