@@ -32,7 +32,7 @@ def parser() -> argparse.ArgumentParser:
     mode.add_argument("--paced", action="store_true", help="pace a real-time 30 minute run for each controller")
     mode.add_argument("--simulation", action="store_true", help="compare responsive plant feedback with stimulation disabled")
     mode.add_argument("--tracking-simulation", action="store_true",
-                      help="run the reachable PID target-tracking synthetic scenario")
+                      help="run the capacity-checked PID target-tracking synthetic scenario")
     p.add_argument("--lead-sweep", action="store_true", help="repeat the selected mode at every selected AO lead")
     p.add_argument("--trace", type=Path, action="append", help="trace path; repeat to override the three canonical defaults")
     p.add_argument("--controller", choices=CONTROLLERS, action="append", help="controller selection; repeat to select more than one")
@@ -41,7 +41,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--duration-seconds", type=float, help="finite source duration override; default is 1s for smoke and full trace for matrix")
     p.add_argument("--paced-seconds", type=float, default=1800.0, help="real elapsed duration for each --paced controller run")
     p.add_argument("--simulation-seconds", type=float, default=24.0, help="synthetic plant duration for --simulation")
-    p.add_argument("--tracking-simulation-seconds", type=float, default=40.0,
+    p.add_argument("--tracking-simulation-seconds", type=float, default=64.0,
                    help="duration for the reachable PID target-tracking case")
     p.add_argument("--output-dir", type=Path, default=ROOT / "work" / "validation_runs")
     p.add_argument("--progress-log", type=Path, help="JSON Lines progress file; defaults inside --output-dir")
@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     write_progress(progress, start)
     metrics = []
     environments = []
+    case_failures: list[dict[str, object]] = []
     simulations = []
     if args.simulation or args.tracking_simulation:
         selected = controllers if args.simulation else (args.controller or ["pid"])
@@ -107,8 +108,11 @@ def main(argv: list[str] | None = None) -> int:
                                      disturbance_stop_s=min(TRACKING_PLANT_SETTINGS.disturbance_stop_s,
                                                             duration - 1.0))
             pid_settings = TRACKING_PID_SETTINGS
-            if plant_settings.disturbance_stop_s <= plant_settings.disturbance_start_s + 2.0:
-                raise SystemExit("tracking simulation duration must leave at least two disturbance seconds after calibration")
+            capacity_window_start = (plant_settings.disturbance_start_s
+                                     + 2.0 * plant_settings.effect_recovery_s)
+            if plant_settings.disturbance_stop_s < capacity_window_start + 1.0:
+                raise SystemExit(
+                    "tracking simulation duration must include at least one second after two plant recovery constants")
         for controller in selected:
             simulations.append(run_feedback_comparison(
                 controller, duration_s=duration,
@@ -117,23 +121,43 @@ def main(argv: list[str] | None = None) -> int:
                 plant_settings=plant_settings, pid_settings=pid_settings,
                 inject_stall_ms=args.inject_stall_ms,
                 stall_on_first_pulse=(args.inject_stall_ms > 0 and not args.tracking_simulation),
+                include_capacity_reference=args.tracking_simulation,
             ))
         sim_path = output_dir / f"responsive_simulation_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
         sim_path.write_text(json.dumps(json_safe({
             "schema": "echo-chamber-responsive-simulation-matrix-v1",
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "physical_pulse_claims": False, "cases": simulations,
-            "scenario": "reachable_target_tracking" if args.tracking_simulation else "saturation_and_activity_comparison",
+            "scenario": "capacity_checked_pid_tracking" if args.tracking_simulation else "saturation_and_activity_comparison",
         }), indent=2, allow_nan=False) + "\n", encoding="utf-8")
         csv_path = sim_path.with_suffix(".csv")
         with csv_path.open("w", newline="", encoding="utf-8") as stream:
             fields = ("controller", "stimulated_disturbance_rms_mv", "no_stimulation_disturbance_rms_mv",
                       "observed_disturbance_rms_reduction_mv", "max_requested_rate_hz",
                       "rendered_pulse_events", "pulse_commit_samples", "generated_nonzero_ao_samples",
+                      "requested_pulse_events", "rejected_pulse_events", "unclassified_pulse_events",
                       "stimulated_iae_z_seconds", "control_iae_z_seconds",
                       "tracking_iae_improvement_z_seconds", "mean_rate_hz", "rate_std_hz",
                       "saturation_fraction", "settling_time_seconds", "rate_direction_reversals",
                       "tracking_window_complete", "tracking_coverage_fraction",
+                      "source_coverage_fraction", "feature_masked_coverage_fraction",
+                      "known_feature_invalid_blocks", "unexplained_feature_invalid_samples",
+                      "requested_rate_mean_capacity_mv", "effective_rate_bound_hz",
+                      "effective_rate_mean_capacity_mv", "capacity_reference_generated_effect_rate_hz",
+                      "capacity_reference_formula_mean_capacity_mv", "target_correction_required_mv",
+                      "capacity_reference_steady_reduction_margin_mv", "capacity_reference_reaches_target",
+                      "capacity_reference_kind", "capacity_reference_max_request_limit_reached",
+                      "capacity_reference_max_requested_rate_observed_hz",
+                      "capacity_reference_steady_window_start_s",
+                      "capacity_reference_steady_window_stop_s", "capacity_reference_steady_mean_reduction_mv",
+                      "regulated_controller_generated_effect_rate_hz",
+                      "regulated_controller_formula_mean_reduction_mv",
+                      "final_window_moving_mean_abs_error_z", "final_window_raw_mae_z",
+                      "moving_mean_error_max_abs_z", "raw_error_std_z",
+                      "post_settling_raw_error_std_z", "raw_error_std_limit_z",
+                      "raw_ripple_within_bounds",
+                      "tracking_gate_passed", "plant_recovery_passed", "tracking_iae_improved",
+                      "simulation_acceptance_passed",
                       "physical_pulse_claims")
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()
@@ -147,6 +171,9 @@ def main(argv: list[str] | None = None) -> int:
                     "rendered_pulse_events": case["stimulated"]["metrics"]["rendered_pulse_events"],
                     "pulse_commit_samples": case["stimulated"]["metrics"]["pulse_commit_samples"],
                     "generated_nonzero_ao_samples": case["accepted_generated_command_samples"],
+                    "requested_pulse_events": case["stimulated"]["metrics"]["requested_pulse_events"],
+                    "rejected_pulse_events": case["stimulated"]["metrics"]["rejected_pulse_events"],
+                    "unclassified_pulse_events": case["stimulated"]["metrics"]["unclassified_pulse_events"],
                     "stimulated_iae_z_seconds": case["stimulated"]["controller_tracking"]["iae_z_seconds"],
                     "control_iae_z_seconds": case["no_stimulation_control"]["controller_tracking"]["iae_z_seconds"],
                     "tracking_iae_improvement_z_seconds": case["tracking_error_reduction_z_seconds"],
@@ -157,16 +184,52 @@ def main(argv: list[str] | None = None) -> int:
                     "rate_direction_reversals": case["stimulated"]["controller_tracking"]["rate_direction_reversals"],
                     "tracking_window_complete": case["stimulated"]["controller_tracking"]["window_complete"],
                     "tracking_coverage_fraction": case["stimulated"]["controller_tracking"]["coverage_fraction"],
+                    "source_coverage_fraction": case["stimulated"]["controller_tracking"]["source_coverage_fraction"],
+                    "feature_masked_coverage_fraction": case["stimulated"]["controller_tracking"]["masked_coverage_fraction"],
+                    "known_feature_invalid_blocks": case["stimulated"]["controller_tracking"]["known_feature_invalid_blocks"],
+                    "unexplained_feature_invalid_samples": case["stimulated"]["controller_tracking"]["unexplained_feature_invalid_samples"],
+                    "requested_rate_mean_capacity_mv": case["plant_rate_capacity"]["requested_rate_mean_capacity_mv"],
+                    "effective_rate_bound_hz": case["plant_rate_capacity"]["effective_rate_bound_hz"],
+                    "effective_rate_mean_capacity_mv": case["plant_rate_capacity"]["effective_rate_mean_capacity_mv"],
+                    "capacity_reference_generated_effect_rate_hz": case["plant_rate_capacity"].get("generated_effect_rate_hz_in_steady_window"),
+                    "capacity_reference_formula_mean_capacity_mv": case["plant_rate_capacity"].get("generated_cadence_formula_mean_capacity_mv"),
+                    "target_correction_required_mv": case["plant_rate_capacity"].get("target_correction_required_mv"),
+                    "capacity_reference_steady_reduction_margin_mv": case["plant_rate_capacity"].get("steady_reduction_margin_mv"),
+                    "capacity_reference_reaches_target": case["plant_rate_capacity"].get("capacity_reference_reaches_target"),
+                    "capacity_reference_kind": case["plant_rate_capacity"].get("reference_kind"),
+                    "capacity_reference_max_request_limit_reached": case["plant_rate_capacity"].get("max_request_limit_reached"),
+                    "capacity_reference_max_requested_rate_observed_hz": case["plant_rate_capacity"].get("max_requested_rate_observed_hz"),
+                    "capacity_reference_steady_window_start_s": case["plant_rate_capacity"].get("steady_window_start_s"),
+                    "capacity_reference_steady_window_stop_s": case["plant_rate_capacity"].get("steady_window_stop_s"),
+                    "capacity_reference_steady_mean_reduction_mv": case["plant_rate_capacity"].get("steady_mean_reduction_mv"),
+                    "regulated_controller_generated_effect_rate_hz": case["regulated_controller_output_usage"]["generated_effect_rate_hz_in_disturbance"],
+                    "regulated_controller_formula_mean_reduction_mv": case["regulated_controller_output_usage"]["formula_mean_reduction_at_observed_rate_mv"],
+                    "final_window_moving_mean_abs_error_z": case["stimulated"]["controller_tracking"]["final_window_moving_mean_abs_error_z"],
+                    "final_window_raw_mae_z": case["stimulated"]["controller_tracking"]["final_window_raw_mae_z"],
+                    "moving_mean_error_max_abs_z": case["stimulated"]["controller_tracking"]["moving_mean_error_max_abs_z"],
+                    "raw_error_std_z": case["stimulated"]["controller_tracking"]["raw_error_std_z"],
+                    "post_settling_raw_error_std_z": case["stimulated"]["controller_tracking"]["post_settling_raw_error_std_z"],
+                    "raw_error_std_limit_z": case["stimulated"]["controller_tracking"]["raw_error_std_limit_z"],
+                    "raw_ripple_within_bounds": case["stimulated"]["controller_tracking"]["raw_ripple_within_bounds"],
+                    "tracking_gate_passed": case["tracking_gate_passed"],
+                    "plant_recovery_passed": case["plant_recovery_passed"],
+                    "tracking_iae_improved": case["tracking_iae_improved"],
+                    "simulation_acceptance_passed": case["simulation_acceptance_passed"],
                     "physical_pulse_claims": False,
                 })
         for item in simulations:
             change = item["observed_disturbance_rms_reduction_mv"]
             change_text = f"{change:.6f} mV" if change is not None else "unavailable for this duration"
             print(f"{item['controller']}: observed change={change_text}, "
+                  f"tracking_gate={item['tracking_gate_passed']}, "
+                  f"recovery_gate={item['plant_recovery_passed']}, "
+                  f"acceptance={item['simulation_acceptance_passed']}, "
                   f"generated AO samples={item['accepted_generated_command_samples']}")
         print(f"JSON: {sim_path}\nCSV: {csv_path}\nProgress: {progress}")
         write_progress(progress, {"type": "validation_complete", "result": str(sim_path),
                                   "completed_at_utc": datetime.now(timezone.utc).isoformat()})
+        if args.tracking_simulation and any(not item["simulation_acceptance_passed"] for item in simulations):
+            return 1
         return 0
 
     leads = args.leads_ms if args.lead_sweep else [args.lead_ms]
@@ -184,18 +247,35 @@ def main(argv: list[str] | None = None) -> int:
         for trace in traces:
             for controller in controllers:
                 print(f"start controller={controller} trace={trace.name} lead_ms={lead:g}", flush=True)
-                result, environment = run_replay_case(
-                    trace, controller, lead_ms=lead, limit_seconds=duration,
-                    paced=args.paced, progress_path=progress,
-                    progress_interval_s=args.progress_interval_seconds,
-                    recording_dir=record_dir,
-                    browser_ui=args.browser_ui or args.external_browser,
-                    external_browser=args.external_browser,
-                    browser_base_url=args.browser_base_url,
-                    expected_source_samples=(36_000_000 if not args.trace else None),
-                    inject_stall_ms=args.inject_stall_ms,
-                    stall_at_seconds=args.stall_at_second,
-                )
+                try:
+                    result, environment = run_replay_case(
+                        trace, controller, lead_ms=lead, limit_seconds=duration,
+                        paced=args.paced, progress_path=progress,
+                        progress_interval_s=args.progress_interval_seconds,
+                        recording_dir=record_dir,
+                        browser_ui=args.browser_ui or args.external_browser,
+                        external_browser=args.external_browser,
+                        browser_base_url=args.browser_base_url,
+                        expected_source_samples=(36_000_000 if not args.trace else None),
+                        inject_stall_ms=args.inject_stall_ms,
+                        stall_at_seconds=args.stall_at_second,
+                    )
+                except Exception as exc:
+                    failure = {
+                        "case_id": f"{trace.stem}_{controller}_{lead:g}ms_failed",
+                        "source_name": trace.stem,
+                        "source_path": str(trace),
+                        "controller": controller,
+                        "ao_lead_ms": lead,
+                        "exception_type": type(exc).__name__,
+                        "message": str(exc),
+                        "failed_at_utc": datetime.now(timezone.utc).isoformat(),
+                    }
+                    case_failures.append(failure)
+                    write_progress(progress, {"type": "case_failed", **failure})
+                    print(f"failed case={failure['case_id']}: {failure['exception_type']}: {failure['message']}",
+                          file=sys.stderr, flush=True)
+                    continue
                 metrics.append(result)
                 environments.append(environment)
                 print(f"done case={result.case_id} blocks={result.processed_blocks} "
@@ -207,8 +287,12 @@ def main(argv: list[str] | None = None) -> int:
          "failures": acceptance_failures(result)}
         for result in metrics
     ] if gate_enabled else []
+    acceptance.extend({
+        "case_id": failure["case_id"], "passed": False,
+        "failures": [f"{failure['exception_type']}: {failure['message']}"],
+    } for failure in case_failures)
     json_path, csv_path = write_results(metrics, environments, output_dir, run_kind=run_kind,
-                                        acceptance=acceptance)
+                                        acceptance=acceptance, case_failures=case_failures)
     write_progress(progress, {"type": "validation_complete", "pid": os.getpid(),
                               "json": str(json_path), "csv": str(csv_path),
                               "completed_at_utc": datetime.now(timezone.utc).isoformat()})
@@ -216,6 +300,9 @@ def main(argv: list[str] | None = None) -> int:
     if gate_enabled and any(not item["passed"] for item in acceptance):
         failed = sum(not item["passed"] for item in acceptance)
         print(f"ACCEPTANCE FAILED: {failed}/{len(acceptance)} cases; results retained at {json_path}", file=sys.stderr)
+        return 1
+    if case_failures:
+        print(f"FAILED: {len(case_failures)} case(s); results retained at {json_path}", file=sys.stderr)
         return 1
     return 0
 

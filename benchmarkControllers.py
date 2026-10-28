@@ -6,6 +6,7 @@ import csv
 import gc
 import hashlib
 import json
+import math
 import os
 import platform
 import statistics
@@ -14,7 +15,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -104,6 +105,12 @@ class RunMetrics:
     process_slow_call_count: int = 0
     gc_pause_count: int = 0
     gc_pause_max_ms: float = 0.0
+    recorder_backpressure_policy: str = "disabled"
+    recorder_queue_capacity_blocks: int = 0
+    recorder_backpressure_threshold_blocks: int = 0
+    recorder_backpressure_wait_count: int = 0
+    recorder_backpressure_wait_ms: float = 0.0
+    recorder_backpressure_max_backlog: int = 0
     max_requested_rate_hz: float = 0.0
     bounded_rate_request_count: int = 0
     deadline_exceeded_blocks: int = 0
@@ -111,6 +118,7 @@ class RunMetrics:
     requested_pulse_events: int = 0
     rendered_pulse_events: int = 0
     rejected_pulse_events: int = 0
+    unclassified_pulse_events: int = 0
     pulse_commit_samples: int = 0
     ao_nonzero_generated_samples: int = 0
     ao_committed_blocks: int = 0
@@ -136,11 +144,16 @@ class RunMetrics:
     ui_packets_consumed: int = 0
     ui_transport_kind: str = "websocket_client_without_browser_rendering"
     browser_connected: bool = False
+    browser_disconnect_count: int = 0
+    browser_disconnected_duration_ms: float = 0.0
+    browser_connected_at_finish: bool = False
+    browser_disconnect_open_at_finish: bool = False
     injected_stall_count: int = 0
     injected_stall_ms_total: float = 0.0
     runtime_fault: str | None = None
     generated_ao_blocks: int = 0
     pulse_request_ids: list[str] = field(default_factory=list)
+    pulse_rejected_ids: list[str] = field(default_factory=list)
     pulse_commit_ids: list[str] = field(default_factory=list)
     last_controller_ready: bool = False
     last_controller_calibrated: bool = False
@@ -172,10 +185,10 @@ def json_safe(value: Any) -> Any:
         return [json_safe(item) for item in value]
     if isinstance(value, np.ndarray):
         return json_safe(value.tolist())
-    if isinstance(value, (np.integer, np.floating, np.bool_)):
+    if isinstance(value, np.generic):
         return json_safe(value.item())
-    if isinstance(value, float) and not np.isfinite(value):
-        return None
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     return value
 
 
@@ -221,10 +234,36 @@ def acceptance_failures(metrics: RunMetrics) -> list[str]:
     if not metrics.ui_packets_submitted or not metrics.ui_packets_consumed:
         failures.append("UI packets were not submitted and consumed")
     if metrics.browser_ui_required and not metrics.browser_connected:
-        failures.append("required browser UI did not remain connected")
-    if metrics.requested_pulse_events != metrics.rendered_pulse_events:
-        failures.append("requested pulse events were not all rendered or rejected")
+        failures.append("required browser UI never connected")
+    if metrics.browser_ui_required and metrics.browser_disconnect_count:
+        failures.append("required browser UI disconnected during the run")
+    if metrics.browser_ui_required and not metrics.browser_connected_at_finish:
+        failures.append("required browser UI was disconnected at run completion")
+    if (metrics.unclassified_pulse_events
+            or metrics.requested_pulse_events != metrics.rendered_pulse_events + metrics.rejected_pulse_events):
+        failures.append("requested pulse events were not all categorized as rendered or rejected")
     return failures
+
+
+def _record_pulse_event_metrics(metrics: RunMetrics, seen: set[str], events: Iterable[Any]) -> None:
+    """Count each proposed pulse ID once and classify every status explicitly."""
+    rendered_statuses = {"rendered_for_ao", "committed_tail_rendered"}
+    for event in events:
+        pulse_id = str(event.pulse_id)
+        if pulse_id in seen:
+            continue
+        seen.add(pulse_id)
+        metrics.requested_pulse_events += 1
+        metrics.pulse_request_ids.append(pulse_id)
+        status = str(event.status)
+        if status.startswith("rejected"):
+            metrics.rejected_pulse_events += 1
+            metrics.pulse_rejected_ids.append(pulse_id)
+        elif status in rendered_statuses:
+            metrics.rendered_pulse_events += 1
+        else:
+            metrics.unclassified_pulse_events += 1
+            metrics.notes.append(f"unclassified pulse event {pulse_id}: {status}")
 
 
 def parse_ui_packet(packet: str) -> dict[str, Any]:
@@ -306,6 +345,8 @@ def _replay_blocks(replay: ReplayData, limit_samples: int | None = None) -> Iter
 
 
 class _Harness:
+    UNPACED_RECORDER_NO_PROGRESS_TIMEOUT_S = 30.0
+
     def __init__(self, config: app.AppConfig, source_name: str, metadata: dict[str, Any],
                  *, progress_path: Path | None, progress_interval_s: float,
                  paced: bool, simulation: bool, on_generated: Callable[[app.GeneratedAoBlock], None] | None,
@@ -320,6 +361,8 @@ class _Harness:
         self.stall_at_source_index = stall_at_source_index
         self.stall_on_first_pulse = stall_on_first_pulse
         self._stall_used = False
+        self.browser_ui_required = bool(browser_ui)
+        self._browser_presence = _BrowserPresenceTracker()
         self.esn = app.EsnRuntime(config.model_artifact, config)
         self.state = app.RuntimeState(
             esn_ready=self.esn.ready, start_paused=False,
@@ -331,7 +374,7 @@ class _Harness:
             controller_settings=config.controller_settings,
         )
         self.telemetry = app.Telemetry()
-        self.hub = _CountingUiHub(config.ui_queue_packets)
+        self.hub = _CountingUiHub(config.ui_queue_packets, self._browser_presence)
         self.loop = asyncio.new_event_loop()
         self.loop_thread = threading.Thread(target=self.loop.run_forever, name="benchmark-ui-loop", daemon=True)
         self.loop_thread.start()
@@ -363,8 +406,6 @@ class _Harness:
         self.shutdown = None
         self.ui_server, self.ui_client, self.ui_consumer_task, self.ui_port = self._run_on_loop(
             self._start_ui_transport())
-        self.browser_connected = False
-        self.browser_ui_required = bool(browser_ui)
         if browser_ui:
             url = _browser_connection_url(browser_base_url, self.ui_port)
             if external_browser:
@@ -381,8 +422,7 @@ class _Harness:
             deadline = time.monotonic() + 120.0
             while self.hub.client_count < 2 and time.monotonic() < deadline:
                 time.sleep(0.05)
-            self.browser_connected = self.hub.client_count >= 2
-            if not self.browser_connected:
+            if not self._browser_presence.snapshot(time.perf_counter_ns())["ever_connected"]:
                 self.abort()
                 raise TimeoutError("browser UI did not connect to the benchmark WebSocket")
         self.pulse_commit_samples = 0
@@ -398,6 +438,9 @@ class _Harness:
             simulation=simulation,
             browser_ui_required=self.browser_ui_required,
             ao_clock_mode="independent_monotonic_wall" if paced else "virtual_5ms",
+            recorder_backpressure_policy=("disabled_for_paced" if paced else "bounded_queue_wait_between_blocks"),
+            recorder_queue_capacity_blocks=config.logger_queue_blocks,
+            recorder_backpressure_threshold_blocks=max(1, math.floor(config.logger_queue_blocks * 0.8)),
         )
         self.component_latencies_ns: dict[str, list[int]] = {}
         self._instrument_core_components()
@@ -447,6 +490,7 @@ class _Harness:
         self.last_source_index = source_index
         if values_mv.shape != (2, self.config.chunk_size):
             raise ValueError(f"processing input shape must be (2, {self.config.chunk_size})")
+        self._wait_for_unpaced_recorder_capacity(source_index)
         start = time.perf_counter_ns()
         thread_cpu_start = time.thread_time_ns()
         process_cpu_start = time.process_time_ns()
@@ -482,6 +526,8 @@ class _Harness:
         self.latencies_ms.append(elapsed_ms)
         self.metrics.processed_blocks += 1
         self.metrics.source_samples += int(np.count_nonzero(np.isfinite(values_mv[0])))
+        self.metrics.recorder_backpressure_max_backlog = max(
+            self.metrics.recorder_backpressure_max_backlog, self.recorder.backlog)
         self.metrics.deadline_exceeded_blocks += int(elapsed_ms > self.metrics.deadline_ms)
         diagnostics = self.core._last_diagnostics
         self.metrics.last_controller_ready = bool(diagnostics.get("ready", False))
@@ -494,17 +540,7 @@ class _Harness:
         self.metrics.max_requested_rate_hz = max(self.metrics.max_requested_rate_hz, requested_rate)
         if requested_rate > 0:
             self.metrics.bounded_rate_request_count += int(0 <= requested_rate <= 2.0)
-        for event in self.core.last_pulse_events:
-            status = str(event.status)
-            if event.pulse_id in self._seen_pulse_events:
-                continue
-            self._seen_pulse_events.add(event.pulse_id)
-            if status.startswith("rejected"):
-                self.metrics.rejected_pulse_events += 1
-            else:
-                self.metrics.requested_pulse_events += 1
-                if status in {"rendered_for_ao", "committed_tail_rendered"}:
-                    self.metrics.rendered_pulse_events += 1
+        _record_pulse_event_metrics(self.metrics, self._seen_pulse_events, self.core.last_pulse_events)
 
         snapshot = self.state.snapshot()
         base = self.base_sample_index
@@ -514,9 +550,6 @@ class _Harness:
 
         pulse_ids = [event.pulse_id for event in self.core.last_pulse_events
                      if not str(event.status).startswith("rejected")]
-        for pulse_id in pulse_ids:
-            if pulse_id not in self.metrics.pulse_request_ids:
-                self.metrics.pulse_request_ids.append(pulse_id)
         inject = (not self._stall_used and self.inject_stall_ms > 0
                   and self.stall_at_source_index is not None
                   and source_index == self.stall_at_source_index)
@@ -601,6 +634,9 @@ class _Harness:
                 "latency_p99_ms_so_far": float(np.percentile(self.latencies_ms, 99)),
                 "ao": self.scheduler.stats_snapshot(),
                 "recorder_backlog": self.recorder.backlog,
+                "recorder_backpressure_wait_count": self.metrics.recorder_backpressure_wait_count,
+                "recorder_backpressure_wait_ms": self.metrics.recorder_backpressure_wait_ms,
+                "recorder_backpressure_policy": self.metrics.recorder_backpressure_policy,
                 "recording_path": str(self.recording_path),
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             })
@@ -615,6 +651,69 @@ class _Harness:
         if self._ao_clock_error is not None:
             raise RuntimeError(f"simulated AO clock failed: {self._ao_clock_error}") from self._ao_clock_error
         return generated
+
+    def _wait_for_unpaced_recorder_capacity(self, source_index: int) -> None:
+        """Pause offline input between blocks while the bounded HDF5 queue drains.
+
+        Paced runs never wait here. This wait is outside `core.process` and does
+        not advance the virtual AO clock or change the source sample index.
+        """
+        if self.paced:
+            return
+        threshold = self.metrics.recorder_backpressure_threshold_blocks
+        backlog = self.recorder.backlog
+        self.metrics.recorder_backpressure_max_backlog = max(
+            self.metrics.recorder_backpressure_max_backlog, backlog)
+        if backlog < threshold:
+            return
+        wait_started_ns = time.perf_counter_ns()
+        no_progress_timeout_ns = int(self.UNPACED_RECORDER_NO_PROGRESS_TIMEOUT_S * 1e9)
+        last_progress_ns = time.monotonic_ns()
+        last_backlog = backlog
+        self.metrics.recorder_backpressure_wait_count += 1
+        if self.metrics.recorder_backpressure_wait_count == 1:
+            write_progress(self.progress_path, {
+                "type": "recorder_backpressure_started",
+                "source_sample_index": source_index,
+                "queue_depth": backlog,
+                "queue_capacity_blocks": self.config.logger_queue_blocks,
+                "threshold_blocks": threshold,
+                "policy": self.metrics.recorder_backpressure_policy,
+            })
+        while backlog >= threshold:
+            if self.recorder.error is not None:
+                raise RuntimeError(f"HDF5 writer failed while unpaced producer waited: {self.recorder.error}")
+            time.sleep(0.001)
+            backlog = self.recorder.backlog
+            self.metrics.recorder_backpressure_max_backlog = max(
+                self.metrics.recorder_backpressure_max_backlog, backlog)
+            now_ns = time.monotonic_ns()
+            if backlog < last_backlog:
+                last_backlog = backlog
+                last_progress_ns = now_ns
+            elif now_ns - last_progress_ns >= no_progress_timeout_ns:
+                elapsed_ms = (time.perf_counter_ns() - wait_started_ns) / 1e6
+                self.metrics.recorder_backpressure_wait_ms += elapsed_ms
+                details = {
+                    "type": "recorder_backpressure_timeout",
+                    "source_sample_index": source_index,
+                    "queue_depth": backlog,
+                    "queue_capacity_blocks": self.config.logger_queue_blocks,
+                    "threshold_blocks": threshold,
+                    "no_progress_timeout_s": self.UNPACED_RECORDER_NO_PROGRESS_TIMEOUT_S,
+                    "wait_duration_ms": elapsed_ms,
+                    "recorder_error": self.recorder.error,
+                }
+                write_progress(self.progress_path, details)
+                raise TimeoutError(
+                    "HDF5 recorder queue made no progress while unpaced producer waited: "
+                    f"source_sample_index={source_index}, queue_depth={backlog}, "
+                    f"queue_capacity_blocks={self.config.logger_queue_blocks}, threshold_blocks={threshold}, "
+                    f"no_progress_timeout_s={self.UNPACED_RECORDER_NO_PROGRESS_TIMEOUT_S:g}, "
+                    f"wait_duration_ms={elapsed_ms:.3f}, recorder_error={self.recorder.error!r}"
+                )
+        self.metrics.recorder_backpressure_wait_ms += (
+            time.perf_counter_ns() - wait_started_ns) / 1e6
 
     def _collect_gc_timing(self, phase: str, info: dict[str, Any]) -> None:
         """Capture GC pause timing with an in-memory callback only."""
@@ -760,13 +859,18 @@ class _Harness:
         self.metrics.pulse_commit_samples = self.pulse_commit_samples
         self.metrics.ui_packets_submitted = self.hub.publish_count
         self.metrics.ui_packets_consumed = self.ui_consumed_count
-        self.metrics.browser_connected = self.browser_connected
-        if self.browser_connected:
-            self.metrics.ui_transport_kind = "browser_and_websocket_client"
         self.metrics.recorder_max_backlog = self.telemetry.snapshot()["logger_high_water"]
         self.state.set_recording(False)
         self.recorder.stop_recording()
         self.recorder.close()
+        browser_presence = self._browser_presence.snapshot(time.perf_counter_ns())
+        self.metrics.browser_connected = bool(browser_presence["ever_connected"])
+        self.metrics.browser_disconnect_count = int(browser_presence["disconnect_count"])
+        self.metrics.browser_disconnected_duration_ms = float(browser_presence["disconnected_duration_ms"])
+        self.metrics.browser_connected_at_finish = bool(browser_presence["connected_at_finish"])
+        self.metrics.browser_disconnect_open_at_finish = bool(browser_presence["disconnect_open_at_finish"])
+        if self.metrics.browser_connected:
+            self.metrics.ui_transport_kind = "browser_and_websocket_client"
         try:
             with h5py.File(self.recording_path, "r") as recording:
                 self.metrics.recording_completed = int(recording.attrs.get("complete", 0)) == 1
@@ -843,21 +947,39 @@ class _Harness:
                 pass
             self._gc_callback_registered = False
 
-    def abort(self) -> None:
-        """Stop worker threads and close an incomplete evidence file on failure."""
-        try:
-            self._stop_ao_clock()
-            self.state.set_recording(False)
-            self.recorder.stop_recording()
-        finally:
-            self.recorder.close()
-            self.core.close_ui()
-            self._run_on_loop(self._stop_ui_transport())
-            self.loop.call_soon_threadsafe(self.loop.stop)
-            self.loop_thread.join(timeout=3)
-            if not self.loop.is_closed():
-                self.loop.close()
-        self._remove_gc_callback()
+    def abort(self) -> list[str]:
+        """Attempt every bounded cleanup step and return any cleanup failures."""
+        errors: list[str] = []
+
+        def attempt(label: str, operation: Callable[[], Any]) -> Any:
+            try:
+                return operation()
+            except BaseException as exc:
+                errors.append(f"{label}: {type(exc).__name__}: {exc}")
+                return None
+
+        attempt("stop simulated AO clock", self._stop_ao_clock)
+        attempt("disable recording", lambda: self.state.set_recording(False))
+        attempt("stop recorder admission", self.recorder.stop_recording)
+        attempt("close recorder", self.recorder.close)
+        attempt("close core UI", self.core.close_ui)
+        attempt("stop UI transport", lambda: self._run_on_loop(self._stop_ui_transport()))
+        attempt("request UI loop stop", lambda: self.loop.call_soon_threadsafe(self.loop.stop))
+        attempt("join UI loop thread", lambda: self.loop_thread.join(timeout=3))
+        if self.loop_thread.is_alive():
+            errors.append("join UI loop thread: thread remained alive after 3 seconds")
+        if not self.loop.is_closed() and not self.loop.is_running():
+            attempt("close UI event loop", self.loop.close)
+        elif self.loop.is_running():
+            errors.append("close UI event loop: loop is still running")
+        attempt("remove GC callback", self._remove_gc_callback)
+
+        if errors:
+            attempt("write cleanup diagnostics", lambda: write_progress(self.progress_path, {
+                "type": "cleanup_errors", "case_id": getattr(self.metrics, "case_id", None),
+                "errors": errors, "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            }))
+        return errors
 
     def _stop_ao_clock(self) -> None:
         self._ao_clock_stop.set()
@@ -907,10 +1029,72 @@ class _Harness:
             await asyncio.gather(self.ui_consumer_task, return_exceptions=True)
 
 
+class _BrowserPresenceTracker:
+    """Track real external UI WebSocket presence without claiming rendering."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ever_connected = False
+        self._connected = False
+        self._disconnect_count = 0
+        self._disconnected_duration_ns = 0
+        self._disconnected_since_ns: int | None = None
+
+    def observe(self, connected: bool, timestamp_ns: int | None = None) -> None:
+        now_ns = time.perf_counter_ns() if timestamp_ns is None else int(timestamp_ns)
+        with self._lock:
+            if connected:
+                if not self._connected:
+                    if self._disconnected_since_ns is not None:
+                        self._disconnected_duration_ns += max(0, now_ns - self._disconnected_since_ns)
+                        self._disconnected_since_ns = None
+                    self._connected = True
+                    self._ever_connected = True
+            elif self._connected:
+                self._connected = False
+                self._disconnect_count += 1
+                self._disconnected_since_ns = now_ns
+
+    def observe_external_count(self, count: int, timestamp_ns: int | None = None) -> None:
+        self.observe(int(count) > 0, timestamp_ns)
+
+    def snapshot(self, timestamp_ns: int | None = None) -> dict[str, Any]:
+        now_ns = time.perf_counter_ns() if timestamp_ns is None else int(timestamp_ns)
+        with self._lock:
+            open_disconnect = self._ever_connected and not self._connected
+            duration_ns = self._disconnected_duration_ns
+            if open_disconnect and self._disconnected_since_ns is not None:
+                duration_ns += max(0, now_ns - self._disconnected_since_ns)
+            return {
+                "ever_connected": self._ever_connected,
+                "disconnect_count": self._disconnect_count,
+                "disconnected_duration_ms": duration_ns / 1e6,
+                "connected_at_finish": self._connected,
+                "disconnect_open_at_finish": open_disconnect,
+            }
+
+
 class _CountingUiHub(app.UiHub):
-    def __init__(self, queue_size: int):
+    def __init__(self, queue_size: int, browser_presence: _BrowserPresenceTracker):
         super().__init__(queue_size)
         self.publish_count = 0
+        self.browser_presence = browser_presence
+        self._external_browser_present = False
+
+    def _update_external_presence(self) -> None:
+        present = self.client_count >= 2
+        if present != self._external_browser_present:
+            self._external_browser_present = present
+            self.browser_presence.observe(present, time.perf_counter_ns())
+
+    def subscribe(self) -> asyncio.Queue[str]:
+        client = super().subscribe()
+        self._update_external_presence()
+        return client
+
+    def unsubscribe(self, client: asyncio.Queue[str]) -> None:
+        super().unsubscribe(client)
+        self._update_external_presence()
 
     @property
     def client_count(self) -> int:
@@ -988,11 +1172,10 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
         metrics = harness.finish()
         if on_metrics:
             on_metrics(metrics)
-    except BaseException:
-        try:
-            harness.abort()
-        except Exception:
-            pass
+    except BaseException as primary_error:
+        cleanup_errors = harness.abort()
+        if cleanup_errors:
+            primary_error.add_note("Additional cleanup failures: " + " | ".join(cleanup_errors))
         raise
     finally:
         if tmp is not None:
@@ -1008,6 +1191,9 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
         "core_telemetry": harness.telemetry.snapshot(),
         "ui_transport": {"kind": metrics.ui_transport_kind,
                          "browser_connected": metrics.browser_connected,
+                         "browser_disconnect_count": metrics.browser_disconnect_count,
+                         "browser_disconnected_duration_ms": metrics.browser_disconnected_duration_ms,
+                         "browser_connected_at_finish": metrics.browser_connected_at_finish,
                          "packets_submitted": metrics.ui_packets_submitted,
                          "packets_consumed": metrics.ui_packets_consumed,
                          "browser_rendering_verified": False},
@@ -1017,7 +1203,8 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
 
 
 def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]], output_dir: Path,
-                  *, run_kind: str, acceptance: list[dict[str, Any]] | None = None) -> tuple[Path, Path]:
+                  *, run_kind: str, acceptance: list[dict[str, Any]] | None = None,
+                  case_failures: list[dict[str, Any]] | None = None) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     json_path = output_dir / f"controller_{run_kind}_{stamp}.json"
@@ -1033,20 +1220,34 @@ def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]],
         "physical_pulse_claims": False,
         "acceptance": acceptance or [],
         "cases": [asdict(x) for x in metrics], "environments": environments,
+        "case_failures": case_failures or [],
     }
     json_path.write_text(json.dumps(json_safe(document), indent=2, allow_nan=False) + "\n", encoding="utf-8")
-    if metrics:
-        with csv_path.open("w", newline="", encoding="utf-8") as stream:
-            fields = list(asdict(metrics[0]).keys()) + ["acceptance_passed", "acceptance_failures"]
-            writer = csv.DictWriter(stream, fieldnames=fields)
-            writer.writeheader()
-            acceptance_by_id = {item["case_id"]: item for item in (acceptance or [])}
-            for item in metrics:
-                row = asdict(item)
-                evaluated = acceptance_by_id.get(item.case_id)
-                row["acceptance_passed"] = evaluated["passed"] if evaluated else ""
-                row["acceptance_failures"] = json.dumps(evaluated["failures"]) if evaluated else ""
-                writer.writerow(row)
-    else:
-        csv_path.write_text("case_id\n", encoding="utf-8")
+    with csv_path.open("w", newline="", encoding="utf-8") as stream:
+        metric_fields = [item.name for item in fields(RunMetrics)]
+        csv_fields = metric_fields + ["case_status", "failure_type", "failure_message",
+                                      "acceptance_passed", "acceptance_failures"]
+        writer = csv.DictWriter(stream, fieldnames=csv_fields)
+        writer.writeheader()
+        acceptance_by_id = {item["case_id"]: item for item in (acceptance or [])}
+        for item in metrics:
+            row = asdict(item)
+            row["case_status"] = "completed"
+            evaluated = acceptance_by_id.get(item.case_id)
+            row["acceptance_passed"] = evaluated["passed"] if evaluated else ""
+            row["acceptance_failures"] = json.dumps(evaluated["failures"]) if evaluated else ""
+            writer.writerow(row)
+        for failure in case_failures or []:
+            row = {name: "" for name in metric_fields}
+            for name in ("case_id", "source_name", "controller", "ao_lead_ms"):
+                if name in failure:
+                    row[name] = failure[name]
+            row.update({
+                "case_status": "failed",
+                "failure_type": failure.get("exception_type", "Exception"),
+                "failure_message": failure.get("message", ""),
+                "acceptance_passed": False,
+                "acceptance_failures": json.dumps([failure.get("message", "case failed")]),
+            })
+            writer.writerow(row)
     return json_path, csv_path

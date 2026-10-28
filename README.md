@@ -160,9 +160,13 @@ python tools\validate_controllers.py --paced --external-browser `
 ```
 
 Run `--tracking-simulation` to compare the PID controller against the
-deterministic responsive plant with stimulation disabled. The plant is a
-software fixture, not a tissue model. These replay and simulation commands do
-not establish SWR ground truth, biological efficacy, or physical stimulation.
+deterministic responsive plant with stimulation disabled. The report includes
+rate-limited plant capacity, fixed-band target error, and recovery checks. A
+capacity calculation alone does not establish PID tracking; use
+`simulation_acceptance_passed` in the result and treat a failed or unverified
+tracking gate as such. The plant is a software fixture, not a tissue model.
+These replay and simulation commands do not establish SWR ground truth,
+biological efficacy, or physical stimulation.
 The staged NI procedure remains unverified and requires a lab operator.
 Read the [controller validation guide](docs/controller_validation.md),
 [replay import guide](docs/replay_import.md), and

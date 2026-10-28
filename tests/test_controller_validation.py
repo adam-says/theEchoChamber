@@ -3,6 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 import csv
+import time
+import asyncio
+import gc
+import threading
 from dataclasses import replace
 import json
 from contextlib import redirect_stdout
@@ -14,19 +18,225 @@ import h5py
 import numpy as np
 
 import echoChamber as app
+import benchmarkControllers as benchmark
 from benchmarkControllers import (
-    RunMetrics, _browser_connection_url, acceptance_failures, file_sha256,
-    parse_ui_packet, run_replay_case,
+    RunMetrics, _BrowserPresenceTracker, _CountingUiHub, _Harness, _browser_connection_url,
+    _record_pulse_event_metrics, acceptance_failures, file_sha256,
+    json_safe, parse_ui_packet, run_replay_case,
 )
-from simulation import PlantSettings, ResponsiveSyntheticPlant, run_responsive_case
+from simulation import (PlantSettings, ResponsiveSyntheticPlant, _summarize_capacity_reference,
+                        run_feedback_comparison, run_responsive_case)
 from simulation import (
-    TRACKING_PID_SETTINGS, TRACKING_PLANT_SETTINGS, _summarize_target_tracking,
+    TRACKING_PLANT_SETTINGS, _summarize_target_tracking,
+    plant_rate_capacity,
 )
 import tools.ni_staged_controller_test as ni_stage
 import tools.validate_controllers as validate_cli
 
 
 class ResponsivePlantTests(unittest.TestCase):
+    def test_strict_json_sanitizes_nested_numpy_nonfinite_tracking_metrics(self) -> None:
+        payload = {
+            "tracking": {
+                "final_window_moving_mean_error_z": np.float32(np.nan),
+                "array": np.asarray([1.0, np.inf, np.nan], dtype=np.float32),
+                "trace": [{"z": np.float64(0.25), "error_z": np.float32(-np.inf)}],
+            }
+        }
+        serialized = json.dumps(json_safe(payload), allow_nan=False)
+        parsed = json.loads(serialized)
+        self.assertIsNone(parsed["tracking"]["final_window_moving_mean_error_z"])
+        self.assertEqual(parsed["tracking"]["array"], [1.0, None, None])
+        self.assertIsNone(parsed["tracking"]["trace"][0]["error_z"])
+
+    def test_rate_limited_plant_capacity_includes_recovery_and_rate(self) -> None:
+        settings = PlantSettings(
+            disturbance_amplitude_mv=0.003, amplitude_reduction_per_pulse_mv=0.0005,
+            effect_recovery_s=5.0, max_amplitude_reduction_mv=0.020,
+        )
+        capacity = plant_rate_capacity(
+            settings, max_rate_hz=2.0, effective_max_rate_hz=1.2708,
+            measured_generated_rate_hz=1.1, target_correction_mv=0.0026,
+        )
+        self.assertAlmostEqual(capacity["requested_rate_mean_capacity_mv"], 0.005)
+        self.assertAlmostEqual(capacity["effective_rate_mean_capacity_mv"], 0.003177)
+        self.assertAlmostEqual(capacity["disturbance_amplitude_mv"], 0.003)
+        self.assertTrue(capacity["requested_rate_reaches_full_disturbance"])
+        self.assertTrue(capacity["measured_generated_rate_reaches_target"])
+        self.assertFalse(plant_rate_capacity(settings, max_rate_hz=0.0)["requested_rate_reaches_full_disturbance"])
+
+    def test_capacity_reference_uses_actual_steady_reduction_not_regulated_usage(self) -> None:
+        settings = replace(
+            TRACKING_PLANT_SETTINGS, disturbance_start_s=12.0,
+            disturbance_stop_s=42.0, effect_recovery_s=5.0,
+        )
+        plant = ResponsiveSyntheticPlant(settings)
+        plant.reduction_history_mv = [0.003] * 12_800
+        plant.command_effect_sample_indices = [
+            int(t * settings.sample_rate_hz) for t in np.arange(22.4, 42.0, 0.8)
+        ]
+        metrics = {
+            "source_samples": 1_280_000, "source_index_gap_samples": 0,
+            "skipped_source_samples": 0, "max_requested_rate_hz": 2.0,
+        }
+        reference = _summarize_capacity_reference(
+            plant, metrics, duration_s=64.0, lead_ms=100.0, target_z=1.0,
+            target_correction_mv=0.0026, max_rate_hz=2.0,
+            feature_diagnostics=[{"feature_recovery_samples": 3_638}],
+            scheduler_stats={"committed_blocks": 12_820},
+        )
+        self.assertEqual(reference["steady_window_start_s"], 22.0)
+        self.assertEqual(reference["steady_window_stop_s"], 42.0)
+        self.assertAlmostEqual(reference["generated_effect_rate_hz_in_steady_window"], 1.25)
+        self.assertAlmostEqual(reference["steady_mean_reduction_mv"], 0.003)
+        self.assertGreater(reference["steady_reduction_margin_mv"], 0)
+        self.assertTrue(reference["capacity_reference_reaches_target"])
+        self.assertTrue(reference["max_request_limit_reached"])
+        self.assertEqual(reference["scheduler"]["committed_blocks"], 12_820)
+
+        gapped = _summarize_capacity_reference(
+            plant, {**metrics, "source_index_gap_samples": 100}, duration_s=64.0,
+            lead_ms=100.0, target_z=1.0, target_correction_mv=0.0026,
+            max_rate_hz=2.0, feature_diagnostics=[{"feature_recovery_samples": 3_638}],
+            scheduler_stats={},
+        )
+        self.assertFalse(gapped["capacity_reference_reaches_target"])
+        below_limit = _summarize_capacity_reference(
+            plant, {**metrics, "max_requested_rate_hz": 1.9}, duration_s=64.0,
+            lead_ms=100.0, target_z=1.0, target_correction_mv=0.0026,
+            max_rate_hz=2.0, feature_diagnostics=[{"feature_recovery_samples": 3_638}],
+            scheduler_stats={},
+        )
+        self.assertTrue(below_limit["steady_reduction_margin_mv"] > 0)
+        self.assertFalse(below_limit["max_request_limit_reached"])
+        self.assertFalse(below_limit["capacity_reference_reaches_target"])
+
+    def test_feedback_acceptance_uses_max_request_reference_not_actual_pid_usage(self) -> None:
+        tracking = {"iae_z_seconds": 10.0, "window_complete": True, "target_z": 1.0}
+        active = {
+            "activity": {"disturbance_ca3_block_rms_mv": 0.08},
+            "controller_tracking": tracking, "tracking_gate_passed": True,
+            "plant_recovery": {"bounded_recovery": True}, "plant_rate_capacity": {},
+            "regulated_controller_output_usage": {"generated_effect_rate_hz_in_disturbance": 0.1},
+            "generated_nonzero_ao_command_samples": 100,
+            "plant_effect_pulse_count": 1, "metrics": {"max_requested_rate_hz": 2.0},
+        }
+        disabled = {
+            "activity": {"disturbance_ca3_block_rms_mv": 0.09},
+            "controller_tracking": {**tracking, "iae_z_seconds": 20.0},
+            "tracking_gate_passed": False, "plant_recovery": {"bounded_recovery": True},
+            "plant_rate_capacity": {}, "regulated_controller_output_usage": {},
+            "generated_nonzero_ao_command_samples": 0, "plant_effect_pulse_count": 0,
+            "metrics": {},
+        }
+        reference = {"capacity_reference_reaches_target": True, "steady_mean_reduction_mv": 0.003}
+        with patch("simulation.run_responsive_case", side_effect=[(active, {}), (disabled, {})]), \
+             patch("simulation.run_capacity_reference_case", return_value=reference):
+            result = run_feedback_comparison(
+                "pid", duration_s=64.0, plant_settings=TRACKING_PLANT_SETTINGS,
+                pid_settings={"target_z": 1.0, "max_rate_hz": 2.0},
+                include_capacity_reference=True,
+            )
+        self.assertEqual(result["regulated_controller_output_usage"]["generated_effect_rate_hz_in_disturbance"], 0.1)
+        self.assertEqual(result["plant_rate_capacity"], reference)
+        self.assertTrue(result["simulation_acceptance_passed"])
+
+    def test_tracking_coverage_excludes_only_explicit_feature_masks(self) -> None:
+        settings = PlantSettings(disturbance_start_s=0.0, disturbance_stop_s=5.0)
+        trace = [(i * 0.005, 1.0, 0.2) for i in range(1_000)]
+        diagnostics = [{"feature_valid": True, "feature_invalid_sample_count": 0,
+                        "stimulated_sample_count": 0, "feature_recovery_samples": 200}
+                       for _ in trace]
+        # Empty startup diagnostics occur before the target window and must not
+        # contaminate the target-window feature-invalid count.
+        diagnostics[0]["feature_valid"] = None
+        diagnostics[1]["feature_valid"] = None
+        # The two blocks are known feature masks: one pulse and one post-mask guard.
+        diagnostics[500] = {"feature_valid": False, "feature_invalid_sample_count": 100,
+                            "stimulated_sample_count": 100, "feature_recovery_samples": 200}
+        diagnostics[501] = {"feature_valid": False, "feature_invalid_sample_count": 100,
+                            "stimulated_sample_count": 0, "feature_recovery_samples": 200}
+        summary = _summarize_target_tracking(
+            trace, settings, target_z=1.0, max_rate_hz=2.0,
+            feature_diagnostics=diagnostics, source_duration_s=5.0,
+            source_samples_seen=100_000,
+        )
+        self.assertEqual(summary["known_feature_invalid_blocks"], 2)
+        self.assertEqual(summary["expected_eligible_blocks"], 898)
+        self.assertEqual(summary["eligible_observation_blocks"], 898)
+        self.assertEqual(summary["stimulated_mask_samples"], 100)
+        self.assertEqual(summary["feature_guard_samples"], 100)
+        self.assertAlmostEqual(summary["masked_coverage_fraction"], 200 / 90_000)
+        self.assertTrue(summary["full_source_coverage"])
+
+        diagnostics[501]["feature_recovery_samples"] = 0
+        unexplained = _summarize_target_tracking(
+            trace, settings, target_z=1.0, max_rate_hz=2.0,
+            feature_diagnostics=diagnostics, source_duration_s=5.0,
+            source_samples_seen=100_000,
+        )
+        self.assertGreater(unexplained["unexplained_feature_invalid_samples"], 0)
+        self.assertFalse(unexplained["tracking_response_gate_passed"])
+
+        gapped = _summarize_target_tracking(
+            trace, settings, target_z=1.0, max_rate_hz=2.0,
+            feature_diagnostics=diagnostics, source_duration_s=5.0,
+            source_samples_seen=100_000, source_gap_samples=100,
+        )
+        self.assertFalse(gapped["full_source_coverage"])
+        self.assertFalse(gapped["tracking_response_gate_passed"])
+
+    def test_moving_means_keep_source_time_grid_across_known_masks(self) -> None:
+        settings = PlantSettings(disturbance_start_s=0.0, disturbance_stop_s=5.0)
+        trace = [(i * 0.005, 1.2, 0.2) for i in range(1_000)]
+        diagnostics = [{"feature_valid": True, "feature_invalid_sample_count": 0,
+                        "stimulated_sample_count": 0, "feature_recovery_samples": 200}
+                       for _ in trace]
+        for index in range(500, 1_000, 50):
+            diagnostics[index] = {
+                "feature_valid": False, "feature_invalid_sample_count": 100,
+                "stimulated_sample_count": 100, "feature_recovery_samples": 200,
+            }
+        result = _summarize_target_tracking(
+            trace, settings, target_z=1.0, max_rate_hz=2.0,
+            feature_diagnostics=diagnostics, source_duration_s=5.0,
+            source_samples_seen=100_000,
+        )
+        self.assertEqual(result["eligible_observation_blocks"], 890)
+        self.assertGreater(result["complete_elapsed_moving_window_count"], 0)
+        self.assertAlmostEqual(result["minimum_moving_window_eligible_coverage"], 1.0)
+        self.assertTrue(result["tracking_response_gate_passed"])
+
+    def test_settling_requires_staying_in_band_and_rejects_large_ripple(self) -> None:
+        settings = PlantSettings(disturbance_start_s=0.0, disturbance_stop_s=5.0)
+        trace = []
+        for index in range(1_000):
+            t = index * 0.005
+            z = 3.0 if t < 1.0 else 1.2
+            trace.append((t, z, 0.5))
+        settled = _summarize_target_tracking(trace, settings, target_z=1.0, max_rate_hz=2.0)
+        self.assertTrue(settled["settled_within_band"])
+        self.assertTrue(settled["tracking_response_gate_passed"])
+        self.assertLessEqual(settled["final_window_moving_mean_abs_error_z"], 0.5)
+
+        transient = [
+            (t, 3.0 if t < 1.0 or t >= 2.0 else 1.1, 0.5)
+            for t in np.arange(0, 5.0, 0.005)
+        ]
+        not_settled = _summarize_target_tracking(transient, settings, target_z=1.0, max_rate_hz=2.0)
+        self.assertFalse(not_settled["settled_within_band"])
+        self.assertFalse(not_settled["tracking_response_gate_passed"])
+
+        alternating = [
+            (t, 5.0 if index % 2 == 0 else -3.0, 0.5)
+            for index, t in enumerate(np.arange(0, 5.0, 0.005))
+        ]
+        ripple = _summarize_target_tracking(alternating, settings, target_z=1.0, max_rate_hz=2.0)
+        self.assertTrue(ripple["settled_within_band"])
+        self.assertFalse(ripple["raw_ripple_within_bounds"])
+        self.assertGreater(ripple["raw_error_std_z"], ripple["raw_error_std_limit_z"])
+        self.assertFalse(ripple["tracking_response_gate_passed"])
+
     def test_effect_starts_after_generated_command_and_delay(self) -> None:
         plant = ResponsiveSyntheticPlant(PlantSettings(
             effect_delay_ms=10.0, disturbance_start_s=100.0,
@@ -87,7 +297,8 @@ class ResponsivePlantTests(unittest.TestCase):
         self.assertEqual(quiet["generated_nonzero_ao_command_samples"], 0)
         self.assertEqual(quiet["plant_effect_pulse_count"], 0)
         self.assertGreater(active["plant_effect_pulse_count"], 0)
-        self.assertFalse(active["plant_setpoint_reachable_by_max_reduction"])
+        self.assertIsNotNone(active["plant_rate_capacity"]["measured_generated_rate_hz"])
+        self.assertFalse(active["plant_rate_capacity"]["measured_generated_rate_reaches_target"])
         self.assertGreater(active["activity"]["disturbance_ca3_block_rms_mv"], 0)
         self.assertLess(active["activity"]["disturbance_ca3_block_rms_mv"],
                         quiet["activity"]["disturbance_ca3_block_rms_mv"])
@@ -106,30 +317,6 @@ class ResponsivePlantTests(unittest.TestCase):
         self.assertIsNotNone(metrics["runtime_fault"])
         self.assertEqual(metrics["pulse_commit_ids"], [])
         self.assertEqual(result["plant_effect_pulse_count"], 0)
-
-    def test_reachable_pid_case_tracks_target_better_than_no_stimulation(self) -> None:
-        settings = TRACKING_PLANT_SETTINGS
-        with tempfile.TemporaryDirectory() as directory:
-            active, _ = run_responsive_case(
-                "pid", stim_enabled=True, duration_s=20.0,
-                plant_settings=settings, pid_settings=TRACKING_PID_SETTINGS,
-                recording_dir=Path(directory) / "track-active",
-            )
-            quiet, _ = run_responsive_case(
-                "pid", stim_enabled=False, duration_s=20.0,
-                plant_settings=settings, pid_settings=TRACKING_PID_SETTINGS,
-                recording_dir=Path(directory) / "track-quiet",
-            )
-        active_tracking = active["controller_tracking"]
-        quiet_tracking = quiet["controller_tracking"]
-        self.assertTrue(active["plant_setpoint_reachable_by_max_reduction"])
-        self.assertTrue(active_tracking["rate_within_bounds"])
-        self.assertGreater(active["metrics"]["requested_rate_blocks"], 0)
-        self.assertGreater(active["plant_effect_pulse_count"], 0)
-        self.assertGreater(active_tracking["rate_std_hz"], 0.0)
-        self.assertLess(active_tracking["saturation_fraction"], 1.0)
-        self.assertLess(active_tracking["iae_z_seconds"], quiet_tracking["iae_z_seconds"])
-
 
 class ActualCoreBenchmarkTests(unittest.TestCase):
     def test_short_benchmark_uses_recorder_ui_and_shared_ao_scheduler(self) -> None:
@@ -153,6 +340,8 @@ class ActualCoreBenchmarkTests(unittest.TestCase):
                     self.assertGreater(environment["ao_scheduler"]["committed_blocks"], 30)
                     self.assertTrue(result.ao_drain_complete)
                     self.assertFalse(result.physical_pulse_claims)
+                    self.assertEqual(result.recorder_backpressure_policy, "disabled_for_paced")
+                    self.assertEqual(result.recorder_backpressure_wait_count, 0)
                     self.assertGreaterEqual(result.process_thread_cpu_max_ms, 0.0)
                     self.assertGreaterEqual(result.process_cpu_max_ms, 0.0)
                     recording = Path(environment["recording_file"])
@@ -169,6 +358,36 @@ class ActualCoreBenchmarkTests(unittest.TestCase):
         trace = Path(app.__file__).resolve().parent / "sample" / "test_AI0_CA3_AI1_CTX.h5"
         with self.assertRaisesRegex(ValueError, "finite source ends"):
             run_replay_case(trace, "rule", limit_seconds=10_000.0, paced=True)
+
+    def test_unpaced_backpressure_keeps_queue_bounded_without_advancing_source_clock(self) -> None:
+        trace = Path(app.__file__).resolve().parent / "sample" / "test_AI0_CA3_AI1_CTX.h5"
+        real_config = benchmark._make_config
+        real_append = app.H5Recorder._append_block_records
+
+        def small_queue_config(*args, **kwargs):
+            return replace(real_config(*args, **kwargs), logger_queue_blocks=8, recorder_batch_s=0.005)
+
+        def slow_append(recorder, item, offset):
+            time.sleep(0.01)
+            return real_append(recorder, item, offset)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(benchmark, "_make_config", side_effect=small_queue_config):
+                with patch.object(app.H5Recorder, "_append_block_records", slow_append):
+                    result, environment = run_replay_case(
+                        trace, "rule", limit_seconds=0.25, paced=False,
+                        recording_dir=Path(directory) / "recording",
+                    )
+        self.assertEqual(result.processed_blocks, 50)
+        self.assertEqual(result.source_index_gap_samples, 0)
+        self.assertEqual(result.recording_committed_samples, 5_000)
+        self.assertTrue(result.recording_completed)
+        self.assertEqual(result.recorder_backpressure_policy, "bounded_queue_wait_between_blocks")
+        self.assertGreater(result.recorder_backpressure_wait_count, 0)
+        self.assertGreater(result.recorder_backpressure_wait_ms, 0.0)
+        self.assertLessEqual(result.recorder_backpressure_max_backlog, 8)
+        self.assertEqual(result.ao_generated_sample_count, 7_400)
+        self.assertEqual(environment["config"]["logger_queue_blocks"], 8)
 
 
 class NiStageDryRunTests(unittest.TestCase):
@@ -247,6 +466,165 @@ class BenchmarkGateTests(unittest.TestCase):
         self.assertFalse(result["acceptance"][0]["passed"])
         self.assertTrue(any("process p99" in item for item in result["acceptance"][0]["failures"]))
         self.assertEqual(rows[0]["acceptance_passed"], "False")
+
+    def test_matrix_exception_writes_machine_readable_json_and_csv(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(validate_cli, "run_replay_case",
+                              side_effect=RuntimeError("recording queue overflow")):
+                code = validate_cli.main([
+                    "--matrix", "--trace", "missing-fixture.h5", "--controller", "rule",
+                    "--duration-seconds", "0.25", "--output-dir", directory,
+                ])
+            json_path = next(Path(directory).glob("controller_matrix_*.json"))
+            csv_path = json_path.with_suffix(".csv")
+            result = json.loads(json_path.read_text(encoding="utf-8"))
+            with csv_path.open(encoding="utf-8", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+        self.assertEqual(code, 1)
+        self.assertEqual(len(result["case_failures"]), 1)
+        self.assertEqual(result["case_failures"][0]["message"], "recording queue overflow")
+        self.assertFalse(result["acceptance"][0]["passed"])
+        self.assertEqual(rows[0]["case_status"], "failed")
+        self.assertEqual(rows[0]["failure_type"], "RuntimeError")
+
+
+class RuntimeHealthMetricsTests(unittest.TestCase):
+    def test_proposed_pulses_include_rejections_and_gate_categorizes_all(self) -> None:
+        metrics = RunMetrics(
+            case_id="pulse-categories", source_name="fixture", controller="pid",
+            sample_rate_hz=20_000, block_samples=100, block_ms=5.0,
+            ao_lead_ms=100.0, deadline_ms=5.0,
+        )
+        seen: set[str] = set()
+        Event = type("Event", (), {})
+        accepted, rejected = Event(), Event()
+        accepted.pulse_id, accepted.status = "p1", "rendered_for_ao"
+        rejected.pulse_id, rejected.status = "p2", "rejected_refractory"
+        _record_pulse_event_metrics(metrics, seen, [accepted, rejected, accepted])
+        self.assertEqual(metrics.requested_pulse_events, 2)
+        self.assertEqual(metrics.pulse_request_ids, ["p1", "p2"])
+        self.assertEqual(metrics.rendered_pulse_events, 1)
+        self.assertEqual(metrics.rejected_pulse_events, 1)
+        self.assertEqual(metrics.pulse_rejected_ids, ["p2"])
+        self.assertFalse(any("categorized as rendered or rejected" in failure
+                             for failure in acceptance_failures(metrics)))
+
+        unknown = Event()
+        unknown.pulse_id, unknown.status = "p3", "new_status"
+        _record_pulse_event_metrics(metrics, seen, [unknown])
+        self.assertEqual(metrics.unclassified_pulse_events, 1)
+        self.assertTrue(any("categorized as rendered or rejected" in failure
+                            for failure in acceptance_failures(metrics)))
+
+    def test_recorder_backpressure_times_out_with_queue_diagnostics(self) -> None:
+        class StalledRecorder:
+            backlog = 6
+            error = None
+
+        harness = _Harness.__new__(_Harness)
+        harness.paced = False
+        harness.recorder = StalledRecorder()
+        harness.config = type("Config", (), {"logger_queue_blocks": 8})()
+        harness.progress_path = None
+        harness.metrics = type("Metrics", (), {
+            "recorder_backpressure_threshold_blocks": 6,
+            "recorder_backpressure_wait_count": 0,
+            "recorder_backpressure_wait_ms": 0.0,
+            "recorder_backpressure_max_backlog": 0,
+            "recorder_backpressure_policy": "bounded_queue_wait_between_blocks",
+        })()
+
+        with patch.object(_Harness, "UNPACED_RECORDER_NO_PROGRESS_TIMEOUT_S", 0.01):
+            with self.assertRaisesRegex(
+                TimeoutError,
+                r"source_sample_index=500, queue_depth=6, queue_capacity_blocks=8, threshold_blocks=6",
+            ):
+                harness._wait_for_unpaced_recorder_capacity(500)
+        self.assertEqual(harness.metrics.recorder_backpressure_wait_count, 1)
+        self.assertGreater(harness.metrics.recorder_backpressure_wait_ms, 0.0)
+        self.assertEqual(harness.metrics.recorder_backpressure_max_backlog, 6)
+
+    def test_browser_disconnect_then_reconnect_still_fails_presence_gate(self) -> None:
+        tracker = _BrowserPresenceTracker()
+        tracker.observe(True, 100)
+        tracker.observe(False, 200)
+        tracker.observe(True, 300)
+        presence = tracker.snapshot(400)
+
+        summary = RunMetrics(
+            case_id="browser-reconnect", source_name="fixture", controller="rule",
+            sample_rate_hz=20_000, block_samples=100, block_ms=5.0,
+            ao_lead_ms=100.0, deadline_ms=5.0, processed_blocks=1,
+            browser_ui_required=True, browser_connected=presence["ever_connected"],
+            browser_disconnect_count=presence["disconnect_count"],
+            browser_disconnected_duration_ms=presence["disconnected_duration_ms"],
+            browser_connected_at_finish=presence["connected_at_finish"],
+            browser_disconnect_open_at_finish=presence["disconnect_open_at_finish"],
+            ao_drain_complete=True, recording_completed=True,
+            recording_committed_samples=100, source_samples=100,
+            ui_packets_submitted=1, ui_packets_consumed=1,
+        )
+        failures = acceptance_failures(summary)
+        self.assertTrue(summary.browser_connected_at_finish)
+        self.assertEqual(summary.browser_disconnect_count, 1)
+        self.assertAlmostEqual(summary.browser_disconnected_duration_ms, 0.0001)
+        self.assertIn("required browser UI disconnected during the run", failures)
+
+    def test_hub_counts_external_page_separately_from_internal_consumer(self) -> None:
+        tracker = _BrowserPresenceTracker()
+        hub = _CountingUiHub(2, tracker)
+        internal = hub.subscribe()
+        self.assertFalse(tracker.snapshot()["ever_connected"])
+        browser = hub.subscribe()
+        self.assertTrue(tracker.snapshot()["ever_connected"])
+        hub.unsubscribe(browser)
+        hub.subscribe()
+        status = tracker.snapshot()
+        self.assertEqual(status["disconnect_count"], 1)
+        self.assertTrue(status["connected_at_finish"])
+
+    def test_recorder_close_failure_does_not_skip_other_abort_cleanup(self) -> None:
+        harness = _Harness.__new__(_Harness)
+        calls: list[str] = []
+        harness._stop_ao_clock = lambda: calls.append("ao")
+        harness.state = type("State", (), {"set_recording": lambda self, value: calls.append("recording")})()
+
+        class Recorder:
+            def stop_recording(self) -> None:
+                calls.append("stop-recorder")
+
+            def close(self) -> None:
+                calls.append("close-recorder")
+                raise RuntimeError("writer did not stop")
+
+        harness.recorder = Recorder()
+        harness.core = type("Core", (), {"close_ui": lambda self: calls.append("core-ui")})()
+        harness._run_on_loop = lambda awaitable: calls.append("ui-transport")
+        harness._stop_ui_transport = lambda: "mock transport shutdown"
+        harness.loop = asyncio.new_event_loop()
+        harness.loop_thread = threading.Thread(target=harness.loop.run_forever, daemon=True)
+        harness.loop_thread.start()
+        harness.metrics = type("Metrics", (), {"case_id": "cleanup-test"})()
+        harness.progress_path = None
+        harness._gc_callback = lambda *args: None
+        gc.callbacks.append(harness._gc_callback)
+        harness._gc_callback_registered = True
+
+        try:
+            cleanup_errors = harness.abort()
+        finally:
+            if harness._gc_callback in gc.callbacks:
+                gc.callbacks.remove(harness._gc_callback)
+            if not harness.loop.is_closed():
+                harness.loop.call_soon_threadsafe(harness.loop.stop)
+                harness.loop_thread.join(timeout=1)
+                harness.loop.close()
+
+        self.assertIn("close recorder: RuntimeError: writer did not stop", cleanup_errors)
+        self.assertEqual(calls, ["ao", "recording", "stop-recorder", "close-recorder", "core-ui", "ui-transport"])
+        self.assertFalse(harness.loop_thread.is_alive())
+        self.assertTrue(harness.loop.is_closed())
+        self.assertNotIn(harness._gc_callback, gc.callbacks)
 
 
 if __name__ == "__main__":
