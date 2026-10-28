@@ -123,6 +123,10 @@ class TriggerAndSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-zero"):
             state.set_armed(True)
         state.set_stim("threshold_pulse", 1.0)
+        # Mode and stimulation edits are AO-generation transactions. The unit
+        # fixture has no scheduler, so explicitly acknowledge their drained
+        # generation before testing the independent explicit-arm requirement.
+        state.acknowledge_drain(state.snapshot().generation)
         state.set_armed(True)
         self.assertTrue(state.snapshot().armed)
         state.fault("test")

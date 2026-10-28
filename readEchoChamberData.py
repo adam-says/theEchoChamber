@@ -13,7 +13,8 @@ import numpy as np
 
 
 SUPPORTED_H5_FORMAT_TAGS = {
-    "echoChamber_H5_v1", "echoChamber_H5_v2", "echoChamber_H5_v3", "echoChamber_H5_v4"
+    "echoChamber_H5_v1", "echoChamber_H5_v2", "echoChamber_H5_v3", "echoChamber_H5_v4",
+    "echoChamber_H5_v5",
 }
 
 
@@ -56,7 +57,7 @@ def load_hdf5_recording(data_path: Path) -> Recording:
         format_tag = source.attrs.get("format_tag")
         if format_tag is not None and str(format_tag) not in SUPPORTED_H5_FORMAT_TAGS:
             raise ValueError(f"unsupported Echo Chamber HDF5 format tag: {format_tag}")
-        if str(format_tag) in {"echoChamber_H5_v3", "echoChamber_H5_v4"}:
+        if str(format_tag) in {"echoChamber_H5_v3", "echoChamber_H5_v4", "echoChamber_H5_v5"}:
             return load_hdf5_v3_recording(data_path)
         if "data" not in source or "row_names" not in source:
             raise ValueError(f"HDF5 recording is missing required datasets: {data_path}")
@@ -88,11 +89,13 @@ def load_hdf5_v3_recording(data_path: Path) -> Recording:
     """Materialize the compact v3 signals needed by the standard viewer."""
     with h5py.File(data_path, "r") as source:
         ai = source.get("signals/ai_raw_V")
+        calibrated = source.get("signals/electrode_mV")
         ao = source.get("signals/ao_command_V")
         modes = source.get("events/mode_changes")
-        if ai is None or ao is None or modes is None:
+        if (ai is None and calibrated is None) or ao is None or modes is None:
             raise ValueError(f"HDF5 v3 recording is missing required datasets: {data_path}")
-        committed = min(int(source.attrs.get("committed_samples", ai.shape[1])), ai.shape[1])
+        signal_ds = calibrated if calibrated is not None else ai
+        committed = min(int(source.attrs.get("committed_samples", signal_ds.shape[1])), signal_ds.shape[1])
         if committed <= 0:
             raise ValueError(f"recording contains no committed samples: {data_path}")
         metadata = json.loads(str(source.attrs.get("metadata_json", "{}")))
@@ -101,13 +104,33 @@ def load_hdf5_v3_recording(data_path: Path) -> Recording:
         sample_rate = float(source.attrs.get("sample_rate_hz", configuration.get("sample_rate", 0)))
         labels = tuple(
             value.decode("utf-8") if isinstance(value, bytes) else str(value)
-            for value in ai.attrs["channel_labels"]
+            for value in signal_ds.attrs["channel_labels"]
         )
-        gains = tuple(float(value) for value in configuration.get("amplifier_gain", (1.0, 1.0)))
-        if len(labels) != 2 or len(gains) != 2:
-            raise ValueError("HDF5 v3 requires two channel labels and two amplifier gains")
-        raw = np.asarray(ai[:, :committed], dtype=np.float64)
-        scaled = raw * (1000.0 / np.asarray(gains, dtype=np.float64)[:, None])
+        metadata["channel_labels"] = list(labels)
+        if calibrated is not None:
+            if str(calibrated.attrs.get("unit", "")) != "mV":
+                raise ValueError("HDF5 v5 electrode_mV dataset must declare mV units")
+            scaled = np.asarray(calibrated[:, :committed], dtype=np.float64)
+            metadata["channel_roles"] = [x.decode("utf-8") if isinstance(x, bytes) else str(x)
+                                         for x in calibrated.attrs.get("channel_roles", ())]
+            metadata["channel_regions"] = [x.decode("utf-8") if isinstance(x, bytes) else str(x)
+                                           for x in calibrated.attrs.get("channel_regions", ())]
+            roles, regions = metadata["channel_roles"], metadata["channel_regions"]
+            if len(roles) != len(labels) or len(regions) != len(labels):
+                if str(format_tag) == "echoChamber_H5_v5":
+                    raise ValueError("HDF5 v5 electrode_mV must declare channel roles and regions")
+                ctx_index = int(configuration.get("ctx_index", 1))
+                roles = ["Cortex" if i == ctx_index else "CA3" for i in range(len(labels))]
+                regions = ["EC" if roles[i] == "Cortex" and labels[i].casefold() in {"ec", "ctx"}
+                           else ("CA3" if roles[i] == "CA3" else labels[i]) for i in range(len(labels))]
+                metadata["channel_roles"] = roles
+                metadata["channel_regions"] = regions
+        else:
+            gains = tuple(float(value) for value in configuration.get("amplifier_gain", (1.0, 1.0)))
+            if len(labels) != 2 or len(gains) != 2:
+                raise ValueError("HDF5 v3 requires two channel labels and two amplifier gains")
+            raw = np.asarray(ai[:, :committed], dtype=np.float64)
+            scaled = raw * (1000.0 / np.asarray(gains, dtype=np.float64)[:, None])
         sample_ids = np.arange(
             int(source.attrs.get("first_ai_sample_index", 0)),
             int(source.attrs.get("first_ai_sample_index", 0)) + committed,
@@ -173,10 +196,33 @@ def preferred_lfp_row(rows: Sequence[str], electrode: str) -> tuple[int, str]:
     raise ValueError(f"recording has no {electrode} LFP row")
 
 
-def required_display_rows(rows: Sequence[str]) -> tuple[tuple[int, str], tuple[int, str], int, int]:
+def preferred_role_lfp_row(
+    rows: Sequence[str], role: str, channel_roles: Sequence[str] = (),
+    channel_labels: Sequence[str] = (), channel_regions: Sequence[str] = (),
+) -> tuple[tuple[int, str], str]:
+    """Resolve an LFP row by its recorded role while preserving its region label."""
+    if channel_roles and len(channel_roles) == len(channel_labels):
+        matches = [i for i, value in enumerate(channel_roles) if str(value).casefold() == role.casefold()]
+        if len(matches) != 1:
+            raise ValueError(f"recording must declare exactly one {role} channel role")
+        index = matches[0]
+        label = str(channel_labels[index])
+        for name, unit in ((f"{label}_electrode_mV", "mV"), (f"{label}_raw_V", "V")):
+            if name in rows:
+                region = str(channel_regions[index]) if index < len(channel_regions) else label
+                return (rows.index(name), unit), region
+        raise ValueError(f"recording has no LFP row for {role} channel {label}")
+    fallback = "CA3" if role.casefold() == "ca3" else "Cortex"
+    return preferred_lfp_row(rows, fallback), fallback
+
+
+def required_display_rows(
+    rows: Sequence[str], channel_roles: Sequence[str] = (), channel_labels: Sequence[str] = (),
+    channel_regions: Sequence[str] = (),
+) -> tuple[tuple[tuple[int, str], str], tuple[tuple[int, str], str], int, int]:
     """Resolve the four traces in the standard recording view."""
-    ca3 = preferred_lfp_row(rows, "CA3")
-    cortex = preferred_lfp_row(rows, "Cortex")
+    ca3 = preferred_role_lfp_row(rows, "CA3", channel_roles, channel_labels, channel_regions)
+    cortex = preferred_role_lfp_row(rows, "Cortex", channel_roles, channel_labels, channel_regions)
     missing = [name for name in ("mode", "safe_ao_command_V") if name not in rows]
     if missing:
         raise ValueError(f"recording is missing required row(s): {', '.join(missing)}")
@@ -201,22 +247,26 @@ def plot_recording(
     indices = display_indices(time.size, max_points)
     plot_time = time[indices]
     plot_data = window[:, indices]
-    ca3, cortex, mode_row, ao_row = required_display_rows(recording.rows)
+    ca3, cortex, mode_row, ao_row = required_display_rows(
+        recording.rows, recording.metadata.get("channel_roles", ()),
+        recording.metadata.get("channel_labels", ()), recording.metadata.get("channel_regions", ()),
+    )
     figure, axes = plt.subplots(4, 1, sharex=True, figsize=(14, 10), squeeze=False)
     axes_1d = axes[:, 0]
 
-    for axis, title, (row_index, unit) in zip(
-        axes_1d[:2], ("CA3", "CTX"), (ca3, cortex)
+    for axis, role, (row_index, unit), region in zip(
+        axes_1d[:2], ("CA3", "Cortex"), (ca3[0], cortex[0]), (ca3[1], cortex[1])
     ):
         axis.plot(plot_time, plot_data[row_index], linewidth=0.8)
-        axis.set_title(title, loc="left", fontsize=10, fontweight="bold")
+        axis.set_title(f"{region} ({role})" if region != role else role,
+                       loc="left", fontsize=10, fontweight="bold")
         axis.set_ylabel(unit)
         axis.grid(True, alpha=0.25)
 
     axes_1d[2].step(plot_time, plot_data[mode_row], where="post", linewidth=0.9)
     axes_1d[2].set_title("Mode", loc="left", fontsize=10, fontweight="bold")
     if recording.metadata.get("format_tag") in {
-        "echoChamber_H5_v2", "echoChamber_H5_v3", "echoChamber_H5_v4"
+        "echoChamber_H5_v2", "echoChamber_H5_v3", "echoChamber_H5_v4", "echoChamber_H5_v5"
     }:
         mode_values = [0, 1, 2, 3]
         mode_labels = [
@@ -273,8 +323,11 @@ def plot_lfp_only(
     names = ("CA3", "Cortex")
     rows: list[tuple[str, int, str]] = []
     for name in names:
-        row_index, unit = preferred_lfp_row(recording.rows, name)
-        rows.append((name, row_index, unit))
+        (row_index, unit), region = preferred_role_lfp_row(
+            recording.rows, name, recording.metadata.get("channel_roles", ()),
+            recording.metadata.get("channel_labels", ()), recording.metadata.get("channel_regions", ()),
+        )
+        rows.append((region, row_index, unit))
 
     figure, axes = plt.subplots(2, 1, sharex=True, figsize=(14, 7), squeeze=False)
     for axis, (name, row_index, unit) in zip(axes[:, 0], rows):

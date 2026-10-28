@@ -53,6 +53,11 @@ import h5py
 import numpy as np
 import websockets
 from websockets.exceptions import ConnectionClosed
+from controllers import (
+    ActuatorFeedback, ControllerAction, ControllerInput, EsnController, PulseEvent, PulsePlan,
+    PIDController, PulseActuator, RuleController,
+)
+from replay import load_replay
 
 try:
     import nidaqmx
@@ -77,7 +82,7 @@ BASE_DIR: Final = Path(__file__).resolve().parent
 ESN_ARTIFACT: Final = BASE_DIR / "artifacts" / "esn_corrected_v1.npz"
 DEFAULT_MOCK_REPLAY: Final = BASE_DIR / "sample" / "test_AI0_CA3_AI1_CTX.h5"
 DEFAULT_HARDWARE_PROFILE: Final = BASE_DIR / "hardware_profiles" / "lab_pending_test.json"
-H5_FORMAT_TAG: Final = "echoChamber_H5_v4"
+H5_FORMAT_TAG: Final = "echoChamber_H5_v5"
 VALID_MODES: Final = {"control", "closed-loop"}
 VALID_STIM_MODES: Final = {"off", "passthrough", "threshold_pulse"}
 RECORDED_MODE_VALUES: Final = {
@@ -142,6 +147,30 @@ class SafetyConfig:
             )
 
 
+def pulse_amplitude_limit_v(safety: SafetyConfig, sample_rate_hz: int,
+                            *, pulse_duration_ms: float = 5.0,
+                            pulse_frequency_hz: float = 100.0,
+                            refractory_s: float = 0.5,
+                            max_rate_hz: float = 2.0) -> float:
+    """Conservatively cap fixed-pulse AO volts against the complete safety profile."""
+    pulse_samples = max(1, int(round(pulse_duration_ms * sample_rate_hz / 1000.0)))
+    waveform = np.sin(2 * np.pi * pulse_frequency_hz
+                      * np.arange(pulse_samples, dtype=np.float64) / sample_rate_hz)
+    unit_area_v_s = float(np.sum(np.abs(waveform)) / sample_rate_hz)
+    unit_slew_v_per_s = float(np.max(np.abs(np.diff(np.r_[0.0, waveform, 0.0]))) * sample_rate_hz)
+    limit = min(safety.max_command_v,
+                safety.max_slew_v_per_s / max(unit_slew_v_per_s, np.finfo(float).eps))
+    if not safety.allow_sustained_output_for_dry_test:
+        pulse_count = max(1, int(math.ceil(safety.area_window_s / refractory_s)))
+        if unit_area_v_s > 0:
+            limit = min(limit, safety.max_abs_area_v_s / (pulse_count * unit_area_v_s))
+        if pulse_duration_ms / 1000.0 > safety.max_consecutive_active_s:
+            return 0.0
+        if max_rate_hz * pulse_duration_ms / 1000.0 > safety.max_active_fraction:
+            return 0.0
+    return max(0.0, float(limit))
+
+
 @dataclass(frozen=True)
 class AppConfig:
     device: str = "Dev1"
@@ -163,6 +192,7 @@ class AppConfig:
     sample_rate: int = 20_000
     processing_block_ms: float = 5.0
     ao_target_lead_ms: float = 100.0
+    stimulation_recovery_ms: float = 0.0
     passthrough_dc_block_hz: float = DEFAULT_PASSTHROUGH_DC_BLOCK_HZ
     pulse_threshold_std: float = DEFAULT_PULSE_THRESHOLD_STD
     pulse_window_sec: float = DEFAULT_PULSE_WINDOW_SEC
@@ -170,6 +200,9 @@ class AppConfig:
     pulse_polarity: str = "absolute"
     esn_backend: str = "auto"
     model_artifact: Path = ESN_ARTIFACT
+    controller: str = "esn"
+    controller_config: Optional[Path] = None
+    controller_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     hardware_profile: Optional[Path] = None
     ai_min_v: float = -10.0
     ai_max_v: float = 10.0
@@ -185,6 +218,7 @@ class AppConfig:
     ui_queue_packets: int = 1
     watchdog_timeout_s: float = 0.250
     mock_replay: Optional[Path] = None
+    mock_replay_data: Any = field(default=None, repr=False, compare=False)
     actual_stim_monitor_channel: Optional[str] = None
     start_paused: bool = False
     open_browser: bool = True
@@ -248,6 +282,8 @@ class AppConfig:
             raise ValueError("AO target lead must resolve to a whole number of processing chunks")
         if self.ao_lead_chunks < 4:
             raise ValueError("AO target lead must contain at least four processing chunks")
+        if not math.isfinite(self.stimulation_recovery_ms) or self.stimulation_recovery_ms < 0:
+            raise ValueError("stimulation_recovery_ms must be finite and non-negative")
         if self.passthrough_dc_block_hz < 0:
             raise ValueError("passthrough_dc_block_hz must be non-negative")
         if not math.isfinite(self.pulse_threshold_std) or self.pulse_threshold_std <= 0:
@@ -258,6 +294,12 @@ class AppConfig:
             raise ValueError("pulse_polarity must be absolute, positive, or negative")
         if self.esn_backend not in {"auto", "numpy", "numba"}:
             raise ValueError("esn_backend must be auto, numpy, or numba")
+        if self.controller not in {"esn", "rule", "pid"}:
+            raise ValueError("controller must be esn, rule, or pid")
+        if self.controller_config is not None and not self.controller_config.is_file():
+            raise FileNotFoundError(self.controller_config)
+        if self.mock_replay_data is not None and self.mock_replay_data.sample_rate_hz != self.sample_rate:
+            raise ValueError("mock replay sample rate must match configured sample rate")
         if self.sample_rate % 2_000 or self.chunk_size % (self.sample_rate // 2_000):
             raise ValueError("configuration is incompatible with the fixed ESN runtime")
         if self.ai_min_v >= self.ai_max_v:
@@ -287,13 +329,23 @@ class StateSnapshot:
     esn_ready: bool
     electrode_labels: tuple[str, str]
     ctx_index: int
+    controller: str = "esn"
+    generation: int = 0
+    controller_ready: bool = False
+    transition_pending: bool = False
+    controller_calibrated: bool = False
+    calibration_epoch: int = 0
+    controller_settings: tuple[tuple[str, Any], ...] = ()
 
 
 class RuntimeState:
     def __init__(self, *, esn_ready: bool, start_paused: bool,
                  electrode_labels: tuple[str, str], ctx_index: int,
                  pulse_threshold_std: float, pulse_window_sec: float,
-                 pulse_polarity: str = "absolute") -> None:
+                 pulse_polarity: str = "absolute", controller: str = "esn",
+                 controller_ready: Optional[dict[str, bool]] = None,
+                 controller_settings: Optional[dict[str, dict[str, Any]]] = None,
+                 pulse_max_amplitude_v: float = 10.0) -> None:
         self._lock = threading.RLock()
         self._running = True
         self._acquiring = not start_paused
@@ -307,6 +359,15 @@ class RuntimeState:
         self._armed = False
         self._fault: Optional[str] = None
         self._esn_ready = esn_ready
+        self._controller = controller
+        self._controller_ready = dict(controller_ready or {"esn": esn_ready, "rule": True, "pid": True})
+        self._controller_calibrated = {"esn": esn_ready, "rule": False, "pid": False}
+        self._generation = 0
+        self._transition_pending = False
+        self._calibration_epoch = 0
+        self._pulse_max_amplitude_v = float(pulse_max_amplitude_v)
+        self._controller_settings = {name: dict(value) for name, value in (controller_settings or {}).items()}
+        self._prepared_controllers: dict[str, Any] = {}
         self._electrode_labels = electrode_labels
         self._ctx_index = ctx_index
 
@@ -327,6 +388,13 @@ class RuntimeState:
                 self._esn_ready,
                 self._electrode_labels,
                 self._ctx_index,
+                self._controller,
+                self._generation,
+                self._controller_ready.get(self._controller, False),
+                self._transition_pending,
+                self._controller_calibrated.get(self._controller, False),
+                self._calibration_epoch,
+                tuple(sorted(self._controller_settings.get(self._controller, {}).items())),
             )
 
     def stop(self) -> None:
@@ -340,7 +408,17 @@ class RuntimeState:
         with self._lock:
             if self._fault and value:
                 raise ValueError("cannot start acquisition while faulted")
-            self._acquiring = bool(value)
+            value = bool(value)
+            if value and not self._acquiring:
+                self._generation += 1
+                self._transition_pending = True
+                self._calibration_epoch += 1
+                self._controller_calibrated.update({"rule": False, "pid": False})
+            elif not value and self._acquiring:
+                self._generation += 1
+                self._transition_pending = True
+                self._armed = False
+            self._acquiring = value
             if not value:
                 self._armed = False
 
@@ -352,12 +430,16 @@ class RuntimeState:
         if mode not in VALID_MODES:
             raise ValueError(f"invalid mode: {mode}")
         with self._lock:
-            if mode == "closed-loop" and not self._esn_ready:
-                raise ValueError("closed-loop unavailable: ESN did not pass startup")
+            if mode == "closed-loop" and not self._controller_ready.get(self._controller, False):
+                raise ValueError(f"closed-loop unavailable: {self._controller} controller is not ready")
             if mode == "closed-loop" and self._fault:
                 raise ValueError("closed-loop unavailable while faulted")
             changed = self._mode != mode
             self._mode = mode
+            if changed:
+                self._generation += 1
+                self._transition_pending = True
+                self._armed = False
             if mode != "closed-loop":
                 self._armed = False
             return changed
@@ -368,6 +450,12 @@ class RuntimeState:
         if not math.isfinite(gain) or not 0 <= gain <= max_gain:
             raise ValueError(f"stim_gain must be finite and in [0, {max_gain}]")
         with self._lock:
+            if self._controller in {"rule", "pid"} and stim_mode not in {"off", "threshold_pulse"}:
+                raise ValueError("Rule and PID controllers use fixed pulse output")
+            if (stim_mode, float(gain)) != (self._stim_mode, self._stim_gain):
+                self._generation += 1
+                self._transition_pending = True
+                self._armed = False
             self._stim_mode = stim_mode
             self._stim_gain = float(gain)
             if stim_mode == "off" or gain == 0:
@@ -382,26 +470,87 @@ class RuntimeState:
                     raise ValueError("start acquisition and closed-loop computation before arming")
                 if self._stim_mode == "off" or self._stim_gain <= 0:
                     raise ValueError("select a non-zero stimulation mode and gain before arming")
-                if not self._esn_ready:
-                    raise ValueError("cannot arm stimulation while the ESN is unavailable")
+                if not self._controller_ready.get(self._controller, False):
+                    raise ValueError(f"cannot arm stimulation while {self._controller} is unavailable")
+                if self._transition_pending:
+                    raise ValueError("wait for output drain to complete before arming")
+                if self._controller in {"rule", "pid"} and not self._controller_calibrated.get(self._controller, False):
+                    raise ValueError(f"cannot arm until {self._controller} baseline calibration is complete")
+                if (self._stim_mode == "threshold_pulse" or self._controller in {"rule", "pid"}) \
+                        and self._stim_gain > self._pulse_max_amplitude_v:
+                    raise ValueError(f"pulse amplitude exceeds configured safety limit ({self._pulse_max_amplitude_v:.3f} V)")
+            elif self._armed:
+                self._generation += 1
+                self._transition_pending = True
             self._armed = bool(value)
+
+    def set_controller(self, controller: str) -> bool:
+        if controller not in {"esn", "rule", "pid"}:
+            raise ValueError("controller must be esn, rule, or pid")
+        with self._lock:
+            if self._fault and controller != self._controller:
+                raise ValueError("cannot switch controller while faulted")
+            if not self._controller_ready.get(controller, False):
+                raise ValueError(f"{controller} controller is not ready")
+            if controller == self._controller:
+                return False
+            self._controller = controller
+            self._armed = False
+            self._generation += 1
+            self._transition_pending = True
+            return True
+
+    def set_controller_settings(self, controller: str, settings: dict[str, Any], prepared: Any) -> None:
+        with self._lock:
+            if controller != self._controller:
+                raise ValueError("settings can only be applied to the selected controller")
+            old = self._controller_settings.get(controller, {})
+            self._controller_settings[controller] = dict(settings)
+            self._prepared_controllers[controller] = prepared
+            if old.get("band_hz") != settings.get("band_hz"):
+                self._calibration_epoch += 1
+                self._controller_calibrated[controller] = False
+            self._generation += 1
+            self._transition_pending = True
+            self._armed = False
+
+    def take_prepared_controller(self, controller: str) -> Any:
+        with self._lock:
+            return self._prepared_controllers.pop(controller, None)
+
+    def acknowledge_drain(self, generation: int) -> None:
+        with self._lock:
+            if generation == self._generation:
+                self._transition_pending = False
 
     def set_pulse_threshold_std(self, value: float) -> None:
         if not math.isfinite(value) or not 0 < value <= 20:
             raise ValueError("pulse threshold must be finite and in (0, 20] standard deviations")
         with self._lock:
+            if value != self._pulse_threshold_std:
+                self._generation += 1
+                self._transition_pending = True
+                self._armed = False
             self._pulse_threshold_std = float(value)
 
     def set_pulse_window_sec(self, value: float) -> None:
         if not math.isfinite(value) or not 1 <= value <= 120:
             raise ValueError("pulse baseline window must be finite and between 1 and 120 seconds")
         with self._lock:
+            if value != self._pulse_window_sec:
+                self._generation += 1
+                self._transition_pending = True
+                self._armed = False
             self._pulse_window_sec = float(value)
 
     def set_pulse_polarity(self, value: str) -> None:
         if value not in {"absolute", "positive", "negative"}:
             raise ValueError("pulse polarity must be absolute, positive, or negative")
         with self._lock:
+            if value != self._pulse_polarity:
+                self._generation += 1
+                self._transition_pending = True
+                self._armed = False
             self._pulse_polarity = value
 
     def set_cortex_channel(self, channel: str) -> tuple[str, str]:
@@ -412,8 +561,21 @@ class RuntimeState:
             if self._recording:
                 raise ValueError("stop recording before changing the Cortex/CA3 channel assignment")
             self._ctx_index = 0 if channel == "ai0" else 1
-            self._electrode_labels = ("Cortex", "CA3") if self._ctx_index == 0 else ("CA3", "Cortex")
+            cortex_label = next((label for label in self._electrode_labels
+                                 if any(key in label.casefold() for key in ("cortex", "ctx", "ec"))), "Cortex")
+            ca3_label = next((label for label in self._electrode_labels if "ca3" in label.casefold()), "CA3")
+            self._electrode_labels = ((cortex_label, ca3_label) if self._ctx_index == 0
+                                      else (ca3_label, cortex_label))
+            self._generation += 1
+            self._transition_pending = True
+            self._calibration_epoch += 1
+            self._controller_calibrated.update({"rule": False, "pid": False})
             return self._electrode_labels
+
+    def update_controller_calibration(self, controller: str, calibrated: bool) -> None:
+        with self._lock:
+            if controller in {"rule", "pid"}:
+                self._controller_calibrated[controller] = bool(calibrated)
 
     def fault(self, message: str) -> None:
         with self._lock:
@@ -590,6 +752,9 @@ class StimulusSafetyAdapter:
         self.previous_v = 0.0
         self.area_history: deque[float] = deque(maxlen=max(1, int(config.area_window_s * sample_rate)))
         self.active_history: deque[int] = deque(maxlen=max(1, int(config.area_window_s * sample_rate)))
+        self.area_sum_v_s = 0.0
+        self.area_sum_compensation = 0.0
+        self.active_count = 0
         self.consecutive_active = 0
         self.last_reason: Optional[str] = None
 
@@ -597,35 +762,72 @@ class StimulusSafetyAdapter:
         self.previous_v = 0.0
         self.area_history.clear()
         self.active_history.clear()
+        self.area_sum_v_s = 0.0
+        self.area_sum_compensation = 0.0
+        self.active_count = 0
         self.consecutive_active = 0
         self.last_reason = None
+
+    def admit_pulse_tail(self, waveform_v: np.ndarray) -> tuple[np.ndarray, Optional[str]]:
+        """Validate a fully synthesized pulse tail with the same rolling safety rules.
+
+        This evaluates a copy of current safety history so it can reserve safe
+        future output without advancing the live history ahead of the AO clock.
+        """
+        candidate = StimulusSafetyAdapter(self.config, self.sample_rate)
+        candidate.previous_v = self.previous_v
+        candidate.area_history = deque(self.area_history, maxlen=self.area_history.maxlen)
+        candidate.active_history = deque(self.active_history, maxlen=self.active_history.maxlen)
+        candidate.area_sum_v_s = self.area_sum_v_s
+        candidate.area_sum_compensation = self.area_sum_compensation
+        candidate.active_count = self.active_count
+        candidate.consecutive_active = self.consecutive_active
+        return candidate.process(np.asarray(waveform_v, dtype=np.float64))
 
     def process(self, raw: np.ndarray) -> tuple[np.ndarray, Optional[str]]:
         signal_v = np.asarray(raw, dtype=np.float64).reshape(-1)
         if not np.all(np.isfinite(signal_v)):
             return self._trip(signal_v.size, "non-finite ESN output")
 
-        signal_v = np.clip(signal_v, -self.config.max_command_v, self.config.max_command_v)
+        command_limit = self.config.max_command_v
+        if signal_v.size and (np.any(signal_v > command_limit) or np.any(signal_v < -command_limit)):
+            signal_v = np.clip(signal_v, -command_limit, command_limit)
         max_step = self.config.max_slew_v_per_s / self.sample_rate
         safe = np.empty_like(signal_v)
         previous = self.previous_v
         for index, value in enumerate(signal_v):
-            previous += float(np.clip(value - previous, -max_step, max_step))
+            delta = float(value) - previous
+            if delta > max_step:
+                previous += max_step
+            elif delta < -max_step:
+                previous -= max_step
+            else:
+                previous = float(value)
             safe[index] = previous
         self.previous_v = float(safe[-1]) if safe.size else self.previous_v
 
         dt_s = 1.0 / self.sample_rate
         for value in safe:
-            self.area_history.append(float(value) * dt_s)
+            area = float(value) * dt_s
+            if len(self.area_history) == self.area_history.maxlen:
+                self._accumulate_area(-self.area_history[0])
+            self.area_history.append(area)
+            self._accumulate_area(area)
             active = int(abs(float(value)) >= self.config.active_threshold_v)
+            if len(self.active_history) == self.active_history.maxlen:
+                self.active_count -= self.active_history[0]
             self.active_history.append(active)
+            self.active_count += active
             self.consecutive_active = self.consecutive_active + 1 if active else 0
 
         if not self.config.allow_sustained_output_for_dry_test:
-            if abs(sum(self.area_history)) > self.config.max_abs_area_v_s:
+            # The tolerance only makes the incremental rolling sum more
+            # conservative at a floating-point boundary.
+            area_tolerance = max(1e-15, abs(self.area_sum_v_s) * 8 * np.finfo(float).eps)
+            if abs(self.area_sum_v_s) > self.config.max_abs_area_v_s - area_tolerance:
                 return self._trip(safe.size, "net command area limit exceeded")
             if len(self.active_history) == self.active_history.maxlen and (
-                sum(self.active_history) / len(self.active_history) > self.config.max_active_fraction
+                self.active_count / len(self.active_history) > self.config.max_active_fraction
             ):
                 return self._trip(safe.size, "stimulation duty-cycle limit exceeded")
             if self.consecutive_active > int(self.config.max_consecutive_active_s * self.sample_rate):
@@ -633,6 +835,13 @@ class StimulusSafetyAdapter:
 
         self.last_reason = None
         return safe.reshape(1, -1), None
+
+    def _accumulate_area(self, value: float) -> None:
+        """Kahan-add one signed sample area to the rolling-window total."""
+        adjusted = value - self.area_sum_compensation
+        total = self.area_sum_v_s + adjusted
+        self.area_sum_compensation = (total - self.area_sum_v_s) - adjusted
+        self.area_sum_v_s = total
 
     def _trip(self, count: int, reason: str) -> tuple[np.ndarray, str]:
         self.last_reason = reason
@@ -655,6 +864,22 @@ class RecordBlock:
     actual_stim: Optional[np.ndarray]
     armed: bool
     mode_value: float
+    ai_electrode_mV: Optional[np.ndarray] = None
+    controller_id: str = "esn"
+    config_generation: int = 0
+    controller_diagnostics: Optional[dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class SafetyAdmittedPulsePlan:
+    """A complete pulse waveform approved by the shared output safety boundary."""
+
+    pulse_id: str
+    generation: int
+    source_onset_sample_index: int
+    target_onset_sample_index: int
+    latest_sample_index: int
+    waveform_v: np.ndarray
 
 
 class H5Recorder:
@@ -665,11 +890,19 @@ class H5Recorder:
         self.metadata = metadata
         self.items: queue.Queue[Optional[RecordBlock]] = queue.Queue(maxsize=config.logger_queue_blocks)
         self._lock = threading.RLock()
+        self._admission_lock = threading.Lock()
+        self._recording_open = False
+        self._submit_stats_lock = threading.Lock()
+        self._submit_count = 0
+        self._submit_wait_total_ns = 0
+        self._submit_wait_max_ns = 0
         self._file: Optional[h5py.File] = None
         self._ai_dataset: Optional[h5py.Dataset] = None
+        self._electrode_dataset: Optional[h5py.Dataset] = None
         self._ao_dataset: Optional[h5py.Dataset] = None
         self._actual_dataset: Optional[h5py.Dataset] = None
         self._diagnostics_dataset: Optional[h5py.Dataset] = None
+        self._controller_dataset: Optional[h5py.Dataset] = None
         self._mode_dataset: Optional[h5py.Dataset] = None
         self._pulse_dataset: Optional[h5py.Dataset] = None
         self._gap_dataset: Optional[h5py.Dataset] = None
@@ -679,6 +912,8 @@ class H5Recorder:
         self._committed_samples = 0
         self._last_source_end: Optional[int] = None
         self._last_mode: Optional[int] = None
+        self._action_stage_lock = threading.Lock()
+        self._pending_action_stages: list[tuple[int, int, str, str, float, str, str, int, int, int]] = []
         self._last_flush = time.monotonic()
         self._batch_samples = max(
             config.chunk_size,
@@ -739,7 +974,7 @@ class H5Recorder:
             meta.update({
                 "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "data_file": self._data_path.name,
-                "format": "Echo Chamber HDF5 v4; hardware-indexed signals and sparse events",
+                "format": "Echo Chamber HDF5 v5; hardware-indexed signals and sparse events",
                 "format_tag": H5_FORMAT_TAG,
                 "ao_pipeline_delay_samples": self.config.ao_lead_samples,
                 "ao_pipeline_delay_seconds": self.config.ao_lead_samples / self.config.sample_rate,
@@ -762,6 +997,16 @@ class H5Recorder:
                 self.config.electrode_labels, dtype=string_type
             )
             self._ai_dataset.attrs["unit"] = "V"
+            self._electrode_dataset = signals.create_dataset(
+                "electrode_mV", shape=(2, 0), maxshape=(2, None),
+                chunks=(2, self._batch_samples), dtype=np.float32, **compression,
+            )
+            self._electrode_dataset.attrs["channel_labels"] = np.asarray(self.config.electrode_labels, dtype=string_type)
+            self._electrode_dataset.attrs["channel_roles"] = np.asarray(
+                ["Cortex" if i == self.config.ctx_index else "CA3" for i in range(2)], dtype=string_type)
+            self._electrode_dataset.attrs["channel_regions"] = np.asarray(
+                ["EC" if i == self.config.ctx_index else "CA3" for i in range(2)], dtype=string_type)
+            self._electrode_dataset.attrs["unit"] = "mV"
             self._ao_dataset = signals.create_dataset(
                 "ao_command_V", shape=(1, 0), maxshape=(1, None),
                 chunks=(1, self._batch_samples), dtype=np.float32, **compression,
@@ -785,6 +1030,23 @@ class H5Recorder:
                 "blocks", shape=(0,), maxshape=(None,), chunks=(max(1, self._batch_samples // self.config.chunk_size),),
                 dtype=diagnostic_dtype, **compression,
             )
+            controller_dtype = np.dtype([
+                ("sample_offset", "<u8"), ("config_generation", "<u8"),
+                ("controller_id", "S8"), ("ready", "u1"), ("calibrated", "u1"),
+                ("envelope_mV", "<f4"), ("baseline_mean_mV", "<f4"),
+                ("baseline_std_mV", "<f4"), ("z_score", "<f4"),
+                ("target_z", "<f4"), ("error", "<f4"), ("output_rate_Hz", "<f4"),
+                ("state_code", "u1"),
+            ])
+            self._controller_dataset = diagnostics.create_dataset(
+                "controller_blocks", shape=(0,), maxshape=(None,), chunks=(128,),
+                dtype=controller_dtype, **compression)
+            events.create_dataset("action_stages", shape=(0,), maxshape=(None,), chunks=(128,),
+                                  dtype=np.dtype([("request_id", "S32"), ("generation", "<u8"),
+                                                  ("source_sample_index", "<u8"), ("latest_sample_index", "<u8"),
+                                                  ("target_sample_index", "<u8"), ("sample_index", "<u8"),
+                                                  ("stage", "S24"), ("controller", "S16"),
+                                                  ("requested_rate_Hz", "<f4"), ("reason", "S96")]), **compression)
             self._mode_dataset = events.create_dataset(
                 "mode_changes", shape=(0,), maxshape=(None,), chunks=(128,),
                 dtype=np.dtype([("sample_offset", "<u8"), ("mode", "u1")]), **compression,
@@ -804,7 +1066,7 @@ class H5Recorder:
                 ]), **compression,
             )
             self._file.attrs["schema"] = "echo-chamber-recording"
-            self._file.attrs["schema_version"] = 4
+            self._file.attrs["schema_version"] = 5
             self._file.attrs["format_tag"] = H5_FORMAT_TAG
             self._file.attrs["metadata_json"] = json.dumps(meta, default=str)
             self._file.attrs["sample_rate_hz"] = self.config.sample_rate
@@ -818,7 +1080,11 @@ class H5Recorder:
             self._last_source_end = None
             self._last_mode = None
             self._last_flush = time.monotonic()
-            self._accepting = True
+            with self._action_stage_lock:
+                self._pending_action_stages.clear()
+            with self._admission_lock:
+                self._recording_open = True
+                self._accepting = True
             return self._data_path
 
     def set_electrode_labels(self, labels: tuple[str, str]) -> None:
@@ -830,21 +1096,65 @@ class H5Recorder:
             self.config = dataclasses.replace(self.config, electrode_labels=labels)
 
     def submit(self, block: RecordBlock) -> None:
-        with self._lock:
-            accepting = self._accepting
-        if not accepting:
+        started = time.perf_counter_ns()
+        with self._admission_lock:
+            waited = time.perf_counter_ns() - started
+            if not self._accepting:
+                return
+            try:
+                self.items.put_nowait(block)
+            except queue.Full as exc:
+                raise RuntimeError("recording queue overflow; raw data integrity cannot be guaranteed") from exc
+        with self._submit_stats_lock:
+            self._submit_count += 1
+            self._submit_wait_total_ns += waited
+            self._submit_wait_max_ns = max(self._submit_wait_max_ns, waited)
+
+    def submit_wait_snapshot(self) -> dict[str, float | int]:
+        with self._submit_stats_lock:
+            count = self._submit_count
+            total = self._submit_wait_total_ns
+            maximum = self._submit_wait_max_ns
+        return {"submissions": count, "total_wait_us": total / 1_000.0,
+                "max_wait_us": maximum / 1_000.0,
+                "mean_wait_us": total / max(1, count) / 1_000.0}
+
+    def record_action_stage(self, *, sample_index: int, generation: int, stage: str,
+                            controller: str, requested_rate_hz: float = 0.0, reason: str = "",
+                            request_id: str = "", source_sample_index: Optional[int] = None,
+                            latest_sample_index: Optional[int] = None,
+                            target_sample_index: Optional[int] = None) -> None:
+        with self._admission_lock:
+            if not self._accepting:
+                return
+            with self._action_stage_lock:
+                self._pending_action_stages.append((sample_index, generation, stage, controller,
+                    requested_rate_hz, reason, request_id,
+                    sample_index if source_sample_index is None else source_sample_index,
+                    sample_index if latest_sample_index is None else latest_sample_index,
+                    sample_index if target_sample_index is None else target_sample_index))
+
+    def _flush_action_stages(self) -> None:
+        if self._file is None:
             return
-        try:
-            self.items.put_nowait(block)
-        except queue.Full as exc:
-            raise RuntimeError("recording queue overflow; raw data integrity cannot be guaranteed") from exc
+        with self._action_stage_lock:
+            rows, self._pending_action_stages = self._pending_action_stages, []
+        if rows:
+            dataset = self._file["events/action_stages"]
+            start = dataset.shape[0]
+            dataset.resize(start + len(rows), axis=0)
+            dataset[start:] = np.asarray([
+                (request_id.encode()[:32], generation, source, latest, target, sample,
+                 stage.encode()[:24], controller.encode()[:16], rate, reason.encode()[:96])
+                for sample, generation, stage, controller, rate, reason, request_id, source, latest, target in rows
+            ], dtype=dataset.dtype)
 
     def stop_recording(self, timeout: float = 10.0) -> None:
-        with self._lock:
-            if not self._file:
-                self._accepting = False
-                return
+        with self._admission_lock:
+            has_recording = self._recording_open
             self._accepting = False
+        if not has_recording:
+            return
         deadline = time.monotonic() + timeout
         while self.items.unfinished_tasks:
             if not self._thread.is_alive():
@@ -858,6 +1168,7 @@ class H5Recorder:
         with self._lock:
             if self._file:
                 self._file.attrs["committed_samples"] = self._committed_samples
+                self._flush_action_stages()
                 self._file.attrs["completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
                 self._file.attrs.modify("complete", np.uint8(self._error is None))
                 self._file.flush()
@@ -865,9 +1176,12 @@ class H5Recorder:
                     os.fsync(self._file.id.get_vfd_handle())
                 self._file.close()
                 self._file = None
-                self._ai_dataset = self._ao_dataset = self._actual_dataset = None
+                self._ai_dataset = self._electrode_dataset = self._ao_dataset = self._actual_dataset = None
                 self._diagnostics_dataset = self._mode_dataset = None
+                self._controller_dataset = None
                 self._pulse_dataset = self._gap_dataset = None
+        with self._admission_lock:
+            self._recording_open = False
         if self._error:
             raise RuntimeError(self._error)
 
@@ -907,11 +1221,18 @@ class H5Recorder:
                         raise RuntimeError("recording file closed before queued blocks drained")
                     start = self._committed_samples
                     ai = np.hstack([item.ai for item in batch]).astype(np.float32, copy=False)
+                    electrode = np.hstack([
+                        item.ai_electrode_mV if item.ai_electrode_mV is not None else
+                        item.ai * (1000.0 / np.asarray(self.config.amplifier_gain)[:, None])
+                        for item in batch
+                    ]).astype(np.float32, copy=False)
                     ao = np.hstack([item.safe_ao for item in batch]).astype(np.float32, copy=False)
                     stop = start + ai.shape[1]
                     self._ai_dataset.resize(stop, axis=1)
+                    self._electrode_dataset.resize(stop, axis=1)
                     self._ao_dataset.resize(stop, axis=1)
                     self._ai_dataset[:, start:stop] = ai
+                    self._electrode_dataset[:, start:stop] = electrode
                     self._ao_dataset[:, start:stop] = ao
                     if self._actual_dataset is not None:
                         actual = np.hstack([
@@ -927,12 +1248,15 @@ class H5Recorder:
                         offset += item.ai.shape[1]
                     self._committed_samples = stop
                     self._file.attrs.modify("committed_samples", stop)
+                    self._flush_action_stages()
                     if time.monotonic() - self._last_flush >= self.config.recorder_flush_s:
                         self._file.flush()
                         self._last_flush = time.monotonic()
             except Exception as exc:
                 with self._lock:
+                    self._flush_action_stages()
                     self._error = f"recording writer failed: {type(exc).__name__}: {exc}"
+                with self._admission_lock:
                     self._accepting = False
                 LOG.exception("Recording writer failed")
             finally:
@@ -994,6 +1318,39 @@ class H5Recorder:
         )], dtype=self._diagnostics_dataset.dtype)
         self._append_records(self._diagnostics_dataset, diagnostic)
 
+        diag = item.controller_diagnostics or {}
+        states = {"inactive": 0, "calibrating": 1, "active": 2, "armed": 3,
+                  "latched": 4, "fault": 5}
+        controller_record = np.asarray([(
+            offset, item.config_generation, item.controller_id.encode()[:8],
+            int(bool(diag.get("ready", item.controller_id == "esn"))),
+            int(bool(diag.get("calibrated", item.controller_id == "esn"))),
+            float(diag.get("envelope_mv", np.nan)), float(diag.get("baseline_mean_mv", np.nan)),
+            float(diag.get("baseline_std_mv", np.nan)), float(diag.get("z_score", np.nan)),
+            float(diag.get("target_z", np.nan)), float(diag.get("error", np.nan)),
+            float(diag.get("output_rate_hz", diag.get("requested_rate_hz", np.nan))),
+            states.get(str(diag.get("state", "inactive")), 0),
+        )], dtype=self._controller_dataset.dtype)
+        self._append_records(self._controller_dataset, controller_record)
+        if diag.get("action_kind") not in (None, "none"):
+            self.record_action_stage(
+                sample_index=item.sample_index, generation=item.config_generation,
+                stage="proposed", controller=item.controller_id,
+                requested_rate_hz=float(diag.get("requested_rate_hz", 0.0)),
+                reason=str(diag.get("actuator_reason", "proposal only")),
+            )
+        for event in diag.get("pulse_events", ()):
+            self.record_action_stage(
+                sample_index=int(event.get("target_onset_sample_index", item.ao_target_sample_index)),
+                generation=int(event.get("generation", item.config_generation)),
+                stage=str(event.get("status", "proposed")), controller=item.controller_id,
+                request_id=str(event.get("pulse_id", "")),
+                source_sample_index=int(event.get("source_onset_sample_index", item.sample_index)),
+                latest_sample_index=int(diag.get("latest_sample_index", item.sample_index)),
+                target_sample_index=int(event.get("target_onset_sample_index", item.ao_target_sample_index)),
+                reason="controller and actuator proposal; AO scheduler outcome follows",
+            )
+
         if np.any(item.pulse_fired > 0.5):
             pulse = np.asarray([(
                 offset, item.sample_index,
@@ -1037,6 +1394,24 @@ def ui_series(values: np.ndarray, downsample: int) -> list[list[float | None]]:
     ]
 
 
+def json_safe(value: Any) -> Any:
+    """Convert runtime diagnostics to strict JSON without leaking NaN/Infinity."""
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, (np.ndarray,)):
+        return json_safe(value.tolist())
+    if isinstance(value, (np.floating, float)):
+        numeric = float(value)
+        return numeric if math.isfinite(numeric) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    return value
+
+
 class ProcessingCore:
     def __init__(self, config: AppConfig, state: RuntimeState, esn: EsnRuntime, recorder: H5Recorder,
                  hub: UiHub, event_loop: asyncio.AbstractEventLoop, telemetry: Telemetry) -> None:
@@ -1060,6 +1435,56 @@ class ProcessingCore:
         # only change RuntimeState; transitions are applied here at a block
         # boundary so reset() can never race process_chunk().
         self._active_mode = "control"
+        initial_state = state.snapshot()
+        self.controllers: dict[str, Any] = {"esn": EsnController(esn.streamer)} if esn.ready else {}
+        settings = config.controller_settings
+        self.controllers["rule"] = build_controller("rule", config.sample_rate,
+                                                     settings.get("rule", {}))
+        self.controllers["pid"] = build_controller("pid", config.sample_rate,
+                                                    settings.get("pid", {}))
+        warm_input = ControllerInput(
+            samples_mv=np.zeros((2, config.chunk_size), dtype=np.float64),
+            first_sample_index=0, sample_rate_hz=config.sample_rate, ctx_index=initial_state.ctx_index,
+            validity_mask=np.ones(config.chunk_size, dtype=bool),
+            stimulated_mask=np.zeros(config.chunk_size, dtype=bool),
+            channel_labels=initial_state.electrode_labels,
+            roles=tuple("CA3" if i != initial_state.ctx_index else "Cortex" for i in range(2)),
+            latest_sample_index=config.chunk_size - 1, region="CA3", generation=-1,
+            feedback=ActuatorFeedback(False, "warm-up", armed=False),
+        )
+        for name in ("rule", "pid"):
+            controller = self.controllers[name]
+            controller.step(warm_input)
+            controller.reset(keep_calibration=False)
+        self.controller_config = settings.get(config.controller, {})
+        self.actuator = PulseActuator()
+        self._last_source_end: Optional[int] = None
+        self._feedback = ActuatorFeedback(True, "initial", armed=False)
+        self._last_controller_generation = -1
+        self._last_diagnostics: dict[str, Any] = {}
+        self._stimulated_intervals: list[tuple[int, int]] = []
+        self._feature_signature = (config.sample_rate, initial_state.ctx_index,
+                                   initial_state.electrode_labels, initial_state.calibration_epoch)
+        self._actuator_lock = threading.RLock()
+        self._last_pulse_events: tuple[Any, ...] = ()
+        self._last_admitted_pulse_plans: tuple[SafetyAdmittedPulsePlan, ...] = ()
+        self._actuator_commits: queue.SimpleQueue[tuple[str, int]] = queue.SimpleQueue()
+        self._ao_feedback: queue.SimpleQueue[tuple[int, bool, str]] = queue.SimpleQueue()
+        self.last_processed_generation = state.snapshot().generation
+
+    @property
+    def last_pulse_events(self) -> tuple[Any, ...]:
+        return self._last_pulse_events
+
+    @property
+    def last_admitted_pulse_plans(self) -> tuple[SafetyAdmittedPulsePlan, ...]:
+        return self._last_admitted_pulse_plans
+
+    def commit_actuator_event(self, pulse_id: str, samples: int) -> None:
+        self._actuator_commits.put((pulse_id, samples))
+
+    def record_ao_outcome(self, generation: int, accepted: bool, reason: str) -> None:
+        self._ao_feedback.put((generation, accepted, reason))
 
     def process(
         self,
@@ -1067,17 +1492,48 @@ class ProcessingCore:
         *,
         sample_index: Optional[int] = None,
         ao_target_sample_index: Optional[int] = None,
+        input_is_electrode_mV: bool = False,
+        raw_ai_V: Optional[np.ndarray] = None,
+        input_roles: Optional[tuple[str, str]] = None,
+        input_labels: Optional[tuple[str, str]] = None,
+        input_ctx_index: Optional[int] = None,
     ) -> tuple[np.ndarray, np.ndarray, float, Optional[str]]:
         snapshot = self.state.snapshot()
+        self.last_processed_generation = snapshot.generation
+        # Each submitted AO command owns only events proposed by this exact
+        # processing block. A transition/paused block must never carry a prior
+        # block's event metadata under the new generation.
+        self._last_pulse_events = ()
+        self._last_admitted_pulse_plans = ()
+        actuator_plans: tuple[PulsePlan, ...] = ()
+        while True:
+            try:
+                pulse_id, committed_samples = self._actuator_commits.get_nowait()
+            except queue.Empty:
+                break
+            with self._actuator_lock:
+                with contextlib.suppress(KeyError):
+                    self.actuator.commit(pulse_id, committed_samples)
+        while True:
+            try:
+                feedback_generation, accepted, reason = self._ao_feedback.get_nowait()
+            except queue.Empty:
+                break
+            if feedback_generation == snapshot.generation:
+                self._feedback = ActuatorFeedback(accepted, reason, applied_rate_hz=None,
+                                                  armed=snapshot.armed)
         source_sample_index = self.sample_index if sample_index is None else int(sample_index)
         self.sample_index = source_sample_index
         command_target_index = (
             source_sample_index if ao_target_sample_index is None else int(ao_target_sample_index)
         )
         lfp = np.asarray(all_ai[:2], dtype=np.float64)
-        electrode_lfp_mv = lfp * (
+        electrode_lfp_mv = lfp.copy() if input_is_electrode_mV else lfp * (
             1_000.0 / np.asarray(self.config.amplifier_gain, dtype=np.float64)
         ).reshape(2, 1)
+        recording_ai = np.asarray(raw_ai_V, dtype=np.float64) if raw_ai_V is not None else (
+            lfp if not input_is_electrode_mV else np.full_like(lfp, np.nan)
+        )
         actual_stim = np.asarray(all_ai[2:3], dtype=np.float64) if all_ai.shape[0] > 2 else None
         raw = np.zeros((1, self.config.chunk_size), dtype=np.float64)
         model_esn = np.full((1, self.config.chunk_size), np.nan)
@@ -1089,44 +1545,213 @@ class ProcessingCore:
 
         if snapshot.mode != self._active_mode:
             self.esn.reset()
-            self.safety.reset()
             self._last_esn_config = None
             self._active_mode = snapshot.mode
 
-        if snapshot.mode == "closed-loop":
-            desired_config = (
-                snapshot.stim_mode, snapshot.stim_gain, snapshot.pulse_threshold_std,
-                snapshot.pulse_window_sec, snapshot.pulse_polarity,
-            )
-            if desired_config != self._last_esn_config:
-                self.esn.configure(*desired_config)
-                self._last_esn_config = desired_config
-            started = time.perf_counter_ns()
-            raw = self.esn.process(electrode_lfp_mv, snapshot.ctx_index)
-            esn_ms = (time.perf_counter_ns() - started) / 1e6
-            model_esn, threshold, peak, fired = self.esn.diagnostics(self.config.chunk_size)
-            pulse_threshold.fill(threshold)
-            pulse_peak.fill(peak)
-            pulse_fired.fill(float(fired))
-            safe, safety_reason = (
-                self.safety.process(raw) if snapshot.armed else (np.zeros_like(raw), None)
-            )
-            if safety_reason:
-                self.telemetry.trip()
-                LOG.error("Stimulation safety trip: %s", safety_reason)
-                self.state.fault(f"stimulation safety trip: {safety_reason}")
-        else:
-            safe = np.zeros_like(raw)
-            self.safety.reset()
+        if snapshot.generation != self._last_controller_generation and not snapshot.transition_pending:
+            feature_signature = (self.config.sample_rate, snapshot.ctx_index,
+                                 snapshot.electrode_labels, snapshot.calibration_epoch)
+            feature_changed = feature_signature != self._feature_signature
+            for name, controller in self.controllers.items():
+                if name == snapshot.controller:
+                    continue
+                controller.drain()
+            prepared = self.state.take_prepared_controller(snapshot.controller)
+            if prepared is not None:
+                previous = self.controllers.get(snapshot.controller)
+                if (not feature_changed and previous is not None
+                        and hasattr(previous, "envelope") and hasattr(prepared, "envelope")):
+                    prepared.envelope = previous.envelope
+                self.controllers[snapshot.controller] = prepared
+                self.controller_config = dict(snapshot.controller_settings)
+            active = self.controllers.get(snapshot.controller)
+            if active is not None:
+                active.reset(keep_calibration=not feature_changed)
+            self._feature_signature = feature_signature
+            self.actuator.disarm()
+            self.actuator.cancel_uncommitted()
+            self.actuator.reset(preserve_refractory=True)
+            self._last_controller_generation = snapshot.generation
 
-        if snapshot.recording:
+        diagnostics: dict[str, Any] = {}
+        command = np.zeros((1, self.config.chunk_size), dtype=np.float64)
+        if not snapshot.transition_pending and snapshot.acquiring and snapshot.mode == "closed-loop":
+            controller = self.controllers.get(snapshot.controller)
+            if controller is None:
+                self.state.fault(f"selected controller {snapshot.controller} is unavailable")
+                return raw, command, esn_ms, "selected controller unavailable"
+            if snapshot.controller == "esn":
+                desired_config = (snapshot.stim_mode, snapshot.stim_gain, snapshot.pulse_threshold_std,
+                                  snapshot.pulse_window_sec, snapshot.pulse_polarity)
+                if desired_config != self._last_esn_config:
+                    controller.configure(stim_mode=snapshot.stim_mode, stim_gain=snapshot.stim_gain,
+                                         pulse_threshold_std=snapshot.pulse_threshold_std,
+                                         pulse_window_sec=snapshot.pulse_window_sec,
+                                         pulse_polarity=snapshot.pulse_polarity)
+                    self._last_esn_config = desired_config
+            valid = np.isfinite(electrode_lfp_mv).all(axis=0)
+            if self._last_source_end is not None and source_sample_index != self._last_source_end:
+                valid[:] = False
+                controller.reset(keep_calibration=False)
+            block_end = source_sample_index + valid.size
+            self._stimulated_intervals = [(a, b) for a, b in self._stimulated_intervals if b > source_sample_index]
+            stimulated = np.zeros(valid.size, dtype=bool)
+            for start, stop in self._stimulated_intervals:
+                lo, hi = max(start, source_sample_index), min(stop, block_end)
+                if lo < hi:
+                    stimulated[lo-source_sample_index:hi-source_sample_index] = True
+            inp = ControllerInput(
+                samples_mv=electrode_lfp_mv, first_sample_index=source_sample_index,
+                sample_rate_hz=self.config.sample_rate,
+                ctx_index=snapshot.ctx_index if input_ctx_index is None else input_ctx_index,
+                validity_mask=valid, stimulated_mask=stimulated,
+                channel_labels=input_labels or snapshot.electrode_labels,
+                roles=input_roles or tuple("CA3" if "ca3" in label.casefold() else "Cortex" if i == snapshot.ctx_index else "unknown"
+                                           for i, label in enumerate(snapshot.electrode_labels)),
+                latest_sample_index=source_sample_index + self.config.chunk_size - 1,
+                region="CA3", generation=snapshot.generation, feedback=dataclasses.replace(
+                    self._feedback, armed=bool(snapshot.armed)),
+            )
+            started = time.perf_counter_ns()
+            result = controller.step(inp)
+            self.state.update_controller_calibration(snapshot.controller, result.diagnostics.calibrated)
+            esn_ms = (time.perf_counter_ns() - started) / 1e6
+            diagnostics = dataclasses.asdict(result.diagnostics)
+            diagnostics["source_sample_index"] = source_sample_index
+            diagnostics["latest_sample_index"] = inp.latest_sample_index
+            diagnostics["action_kind"] = result.action.kind
+            if snapshot.controller in {"rule", "pid"} or snapshot.stim_mode == "threshold_pulse":
+                diagnostics["pulse_amplitude_V"] = snapshot.stim_gain
+            if snapshot.controller == "esn":
+                model_esn, threshold, peak, fired = self.esn.diagnostics(self.config.chunk_size)
+                pulse_threshold.fill(threshold)
+                pulse_peak.fill(peak)
+                pulse_fired.fill(float(fired))
+                diagnostics.update({"threshold_mV": threshold, "peak_mV": peak, "pulse_fired": bool(fired)})
+            with self._actuator_lock:
+                if snapshot.armed:
+                    self.actuator.arm()
+                else:
+                    self.actuator.disarm()
+                act = self.actuator.process(
+                    result.action, first_sample_index=source_sample_index,
+                    sample_count=self.config.chunk_size, sample_rate_hz=self.config.sample_rate,
+                    armed=snapshot.armed, validity_mask=valid,
+                    amplitude_v=snapshot.stim_gain, generation=snapshot.generation,
+                    scheduler_lead_samples=self.config.ao_lead_samples,
+                    latest_sample_index=source_sample_index + self.config.chunk_size - 1,
+                )
+                self._last_pulse_events = act.pulse_events
+                actuator_plans = act.pulse_plans
+            raw = act.waveform_v.reshape(1, -1)
+            command = raw.copy()
+            pulse_fired = (raw != 0).astype(np.float64)
+            for event in act.pulse_events:
+                if event.status in {"rendered_for_ao", "committed_tail_rendered"}:
+                    start = event.target_onset_sample_index
+                    stop = start + round(self.actuator.pulse_duration_ms * self.config.sample_rate / 1000.0)
+                    stop += round(self.config.stimulation_recovery_ms * self.config.sample_rate / 1000.0)
+                    self._stimulated_intervals.append((start, stop))
+                    if source_sample_index <= start < source_sample_index + self.config.chunk_size:
+                        pulse_threshold[0, start-source_sample_index] = result.diagnostics.target_z
+            diagnostics.update({"requested_rate_hz": act.requested_rate_hz,
+                                "rendered_pulse_count": act.rendered_count,
+                                "actuator_reason": act.reason,
+                                "pulse_events": [dataclasses.asdict(event) for event in act.pulse_events]})
+            rejected_events = [event for event in act.pulse_events if event.status.startswith("rejected")]
+            if rejected_events or not snapshot.armed:
+                self._feedback = ActuatorFeedback(False,
+                    rejected_events[0].status if rejected_events else "disarmed",
+                    applied_rate_hz=None, armed=snapshot.armed)
+        else:
+            command = np.zeros_like(raw)
+            self._feedback = ActuatorFeedback(False, "controller inactive", 0.0, armed=False)
+        if safety_reason:
+            if self._last_pulse_events:
+                self._last_pulse_events = tuple(
+                    dataclasses.replace(event, status="rejected_safety", rendered_sample_count=0)
+                    if event.status in {"rendered_for_ao", "committed_tail_rendered"} else event
+                    for event in self._last_pulse_events
+                )
+                diagnostics["pulse_events"] = [dataclasses.asdict(event)
+                                               for event in self._last_pulse_events]
+                diagnostics["rendered_pulse_count"] = 0
+            self._last_admitted_pulse_plans = ()
+            self.telemetry.trip()
+            LOG.error("Stimulation safety trip: %s", safety_reason)
+            self.state.fault(f"stimulation safety trip: {safety_reason}")
+        output_permitted = (snapshot.mode == "closed-loop" and snapshot.armed
+                            and not snapshot.transition_pending and snapshot.fault is None)
+        if output_permitted:
+            safe, safety_reason = self.safety.process(command)
+        else:
+            safe, safety_reason = self.safety.process(np.zeros_like(command))
+            safe.fill(0.0)
+        if output_permitted and not safety_reason and actuator_plans:
+            events_by_id = {event.pulse_id: event for event in self._last_pulse_events}
+            admitted: list[SafetyAdmittedPulsePlan] = []
+            for plan in actuator_plans:
+                event = events_by_id.get(plan.pulse_id)
+                if event is None or event.rendered_sample_count <= 0:
+                    safety_reason = f"pulse plan {plan.pulse_id} lacks a rendered proposal segment"
+                    safe.fill(0.0)
+                    admitted.clear()
+                    break
+                rendered = min(event.rendered_sample_count, plan.waveform_v.size)
+                safe_tail, plan_reason = self.safety.admit_pulse_tail(plan.waveform_v[rendered:])
+                if plan_reason:
+                    safety_reason = f"full pulse plan failed safety admission: {plan_reason}"
+                    safe.fill(0.0)
+                    admitted.clear()
+                    break
+                safe_waveform = np.asarray(plan.waveform_v, dtype=np.float64).copy()
+                offset = plan.source_onset_sample_index - source_sample_index
+                safe_end = min(self.config.chunk_size, offset + rendered)
+                if offset < 0 or safe_end - offset != rendered:
+                    safety_reason = f"pulse plan {plan.pulse_id} segment is outside its source block"
+                    safe.fill(0.0)
+                    admitted.clear()
+                    break
+                safe_waveform[:rendered] = safe[0, offset:safe_end]
+                safe_waveform[rendered:] = safe_tail.reshape(-1)
+                admitted.append(SafetyAdmittedPulsePlan(
+                    plan.pulse_id, plan.generation, plan.source_onset_sample_index,
+                    plan.target_onset_sample_index, plan.latest_sample_index, safe_waveform,
+                ))
+            if not safety_reason:
+                self._last_admitted_pulse_plans = tuple(admitted)
+        if safety_reason:
+            if self._last_pulse_events:
+                self._last_pulse_events = tuple(
+                    dataclasses.replace(event, status="rejected_safety", rendered_sample_count=0)
+                    if event.status in {"rendered_for_ao", "committed_tail_rendered"} else event
+                    for event in self._last_pulse_events
+                )
+                diagnostics["pulse_events"] = [dataclasses.asdict(event)
+                                               for event in self._last_pulse_events]
+                diagnostics["rendered_pulse_count"] = 0
+            self._last_admitted_pulse_plans = ()
+            self.telemetry.trip()
+            LOG.error("Stimulation safety trip: %s", safety_reason)
+            self.state.fault(f"stimulation safety trip: {safety_reason}")
+        if safety_reason or not output_permitted:
+            self._feedback = ActuatorFeedback(False, safety_reason or "disarmed or draining",
+                                              applied_rate_hz=None, armed=False)
+        elif not any(event.status.startswith("rejected") for event in self._last_pulse_events):
+            self._feedback = ActuatorFeedback(True, "request accepted pending AO scheduling",
+                                              applied_rate_hz=None, armed=True)
+        self._last_source_end = source_sample_index + self.config.chunk_size
+
+        if snapshot.recording and snapshot.acquiring:
             self.recorder.submit(RecordBlock(
-                source_sample_index, command_target_index, lfp.copy(), raw.copy(), model_esn.copy(),
+                source_sample_index, command_target_index, recording_ai.copy(), raw.copy(), model_esn.copy(),
                 pulse_threshold.copy(), pulse_peak.copy(), pulse_fired.copy(), safe.copy(),
                 actual_stim.copy() if actual_stim is not None else None,
                 snapshot.armed,
                 RECORDED_MODE_VALUES[(snapshot.mode, snapshot.stim_mode)],
+                electrode_lfp_mv.copy(), snapshot.controller, snapshot.generation, diagnostics,
             ))
+        self._last_diagnostics = diagnostics
 
         # Display-only pulse context: centre the model output for legibility,
         # then show its adaptive threshold relative to that same baseline.
@@ -1164,6 +1789,46 @@ class UiJob:
     sample_indices: np.ndarray
     snapshot: StateSnapshot
     safety_reason: Optional[str]
+    controller_diagnostics: dict[str, Any]
+
+
+RULE_CONTROLLER_DEFAULTS: Final = {"upper_z": 3.0, "lower_z": 1.5, "band_hz": (100.0, 250.0)}
+PID_CONTROLLER_DEFAULTS: Final = {"kp": 0.0, "ki": 0.0, "kd": 0.0, "target_z": 0.0,
+    "direction": 1, "max_rate_hz": 2.0, "update_ms": 5.0, "derivative_tau_s": 0.020,
+    "band_hz": (100.0, 250.0)}
+
+
+def controller_settings_for(controller: str, supplied: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if controller not in {"rule", "pid"}:
+        raise ValueError("settings are available only for Rule and PID controllers")
+    defaults = RULE_CONTROLLER_DEFAULTS if controller == "rule" else PID_CONTROLLER_DEFAULTS
+    value = dict(defaults)
+    if supplied:
+        unknown = set(supplied) - set(defaults)
+        if unknown:
+            raise ValueError(f"unknown {controller} settings: {sorted(unknown)}")
+        value.update(supplied)
+    if "band_hz" in value:
+        band = value["band_hz"]
+        if not isinstance(band, (list, tuple)) or len(band) != 2:
+            raise ValueError("band_hz must contain low and high frequencies")
+        value["band_hz"] = tuple(float(v) for v in band)
+    return value
+
+
+def complete_controller_settings(controller: str, supplied: dict[str, Any]) -> dict[str, Any]:
+    if controller not in {"rule", "pid"}:
+        raise ValueError("settings are available only for Rule and PID controllers")
+    defaults = RULE_CONTROLLER_DEFAULTS if controller == "rule" else PID_CONTROLLER_DEFAULTS
+    missing = set(defaults) - set(supplied)
+    if missing:
+        raise ValueError(f"controller settings transaction is incomplete; missing {sorted(missing)}")
+    return controller_settings_for(controller, supplied)
+
+
+def build_controller(controller: str, sample_rate: float, settings: Optional[dict[str, Any]] = None) -> Any:
+    values = controller_settings_for(controller, settings)
+    return RuleController(sample_rate, **values) if controller == "rule" else PIDController(sample_rate, **values)
 
 
 class AsyncUiProcessingCore(ProcessingCore):
@@ -1204,6 +1869,7 @@ class AsyncUiProcessingCore(ProcessingCore):
         job = UiJob(
             np.hstack(self.ui_ai), np.hstack(self.ui_ao), np.hstack(self.ui_preview),
             np.hstack(self.ui_threshold), np.hstack(self.ui_sample_indices), snapshot, safety_reason,
+            dict(self._last_diagnostics),
         )
         self.ui_ai.clear()
         self.ui_ao.clear()
@@ -1227,7 +1893,9 @@ class AsyncUiProcessingCore(ProcessingCore):
                 return
             try:
                 snapshot = job.snapshot
-                packet = json.dumps({
+                telemetry = self.telemetry.snapshot()
+                telemetry["recorder_submit_wait"] = self.recorder.submit_wait_snapshot()
+                packet = json.dumps(json_safe({
                     "ai": job.ai[:, ::self.config.visual_downsample].tolist(),
                     "ao": job.ao[:, ::self.config.visual_downsample].tolist(),
                     "passthrough_preview": ui_series(job.preview, self.config.visual_downsample),
@@ -1238,6 +1906,13 @@ class AsyncUiProcessingCore(ProcessingCore):
                     "is_acquiring": snapshot.acquiring,
                     "stim_mode": snapshot.stim_mode,
                     "stim_gain": snapshot.stim_gain,
+                    "pulse_amplitude_V": (snapshot.stim_gain if snapshot.controller in {"rule", "pid"}
+                                           or snapshot.stim_mode == "threshold_pulse" else None),
+                    "max_pulse_amplitude_V": pulse_amplitude_limit_v(self.config.safety,
+                                                                      self.config.sample_rate,
+                                                                      pulse_duration_ms=self.actuator.pulse_duration_ms,
+                                                                      pulse_frequency_hz=self.actuator.pulse_frequency_hz,
+                                                                      refractory_s=self.actuator.refractory_s),
                     "pulse_threshold_std": snapshot.pulse_threshold_std,
                     "pulse_window_sec": snapshot.pulse_window_sec,
                     "pulse_polarity": snapshot.pulse_polarity,
@@ -1246,8 +1921,15 @@ class AsyncUiProcessingCore(ProcessingCore):
                     "sample_rate_hz": self.config.sample_rate,
                     "fault": snapshot.fault,
                     "esn_ready": snapshot.esn_ready,
+                    "controller": snapshot.controller,
+                    "controller_ready": snapshot.controller_ready,
+                    "controller_calibrated": snapshot.controller_calibrated,
+                    "transition_pending": snapshot.transition_pending,
+                    "controller_settings": dict(snapshot.controller_settings),
+                    "config_generation": snapshot.generation,
+                    "controller_diagnostics": job.controller_diagnostics,
                     "safety_trip": job.safety_reason,
-                    "telemetry": self.telemetry.snapshot(),
+                    "telemetry": telemetry,
                     "channels": list(snapshot.electrode_labels),
                     "cortex_ai": f"ai{snapshot.ctx_index}",
                     "ao_is_command": True,
@@ -1255,7 +1937,7 @@ class AsyncUiProcessingCore(ProcessingCore):
                     "ao_unit": "V",
                     "amplifier_gain": list(self.config.amplifier_gain),
                     "ao_command_gain_v_per_esn_unit": self.config.ao_command_gain_v_per_esn_unit,
-                })
+                }), allow_nan=False)
                 self.event_loop.call_soon_threadsafe(self.hub.publish, packet)
             except Exception:
                 LOG.exception("UI serialization failed")
@@ -1281,6 +1963,10 @@ class AoScheduleStats:
     submitted_blocks: int = 0
     zero_substitutions: int = 0
     late_commands: int = 0
+    active_demand_misses: int = 0
+    pulse_tail_misses: int = 0
+    fault_rejections: int = 0
+    cancelled_blocks: int = 0
     min_queued_samples: Optional[int] = None
     max_write_ms: float = 0.0
     max_loop_pause_ms: float = 0.0
@@ -1290,6 +1976,14 @@ class AoScheduleStats:
         with self.lock:
             self.submitted_blocks += 1
             self.late_commands += int(late)
+
+    def fault_rejected(self) -> None:
+        with self.lock:
+            self.fault_rejections += 1
+
+    def cancelled(self) -> None:
+        with self.lock:
+            self.cancelled_blocks += 1
 
     def refill(self, queued: int, zeros: int, write_ms: float, pause_ms: float) -> None:
         with self.lock:
@@ -1304,20 +1998,490 @@ class AoScheduleStats:
                 "submitted_blocks": self.submitted_blocks,
                 "zero_substitutions": self.zero_substitutions,
                 "late_commands": self.late_commands,
+                "active_demand_misses": self.active_demand_misses,
+                "pulse_tail_misses": self.pulse_tail_misses,
+                "fault_rejections": self.fault_rejections,
+                "cancelled_blocks": self.cancelled_blocks,
                 "min_queued_samples": self.min_queued_samples,
                 "max_write_ms": self.max_write_ms,
                 "max_loop_pause_ms": self.max_loop_pause_ms,
             }
 
 
+class AoDrainBarrier:
+    """Tracks successfully written command samples and counter-based drain completion."""
+
+    def __init__(self) -> None:
+        self.last_nonzero_end = 0
+        self.last_zero_commit_end = 0
+        self.pending_generation: Optional[int] = None
+        self.end_sample = 0
+
+    def committed(self, first_sample: int, blocks: list[np.ndarray], chunk_size: int) -> None:
+        end = first_sample + len(blocks) * chunk_size
+        all_zero = True
+        for offset, block in enumerate(blocks):
+            nonzero = np.flatnonzero(np.asarray(block) != 0.0)
+            if nonzero.size:
+                all_zero = False
+                self.last_nonzero_end = max(self.last_nonzero_end,
+                                            first_sample + offset * chunk_size + int(nonzero[-1]) + 1)
+        if all_zero:
+            self.last_zero_commit_end = end
+
+    def begin(self, generation: int, generated_sample_count: int) -> None:
+        self.pending_generation = generation
+        self.end_sample = max(generated_sample_count, self.last_nonzero_end)
+
+    def preserve_until(self, exclusive_end: int) -> None:
+        self.end_sample = max(self.end_sample, int(exclusive_end))
+
+    def drained(self, generation: int, generated_sample_count: int) -> bool:
+        return (self.pending_generation == generation
+                and generated_sample_count >= self.end_sample
+                and self.last_zero_commit_end >= self.end_sample)
+
+    def acknowledge(self) -> None:
+        self.pending_generation = None
+
+
+class AoCommandLifecycle:
+    """Shared reservation, generation cancellation and pulse-tail policy for NI and mock AO."""
+
+    def __init__(self) -> None:
+        self.commands: dict[int, tuple[np.ndarray, int, tuple[Any, ...]]] = {}
+        self.committed_pulse_samples: dict[str, int] = {}
+        self.pulse_exclusive_ends: dict[str, int] = {}
+
+    def submit(self, target: int, waveform: np.ndarray, generation: int,
+               events: tuple[Any, ...] = (), *, chunk_size: int | None = None,
+               pulse_plans: tuple[SafetyAdmittedPulsePlan, ...] = ()) -> None:
+        value = np.asarray(waveform, dtype=np.float64).copy()
+        events = tuple(event for event in events
+                       if event.status in {"rendered_for_ao", "committed_tail_rendered"}
+                       and event.rendered_sample_count > 0)
+        existing = self.commands.get(target)
+        if existing is not None and existing[1] != generation and any(
+                self.committed_pulse_samples.get(event.pulse_id, 0) > 0 for event in existing[2]):
+            # Never replace a staged old-generation tail after its pulse has
+            # started. Its complete safe plan owns these original AO samples.
+            return
+        self.commands[target] = (value, generation, tuple(events))
+        if pulse_plans and (chunk_size is None or chunk_size <= 0):
+            raise ValueError("chunk_size is required to stage complete pulse plans")
+        for plan in pulse_plans:
+            cursor = 0
+            while cursor < plan.waveform_v.size:
+                absolute = plan.target_onset_sample_index + cursor
+                block, offset = divmod(absolute, int(chunk_size))
+                count_samples = min(int(chunk_size) - offset, plan.waveform_v.size - cursor)
+                old = self.commands.get(block)
+                if old is not None and old[1] != plan.generation and any(
+                        self.committed_pulse_samples.get(event.pulse_id, 0) > 0 for event in old[2]):
+                    cursor += count_samples
+                    continue
+                if old is None or old[1] != plan.generation:
+                    block_value = np.zeros(int(chunk_size), dtype=np.float64)
+                    block_events: tuple[Any, ...] = ()
+                else:
+                    block_value = old[0].copy()
+                    block_events = old[2]
+                block_value[offset:offset + count_samples] = plan.waveform_v[cursor:cursor + count_samples]
+                block_events = tuple(event for event in block_events if event.pulse_id != plan.pulse_id)
+                block_events += (PulseEvent(
+                    plan.pulse_id, plan.source_onset_sample_index,
+                    plan.source_onset_sample_index, plan.target_onset_sample_index,
+                    "rendered_for_ao", plan.generation, count_samples, plan.latest_sample_index,
+                ),)
+                self.commands[block] = (block_value, plan.generation, block_events)
+                cursor += count_samples
+
+    def switch(self, old_generation: int) -> tuple[list[tuple[int, tuple[np.ndarray, int, tuple[Any, ...]]]],
+                                                   list[tuple[int, tuple[np.ndarray, int, tuple[Any, ...]]]]]:
+        """Keep tails for pulses with AO committed samples at their original target indices."""
+        cancelled = []
+        preserved = []
+        for target, entry in tuple(self.commands.items()):
+            if entry[1] > old_generation:
+                continue
+            waveform, generation, events = entry
+            keep_events = tuple(event for event in events
+                                if self.committed_pulse_samples.get(event.pulse_id, 0) > 0)
+            if keep_events:
+                self.commands[target] = (waveform, generation, keep_events)
+                preserved.append((target, self.commands[target]))
+            else:
+                self.commands.pop(target, None)
+                cancelled.append((target, entry))
+        return cancelled, preserved
+
+    def eligible(self, entry: tuple[np.ndarray, int, tuple[Any, ...]], generation: int,
+                 transition_pending: bool) -> bool:
+        if entry[1] == generation:
+            return True
+        return bool(transition_pending and entry[2] and all(
+            self.committed_pulse_samples.get(event.pulse_id, 0) > 0 for event in entry[2]
+        ))
+
+    def has_committed_pulse(self, events: tuple[Any, ...]) -> bool:
+        return any(self.committed_pulse_samples.get(event.pulse_id, 0) > 0 for event in events)
+
+    @staticmethod
+    def missing_refill_is_urgent(first_target: int, available_blocks: int,
+                                 generated_samples: int, chunk_size: int,
+                                 deadline_samples: int) -> bool:
+        """Whether the first unavailable target would cross the safe queue deadline.
+
+        A block's input is available only after its last sample has arrived and
+        processing has submitted its AO command. Do not write an irreversible
+        zero for a farther-future block just because the scheduler refills a
+        batch at the half-lead watermark.
+        """
+        queued_after_available = ((first_target + available_blocks) * chunk_size
+                                  - generated_samples)
+        return queued_after_available <= deadline_samples
+
+    def committed(self, events: tuple[Any, ...], sample_rate: int) -> None:
+        for event in events:
+            if event.rendered_sample_count:
+                self.committed_pulse_samples[event.pulse_id] = (
+                    self.committed_pulse_samples.get(event.pulse_id, 0) + event.rendered_sample_count)
+                self.pulse_exclusive_ends[event.pulse_id] = (
+                    event.target_onset_sample_index + round(5.0 * sample_rate / 1000.0))
+
+
+@dataclass(frozen=True)
+class GeneratedAoBlock:
+    sample_index: int
+    waveform_v: np.ndarray
+    generation: int
+    stage: str
+
+
+class SimulatedAoScheduler:
+    """Deterministic AO clock and generation barrier shared by mock replay and benchmarks."""
+
+    def __init__(self, config: AppConfig, state: RuntimeState,
+                 recorder: Optional[H5Recorder] = None, commit_event: Any = None,
+                 ao_outcome: Any = None) -> None:
+        self.config, self.state, self.recorder, self.commit_event = config, state, recorder, commit_event
+        self.ao_outcome = ao_outcome
+        self.lifecycle = AoCommandLifecycle()
+        self.commands = self.lifecycle.commands
+        self.lock = threading.RLock()
+        self.generated_sample_count = 0
+        self._elapsed_samples = 0.0
+        self._next_write_block = config.ao_lead_chunks
+        self._committed_output: dict[int, tuple[np.ndarray, int, tuple[Any, ...], str]] = {}
+        self._generation = state.snapshot().generation
+        self.drain_barrier = AoDrainBarrier()
+        self.drain_barrier.last_zero_commit_end = config.ao_lead_samples
+        self._committed_pulse_samples = self.lifecycle.committed_pulse_samples
+        self._pulse_exclusive_ends = self.lifecycle.pulse_exclusive_ends
+        self.stats = {"submitted_blocks": 0, "committed_blocks": 0, "zero_substitutions": 0,
+                      "late_commands": 0, "rejected_stale": 0, "cancelled_blocks": 0,
+                      "rejected_fault": 0,
+                      "active_demand_misses": 0,
+                      "pulse_tail_misses": 0,
+                      "max_queue_depth": 0, "pulse_requests": 0, "pulse_committed_samples": 0}
+
+    def submit(self, target_block: int, command: np.ndarray, generation: Optional[int] = None,
+               pulse_events: tuple[Any, ...] = (),
+               pulse_plans: tuple[SafetyAdmittedPulsePlan, ...] = ()) -> bool:
+        value = np.asarray(command, dtype=np.float64).reshape(-1)
+        if value.size != self.config.chunk_size:
+            raise ValueError(f"AO command has {value.size} samples; expected {self.config.chunk_size}")
+        current = self.state.snapshot()
+        generation = current.generation if generation is None else int(generation)
+        with self.lock:
+            self.stats["submitted_blocks"] += 1
+            if current.fault is not None:
+                self.stats["rejected_fault"] += 1
+                if self.ao_outcome is not None:
+                    self.ao_outcome(generation, False, "latched fault rejected AO command")
+                return False
+            if generation != current.generation:
+                self.stats["rejected_stale"] += 1
+                return False
+            if target_block < self._next_write_block:
+                self.stats["late_commands"] += 1
+                return False
+            self.lifecycle.submit(target_block, value, generation, pulse_events,
+                                  chunk_size=self.config.chunk_size, pulse_plans=pulse_plans)
+            self.stats["pulse_requests"] += sum(event.status == "rendered_for_ao" for event in pulse_events)
+            self.stats["max_queue_depth"] = max(self.stats["max_queue_depth"], len(self.commands))
+            return True
+
+    def advance(self, *, service_refill: bool = True) -> GeneratedAoBlock:
+        """Commit and generate exactly one AO block, returning hardware-indexed output."""
+        with self.lock:
+            chunk = self.config.chunk_size
+            sample = self.generated_sample_count
+            target = sample // chunk
+            snapshot = self.state.snapshot()
+            committed = self._committed_output.pop(target, None)
+            if committed is None:
+                output = np.zeros(chunk, dtype=np.float64)
+                stage = "initial_zero" if sample < self.config.ao_lead_samples else "zero_substituted"
+                generated_generation, events = snapshot.generation, ()
+                if stage == "zero_substituted":
+                    self.stats["zero_substitutions"] += 1
+                    if self.stats["active_demand_misses"] == 0:
+                        self.stats["active_demand_misses"] += 1
+                        self.state.fault("simulated AO host refill stalled past committed output")
+            else:
+                output, generation, events, stage = committed
+                generated_generation = generation
+            self.generated_sample_count += chunk
+            if service_refill:
+                self._service_refill_locked()
+            if self.recorder is not None:
+                self.recorder.record_action_stage(sample_index=sample, generation=generated_generation,
+                    stage="simulated_generated", controller=snapshot.controller,
+                    reason="deterministic simulated AO clock generated committed block")
+            if service_refill and self.drain_barrier.drained(snapshot.generation, self.generated_sample_count):
+                self.state.acknowledge_drain(snapshot.generation)
+                self.drain_barrier.acknowledge()
+            return GeneratedAoBlock(sample, output.copy(), generated_generation, stage)
+
+    def _service_refill_locked(self) -> None:
+        """Perform one host-side refill after AO time has advanced."""
+        chunk = self.config.chunk_size
+        snapshot = self.state.snapshot()
+        generated = self.generated_sample_count
+        if snapshot.generation != self._generation:
+            old = self._generation
+            self._generation = snapshot.generation
+            self.drain_barrier.begin(snapshot.generation, generated)
+            for pulse_id, committed in self._committed_pulse_samples.items():
+                if committed:
+                    self.drain_barrier.preserve_until(self._pulse_exclusive_ends[pulse_id])
+            cancelled, preserved = self.lifecycle.switch(old)
+            self.stats["cancelled_blocks"] += len(cancelled)
+            for _, (_, _, events) in preserved:
+                for event in events:
+                    self.drain_barrier.preserve_until(self._pulse_exclusive_ends[event.pulse_id])
+            if self.recorder is not None:
+                for stage, groups in (("cancelled", cancelled), ("tail_preserved", preserved)):
+                    for block, (_, _, events) in groups:
+                        if events:
+                            for event in events:
+                                self.recorder.record_action_stage(sample_index=event.target_onset_sample_index,
+                                    generation=event.generation, stage=stage, controller=snapshot.controller,
+                                    request_id=event.pulse_id, source_sample_index=event.source_onset_sample_index,
+                                    latest_sample_index=event.latest_sample_index,
+                                    target_sample_index=event.target_onset_sample_index,
+                                    reason="generation changed before AO write")
+                        else:
+                            self.recorder.record_action_stage(sample_index=block * chunk,
+                                generation=old, stage=stage, controller=snapshot.controller,
+                                reason="generation changed before AO write")
+        if snapshot.fault is not None and self.commands:
+            pending_fault_commands = tuple(self.commands.items())
+            self.commands.clear()
+            self.stats["cancelled_blocks"] += len(pending_fault_commands)
+            for block, entry in pending_fault_commands:
+                if block < math.ceil(generated / chunk):
+                    self.stats["late_commands"] += 1
+                if self.lifecycle.has_committed_pulse(entry[2]):
+                    self.stats["pulse_tail_misses"] += 1
+                    for event in entry[2]:
+                        if self.recorder is not None:
+                            self.recorder.record_action_stage(
+                                sample_index=event.target_onset_sample_index,
+                                generation=event.generation, stage="tail_missed",
+                                controller=snapshot.controller, request_id=event.pulse_id,
+                                source_sample_index=event.source_onset_sample_index,
+                                latest_sample_index=event.latest_sample_index,
+                                target_sample_index=event.target_onset_sample_index,
+                                reason="latched fault cancelled a partly committed pulse tail")
+                if self.ao_outcome is not None:
+                    self.ao_outcome(entry[1], False, "latched fault cancelled pending AO command")
+                if self.recorder is not None:
+                    events = entry[2]
+                    if events:
+                        for event in events:
+                            self.recorder.record_action_stage(sample_index=event.target_onset_sample_index,
+                                generation=event.generation, stage="cancelled", controller=snapshot.controller,
+                                request_id=event.pulse_id, source_sample_index=event.source_onset_sample_index,
+                                latest_sample_index=event.latest_sample_index,
+                                target_sample_index=event.target_onset_sample_index,
+                                reason="latched fault cancelled pending AO command")
+                    else:
+                        self.recorder.record_action_stage(sample_index=block * chunk,
+                            generation=entry[1], stage="cancelled", controller=snapshot.controller,
+                            reason="latched fault cancelled pending AO command")
+        frontier = math.ceil(generated / chunk)
+        if self._next_write_block < frontier:
+            # A starved host cannot retroactively fill target blocks already
+            # generated as zeros. Retire those commands as late and continue
+            # from the current hardware sample frontier.
+            for block in tuple(self.commands):
+                if block < frontier:
+                    entry = self.commands.pop(block)
+                    self.stats["late_commands"] += 1
+                    missed_committed_tail = self.lifecycle.has_committed_pulse(entry[2])
+                    if missed_committed_tail:
+                        self.stats["pulse_tail_misses"] += 1
+                        self.state.fault("partly committed pulse tail missed its original AO samples")
+                        if self.recorder is not None:
+                            for event in entry[2]:
+                                if self.lifecycle.committed_pulse_samples.get(event.pulse_id, 0) > 0:
+                                    self.recorder.record_action_stage(
+                                        sample_index=event.target_onset_sample_index,
+                                        generation=event.generation, stage="tail_missed",
+                                        controller=snapshot.controller, request_id=event.pulse_id,
+                                        source_sample_index=event.source_onset_sample_index,
+                                        latest_sample_index=event.latest_sample_index,
+                                        target_sample_index=event.target_onset_sample_index,
+                                        reason="host stall elapsed the original target of a committed pulse tail")
+                    if self.ao_outcome is not None:
+                        self.ao_outcome(entry[1], False,
+                                        "target samples elapsed before the host scheduler serviced AO")
+                    if self.recorder is not None:
+                        for event in entry[2]:
+                            self.recorder.record_action_stage(sample_index=event.target_onset_sample_index,
+                                generation=event.generation, stage="late", controller=snapshot.controller,
+                                request_id=event.pulse_id, source_sample_index=event.source_onset_sample_index,
+                                latest_sample_index=event.latest_sample_index,
+                                target_sample_index=event.target_onset_sample_index,
+                                reason="target samples elapsed before the host scheduler serviced AO")
+            self._next_write_block = frontier
+        queued = self._next_write_block * chunk - generated
+        deficit = max(0, math.ceil((self.config.ao_lead_samples - queued) / chunk))
+        if not deficit or queued > self.config.ao_deadline_samples:
+            if self.drain_barrier.drained(snapshot.generation, generated):
+                self.state.acknowledge_drain(snapshot.generation)
+                self.drain_barrier.acknowledge()
+            return
+
+        reservations = []
+        for block in range(self._next_write_block, self._next_write_block + deficit):
+            pending = self.commands.get(block)
+            if pending is None or not self.lifecycle.eligible(
+                    pending, snapshot.generation, snapshot.transition_pending):
+                break
+            self.commands.pop(block, None)
+            reservations.append((block, pending))
+        missing = deficit - len(reservations)
+        producer_running = (snapshot.mode == "closed-loop" and snapshot.acquiring
+                            and not snapshot.transition_pending and snapshot.fault is None)
+        urgent_missing = (missing > 0 and self.lifecycle.missing_refill_is_urgent(
+            self._next_write_block, len(reservations), generated, chunk,
+            self.config.ao_deadline_samples))
+        active_output = producer_running and snapshot.armed and snapshot.stim_mode != "off"
+        active_miss = urgent_missing and active_output
+        if active_miss:
+            self.stats["active_demand_misses"] += 1
+            self.state.fault("simulated AO active deadline missed; refill replaced with zeros")
+        defer_missing = missing > 0 and producer_running and not urgent_missing
+        if defer_missing:
+            # Commit only the contiguous submitted prefix. The next processing
+            # block can fill the horizon before it is urgent.
+            refill = reservations
+        else:
+            refill = reservations + [(block, None) for block in
+                                     range(self._next_write_block + len(reservations),
+                                           self._next_write_block + deficit)]
+
+        for block, pending in refill:
+            if self.state.snapshot().fault is not None:
+                if pending is not None:
+                    self.stats["cancelled_blocks"] += 1
+                    if self.ao_outcome is not None:
+                        self.ao_outcome(pending[1], False, "latched fault cancelled pending AO command")
+                    if self.recorder is not None:
+                        for event in pending[2]:
+                            self.recorder.record_action_stage(sample_index=event.target_onset_sample_index,
+                                generation=event.generation, stage="cancelled", controller=snapshot.controller,
+                                request_id=event.pulse_id, source_sample_index=event.source_onset_sample_index,
+                                latest_sample_index=event.latest_sample_index,
+                                target_sample_index=event.target_onset_sample_index,
+                                reason="latched fault cancelled pending AO command")
+                command = np.zeros(chunk, dtype=np.float64)
+                generation, events, action_stage = snapshot.generation, (), "zero_substituted"
+                self.stats["zero_substitutions"] += 1
+                pending = None
+            elif pending is not None and not active_miss:
+                command, generation, events = pending
+                action_stage = "tail_preserved" if generation != snapshot.generation else "ao_committed"
+            elif pending is not None:
+                _, generation, events = pending
+                command = np.zeros(chunk, dtype=np.float64)
+                action_stage = "zero_substituted"
+                if self.recorder is not None:
+                    for event in events:
+                        self.recorder.record_action_stage(sample_index=event.target_onset_sample_index,
+                            generation=event.generation, stage="zero_substituted", controller=snapshot.controller,
+                            request_id=event.pulse_id, source_sample_index=event.source_onset_sample_index,
+                            latest_sample_index=event.latest_sample_index,
+                            target_sample_index=event.target_onset_sample_index,
+                            reason="active AO deadline fault replaced refill with zeros")
+            else:
+                command = np.zeros(chunk, dtype=np.float64)
+                generation, events, action_stage = snapshot.generation, (), "zero_substituted"
+                if not active_miss:
+                    self.stats["zero_substitutions"] += 1
+            self._committed_output[block] = (command.copy(), generation, tuple(events), action_stage)
+            self.drain_barrier.committed(block * chunk, [command], chunk)
+            self._next_write_block += 1
+            self.stats["committed_blocks"] += 1
+            if action_stage != "zero_substituted":
+                self.lifecycle.committed(events, self.config.sample_rate)
+            for event in events if action_stage != "zero_substituted" else ():
+                if event.rendered_sample_count:
+                    self.stats["pulse_committed_samples"] += event.rendered_sample_count
+                    self.drain_barrier.preserve_until(self._pulse_exclusive_ends[event.pulse_id])
+                    if self.commit_event is not None:
+                        self.commit_event(event.pulse_id, event.rendered_sample_count)
+            if self.ao_outcome is not None:
+                self.ao_outcome(generation, action_stage in {"ao_committed", "tail_preserved"}, action_stage)
+            if self.recorder is not None and action_stage != "zero_substituted":
+                self.recorder.record_action_stage(sample_index=block * chunk, generation=generation,
+                    stage=action_stage, controller=snapshot.controller,
+                    reason="simulated AO write committed")
+        if self.drain_barrier.drained(snapshot.generation, generated):
+            self.state.acknowledge_drain(snapshot.generation)
+            self.drain_barrier.acknowledge()
+    def advance_elapsed(self, elapsed_seconds: float) -> tuple[GeneratedAoBlock, ...]:
+        """Consume elapsed AO time first, then service the host writer once.
+
+        This models an OS-stalled AO host: it cannot perform historical refills
+        during a period in which it was not scheduled. The hardware sample clock
+        still consumes only blocks that were committed before the stall.
+        """
+        if not math.isfinite(elapsed_seconds) or elapsed_seconds < 0:
+            raise ValueError("elapsed_seconds must be finite and non-negative")
+        with self.lock:
+            self._elapsed_samples += elapsed_seconds * self.config.sample_rate
+            block_count = int(self._elapsed_samples // self.config.chunk_size)
+            self._elapsed_samples -= block_count * self.config.chunk_size
+        generated = tuple(self.advance(service_refill=False) for _ in range(block_count))
+        with self.lock:
+            self._service_refill_locked()
+        return generated
+
+    def stats_snapshot(self) -> dict[str, Any]:
+        return {**self.stats, "queue_depth": len(self.commands),
+                "generated_sample_count": self.generated_sample_count,
+                "barrier_generation": self.drain_barrier.pending_generation,
+                "barrier_end_sample": self.drain_barrier.end_sample}
+
+
 class ScheduledAo:
     """Sole owner of a non-regenerating AO task with proactive safe refills."""
 
-    def __init__(self, config: AppConfig, state: RuntimeState, trigger_terminal: str) -> None:
+    def __init__(self, config: AppConfig, state: RuntimeState, trigger_terminal: str,
+                 recorder: Optional[H5Recorder] = None, commit_event: Any = None,
+                 ao_outcome: Any = None) -> None:
         self.config = config
         self.state = state
         self.trigger_terminal = trigger_terminal
-        self.commands: dict[int, np.ndarray] = {}
+        self.recorder = recorder
+        self.commit_event = commit_event
+        self.ao_outcome = ao_outcome
+        self.lifecycle = AoCommandLifecycle()
+        self.commands = self.lifecycle.commands
         self.command_lock = threading.Lock()
         self.ready = threading.Event()
         self.clock_started = threading.Event()
@@ -1326,6 +2490,10 @@ class ScheduledAo:
         self.error: Optional[Exception] = None
         self.stats = AoScheduleStats()
         self._next_block = 0
+        self._observed_generation = 0
+        self.drain_barrier = AoDrainBarrier()
+        self._committed_pulse_samples = self.lifecycle.committed_pulse_samples
+        self._pulse_exclusive_ends = self.lifecycle.pulse_exclusive_ends
         self.thread = threading.Thread(target=self._run, name="ao-writer", daemon=True)
 
     def start(self) -> None:
@@ -1338,20 +2506,53 @@ class ScheduledAo:
     def notify_clock_started(self) -> None:
         self.clock_started.set()
 
-    def submit(self, target_block: int, command: np.ndarray) -> None:
+    def submit(self, target_block: int, command: np.ndarray, generation: Optional[int] = None,
+               pulse_events: tuple[Any, ...] = (),
+               pulse_plans: tuple[SafetyAdmittedPulsePlan, ...] = ()) -> bool:
         value = np.asarray(command, dtype=np.float64).reshape(-1)
         if value.size != self.config.chunk_size:
             raise ValueError(f"AO command has {value.size} samples; expected {self.config.chunk_size}")
         with self.command_lock:
+            generation = self.state.snapshot().generation if generation is None else int(generation)
             late = target_block < self._next_block
             self.stats.submitted(late)
-            if not late and not self.force_safe.is_set():
-                self.commands[target_block] = value.copy()
+            snapshot = self.state.snapshot()
+            if snapshot.fault is not None:
+                self.stats.fault_rejected()
+                if self.ao_outcome is not None:
+                    self.ao_outcome(generation, False, "latched fault rejected AO command")
+                return False
+            if not late and not self.force_safe.is_set() and generation == snapshot.generation:
+                self.lifecycle.submit(target_block, value, generation, pulse_events,
+                                      chunk_size=self.config.chunk_size, pulse_plans=pulse_plans)
+                return True
+            return False
 
     def request_safe_zero(self) -> None:
         self.force_safe.set()
         with self.command_lock:
+            cancelled = tuple(self.commands.items())
             self.commands.clear()
+        for target, entry in cancelled:
+            self.stats.cancelled()
+            if self.ao_outcome is not None:
+                self.ao_outcome(entry[1], False, "latched fault or stop cancelled pending AO command")
+            if self.recorder is not None:
+                events = entry[2]
+                if events:
+                    for event in events:
+                        self.recorder.record_action_stage(
+                            sample_index=event.target_onset_sample_index, generation=event.generation,
+                            stage="cancelled", controller=self.state.snapshot().controller,
+                            request_id=event.pulse_id, source_sample_index=event.source_onset_sample_index,
+                            latest_sample_index=event.latest_sample_index,
+                            target_sample_index=event.target_onset_sample_index,
+                            reason="latched fault or stop cancelled pending AO command")
+                else:
+                    self.recorder.record_action_stage(
+                        sample_index=target * self.config.chunk_size, generation=entry[1],
+                        stage="cancelled", controller=self.state.snapshot().controller,
+                        reason="latched fault or stop cancelled pending AO command")
 
     def stop(self) -> None:
         self.request_safe_zero()
@@ -1366,17 +2567,19 @@ class ScheduledAo:
         with self.command_lock:
             return self.commands.pop(target, None)
 
-    def _take_contiguous(self, first_target: int, maximum: int) -> list[np.ndarray]:
-        """Remove every immediately available command, up to ``maximum``."""
+    def _take_contiguous(self, first_target: int, maximum: int, generation: int) -> list[tuple[int, np.ndarray, int, tuple[Any, ...]]]:
+        """Reserve current-generation commands without removing them before write success."""
         if self.force_safe.is_set():
             return []
         with self.command_lock:
-            blocks: list[np.ndarray] = []
+            blocks: list[tuple[int, np.ndarray, int, tuple[Any, ...]]] = []
             for target in range(first_target, first_target + maximum):
-                block = self.commands.get(target)
-                if block is None:
+                entry = self.commands.get(target)
+                if entry is None:
                     break
-                blocks.append(self.commands.pop(target))
+                if not self.lifecycle.eligible(entry, generation, self.state.snapshot().transition_pending):
+                    break
+                blocks.append((target, entry[0], entry[1], entry[2]))
             return blocks
 
     def _discard_committed_commands(self) -> None:
@@ -1422,34 +2625,188 @@ class ScheduledAo:
                     pause_ms = (now_ns - last_loop_ns) / 1e6
                     last_loop_ns = now_ns
                     generated = int(task.out_stream.total_samp_per_chan_generated)
+                    snapshot = self.state.snapshot()
+                    if snapshot.fault is not None and not self.force_safe.is_set():
+                        # A latched fault is stronger than a recoverable mode
+                        # transition: discard all not-yet-written commands,
+                        # including whole-pulse plans and preserved tails.
+                        self.request_safe_zero()
+                    if snapshot.generation != self._observed_generation:
+                        old_generation = self._observed_generation
+                        self._observed_generation = snapshot.generation
+                        self.drain_barrier.begin(snapshot.generation, generated)
+                        for pulse_id, committed in self._committed_pulse_samples.items():
+                            if committed:
+                                self.drain_barrier.preserve_until(self._pulse_exclusive_ends[pulse_id])
+                        with self.command_lock:
+                            cancelled, preserved = self.lifecycle.switch(old_generation)
+                        for _, (_, _, events) in preserved:
+                            for event in events:
+                                self.drain_barrier.preserve_until(self._pulse_exclusive_ends[event.pulse_id])
+                        if self.recorder is not None:
+                            for stage, groups in (("cancelled", cancelled), ("tail_preserved", preserved)):
+                                for target_block, (_, _, events) in groups:
+                                    if events:
+                                        for event in events:
+                                            self.recorder.record_action_stage(
+                                                sample_index=event.target_onset_sample_index,
+                                                generation=event.generation, stage=stage,
+                                                controller=snapshot.controller, request_id=event.pulse_id,
+                                                source_sample_index=event.source_onset_sample_index,
+                                                latest_sample_index=event.latest_sample_index,
+                                                target_sample_index=event.target_onset_sample_index,
+                                                reason="generation transition before AO output")
+                                    else:
+                                        self.recorder.record_action_stage(
+                                            sample_index=target_block * chunk, generation=old_generation,
+                                            stage=stage, controller=snapshot.controller,
+                                            reason="generation transition before AO output")
+                    generated_frontier = math.ceil(generated / chunk)
+                    if self._next_block < generated_frontier:
+                        with self.command_lock:
+                            elapsed_targets = []
+                            for target in tuple(self.commands):
+                                if target < generated_frontier:
+                                    elapsed_targets.append((target, self.commands.pop(target)))
+                            self._next_block = generated_frontier
+                        missed_partial_tail = any(
+                            self.lifecycle.has_committed_pulse(entry[2]) for _, entry in elapsed_targets
+                        )
+                        active_host_miss = (
+                            snapshot.mode == "closed-loop" and snapshot.acquiring
+                            and not snapshot.transition_pending and snapshot.fault is None
+                        )
+                        with self.stats.lock:
+                            self.stats.late_commands += len(elapsed_targets)
+                            self.stats.pulse_tail_misses += int(missed_partial_tail)
+                            self.stats.active_demand_misses += int(active_host_miss)
+                        reason = ("partly committed pulse tail missed its original AO samples"
+                                  if missed_partial_tail else "AO host refill stalled past committed output")
+                        for _, entry in elapsed_targets:
+                            _, generation, events = entry
+                            if self.ao_outcome is not None:
+                                self.ao_outcome(generation, False, reason)
+                            if self.recorder is not None:
+                                for event in events:
+                                    self.recorder.record_action_stage(
+                                        sample_index=event.target_onset_sample_index,
+                                        generation=event.generation,
+                                        stage="tail_missed" if missed_partial_tail else "late",
+                                        controller=snapshot.controller, request_id=event.pulse_id,
+                                        source_sample_index=event.source_onset_sample_index,
+                                        latest_sample_index=event.latest_sample_index,
+                                        target_sample_index=event.target_onset_sample_index,
+                                        reason=reason)
+                        if missed_partial_tail or active_host_miss:
+                            self.request_safe_zero()
+                            self.state.fault(reason)
                     queued = self._next_block * chunk - generated
                     deficit_blocks = max(0, math.ceil((lead_samples - queued) / chunk))
                     if deficit_blocks and (queued <= deadline_samples or self.force_safe.is_set()):
                         first_target = self._next_block
-                        refill = self._take_contiguous(first_target, deficit_blocks)
-                        zero_count = deficit_blocks - len(refill)
-                        if zero_count:
-                            refill.extend(np.zeros(chunk, dtype=np.float64) for _ in range(zero_count))
-                        snapshot = self.state.snapshot()
-                        active_miss = (
-                            zero_count > 0
-                            and not self.force_safe.is_set()
-                            and snapshot.mode == "closed-loop"
-                            and snapshot.stim_mode != "off"
-                            and snapshot.armed
+                        reserved = self._take_contiguous(first_target, deficit_blocks, snapshot.generation)
+                        refill = [value for _, value, _, _ in reserved]
+                        missing_count = deficit_blocks - len(refill)
+                        zero_count = missing_count
+                        latest_state = self.state.snapshot()
+                        producer_running = (
+                            not self.force_safe.is_set()
+                            and latest_state.generation == snapshot.generation
+                            and not latest_state.transition_pending
+                            and latest_state.acquiring
+                            and latest_state.mode == "closed-loop"
                         )
+                        active_output = (producer_running and latest_state.armed
+                                         and latest_state.stim_mode != "off")
+                        urgent_missing = (
+                            missing_count > 0
+                            and self.lifecycle.missing_refill_is_urgent(
+                                first_target, len(reserved), generated, chunk, deadline_samples)
+                        )
+                        active_miss = (
+                            urgent_missing and active_output
+                        )
+                        defer_missing = missing_count > 0 and producer_running and not urgent_missing
+                        if zero_count and not defer_missing:
+                            refill.extend(np.zeros(chunk, dtype=np.float64) for _ in range(zero_count))
+                        elif defer_missing:
+                            # The writable frontier is still beyond the safe
+                            # deadline. Submit the ready prefix and wait for
+                            # processing to supply the future suffix.
+                            zero_count = 0
 
                         if refill:
-                            if active_miss:
+                            zeroed_reserved: list[tuple[int, np.ndarray, int, tuple[Any, ...]]] = []
+                            fault_before_write = self.state.snapshot().fault is not None
+                            if active_miss or fault_before_write:
                                 # Once an active command misses its deadline,
                                 # the complete refill and every future command
                                 # are forced safe before the fault is published.
                                 self.request_safe_zero()
                                 refill = [np.zeros_like(block) for block in refill]
                                 zero_count = len(refill)
+                                zeroed_reserved = reserved
+                                reserved = []
                             write_started = time.perf_counter_ns()
                             writer.write_many_sample(np.concatenate(refill), timeout=0.5)
                             write_ms = (time.perf_counter_ns() - write_started) / 1e6
+                            self.drain_barrier.committed(self._next_block * chunk, refill, chunk)
+                            for _, _, _, events in reserved:
+                                self.lifecycle.committed(events, self.config.sample_rate)
+                                for event in events:
+                                    if event.rendered_sample_count:
+                                        self.drain_barrier.preserve_until(
+                                            self._pulse_exclusive_ends[event.pulse_id])
+                                        if self.commit_event is not None:
+                                            self.commit_event(event.pulse_id, event.rendered_sample_count)
+                                    if self.recorder is not None:
+                                        self.recorder.record_action_stage(
+                                            sample_index=event.target_onset_sample_index,
+                                            generation=event.generation, stage="ao_committed",
+                                            controller=snapshot.controller, request_id=event.pulse_id,
+                                            source_sample_index=event.source_onset_sample_index,
+                                            latest_sample_index=event.latest_sample_index,
+                                            target_sample_index=event.target_onset_sample_index,
+                                            reason="NI writer accepted AO samples")
+                            if self.recorder is not None:
+                                for _, _, _, events in zeroed_reserved:
+                                    for event in events:
+                                        self.recorder.record_action_stage(
+                                            sample_index=event.target_onset_sample_index,
+                                            generation=event.generation, stage="zero_substituted",
+                                            controller=snapshot.controller, request_id=event.pulse_id,
+                                            source_sample_index=event.source_onset_sample_index,
+                                            latest_sample_index=event.latest_sample_index,
+                                            target_sample_index=event.target_onset_sample_index,
+                                            reason="active AO deadline fault replaced refill with zeros")
+                            with self.command_lock:
+                                for target, block, _, _ in reserved:
+                                    current = self.commands.get(target)
+                                    if current is not None and current[0] is block:
+                                        self.commands.pop(target, None)
+                            if self.recorder is not None:
+                                for offset, block in enumerate(refill):
+                                    target = first_target + offset
+                                    submitted = offset < len(reserved)
+                                    stage_generation = reserved[offset][2] if submitted else snapshot.generation
+                                    self.recorder.record_action_stage(
+                                        sample_index=target * chunk, generation=stage_generation,
+                                        stage="ao_committed" if submitted else "zero_substituted",
+                                        controller=snapshot.controller,
+                                        reason="writer accepted refill" if submitted else "no current-generation command",
+                                    )
+                            if self.ao_outcome is not None:
+                                for offset in range(len(refill)):
+                                    submitted = not active_miss and not fault_before_write and offset < len(reserved)
+                                    if (active_miss or fault_before_write) and offset < len(zeroed_reserved):
+                                        # request_safe_zero already delivered the
+                                        # rejection for this reserved command.
+                                        continue
+                                    generation = reserved[offset][2] if submitted else snapshot.generation
+                                    self.ao_outcome(generation, submitted,
+                                                    "AO writer accepted command" if submitted else
+                                                    ("latched fault cancelled reserved AO command"
+                                                     if fault_before_write else "zero substituted"))
                             self._next_block += len(refill)
                             self._discard_committed_commands()
                             self.stats.refill(queued, zero_count, write_ms, pause_ms)
@@ -1462,6 +2819,9 @@ class ScheduledAo:
                                 self.state.fault(
                                     "AO command missed its derived half-lead deadline; safe zeros were written"
                                 )
+                            if self.drain_barrier.drained(snapshot.generation, generated):
+                                self.state.acknowledge_drain(snapshot.generation)
+                                self.drain_barrier.acknowledge()
                     time.sleep(min(0.001, chunk / self.config.sample_rate / 8))
         except Exception as exc:
             self.error = exc
@@ -1544,7 +2904,9 @@ class RealDaq(BaseDaq):
             input_queue: queue.Queue[InputBatch] = queue.Queue(maxsize=self.config.ao_lead_chunks * 2)
             reader_stop = threading.Event()
             reader_errors: list[Exception] = []
-            scheduler = ScheduledAo(self.config, self.state, read_task.triggers.start_trigger.term)
+            scheduler = ScheduledAo(self.config, self.state, read_task.triggers.start_trigger.term,
+                                    self.core.recorder, self.core.commit_actuator_event,
+                                    self.core.record_ao_outcome)
             self.scheduler = scheduler
             scheduler.start()
             read_task.start()
@@ -1589,19 +2951,18 @@ class RealDaq(BaseDaq):
                         if reader_errors:
                             raise RuntimeError(f"AI reader failure: {reader_errors[0]}") from reader_errors[0]
                         continue
-                    if self.state.snapshot().acquiring:
-                        _, safe, esn_ms, _ = self.core.process(
-                            batch.values,
-                            sample_index=batch.sample_index,
-                            ao_target_sample_index=batch.sample_index + self.config.ao_lead_samples,
-                        )
-                    else:
-                        safe = np.zeros((1, self.config.chunk_size), dtype=np.float64)
-                        esn_ms = 0.0
+                    _, safe, esn_ms, _ = self.core.process(
+                        batch.values,
+                        sample_index=batch.sample_index,
+                        ao_target_sample_index=batch.sample_index + self.config.ao_lead_samples,
+                    )
                     if self.state.snapshot().mode != "closed-loop":
                         safe = np.zeros_like(safe)
                     target = batch.sample_index // self.config.chunk_size + self.config.ao_lead_chunks
-                    scheduler.submit(target, safe)
+                    command_generation = self.core.last_processed_generation
+                    if not scheduler.submit(target, safe, command_generation, self.core.last_pulse_events,
+                                            self.core.last_admitted_pulse_plans):
+                        self.core.record_ao_outcome(command_generation, False, "late or stale command rejected")
                     self.last_command = safe
                     block_ms = (time.perf_counter_ns() - block_started) / 1e6
                     self.telemetry.update_block(
@@ -1629,61 +2990,24 @@ class RealDaq(BaseDaq):
             self.scheduler.request_safe_zero()
 
 
-def load_mock_replay(path: Path, electrode_labels: tuple[str, str], sample_rate: int) -> np.ndarray:
-    """Load an HDF5 recording and return named raw LFP rows."""
-    if path.suffix not in {".h5", ".hdf5"}:
-        raise ValueError("mock replay must be an Echo Chamber .h5 or .hdf5 recording")
-    if path.suffix in {".h5", ".hdf5"}:
-        with h5py.File(path, "r") as source:
-            if source.attrs.get("format_tag") in {"echoChamber_H5_v3", "echoChamber_H5_v4"}:
-                sidecar_path = path.with_suffix(".json")
-                if sidecar_path.is_file():
-                    sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-                    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
-                    if sidecar.get("data_sha256") != actual_hash:
-                        raise ValueError(f"mock replay sidecar checksum mismatch: {sidecar_path}")
-                    labels = tuple(str(value) for value in sidecar["channel_labels_by_index"])
-                    LOG.warning("Using authoritative replay channel mapping from %s", sidecar_path.name)
-                else:
-                    labels = tuple(
-                        value.decode("utf-8") if isinstance(value, bytes) else str(value)
-                        for value in source["signals/ai_raw_V"].attrs["channel_labels"]
-                    )
-                requested_indices = [labels.index(label) for label in electrode_labels]
-                committed = min(
-                    int(source.attrs.get("committed_samples", source["signals/ai_raw_V"].shape[1])),
-                    source["signals/ai_raw_V"].shape[1],
-                )
-                replay = np.vstack([
-                    np.asarray(source["signals/ai_raw_V"][index, :committed])
-                    for index in requested_indices
-                ])
-                if replay.shape[1] == 0:
-                    raise ValueError(f"mock replay contains no committed data: {path}")
-                return replay
-            rows = tuple(
-                value.decode("utf-8") if isinstance(value, bytes) else str(value)
-                for value in source["row_names"][:]
-            )
-            requested = tuple(f"{label}_raw_V" for label in electrode_labels)
-            if not all(name in rows for name in requested):
-                available = [name for name in rows if name.endswith("_raw_V")]
-                raise ValueError(f"mock replay requires rows {requested}; available raw rows={available}")
-            committed = min(
-                int(source.attrs.get("committed_samples", source["data"].shape[1])),
-                source["data"].shape[1],
-            )
-            replay = np.vstack([
-                np.asarray(source["data"][rows.index(name), :committed])
-                for name in requested
-            ])
-        if replay.shape[1] == 0:
-            raise ValueError(f"mock replay contains no committed data: {path}")
-        LOG.info(
-            "Loaded repeating HDF5 mock replay %s: rows=%s, samples=%d, duration=%.3f s",
-            path, requested, replay.shape[1], replay.shape[1] / sample_rate,
-        )
-        return replay
+def load_mock_replay(path: Path, electrode_labels: tuple[str, str], sample_rate: int):
+    """Compatibility wrapper for the typed finite replay loader."""
+    replay = load_replay(path)
+    if replay.sample_rate_hz != sample_rate:
+        raise ValueError(f"mock replay rate {replay.sample_rate_hz:g} Hz does not match configured {sample_rate} Hz")
+    def role(label: str) -> str:
+        lowered = label.casefold()
+        return "CA3" if "ca3" in lowered else "Cortex" if any(key in lowered for key in ("cortex", "ctx", "ec")) else "unknown"
+    indexes = {role(label): i for i, label in enumerate(replay.channel_labels)}
+    requested_roles = [role(label) for label in electrode_labels]
+    if len(indexes) < 2 or set(requested_roles) != set(indexes):
+        raise ValueError(f"mock replay channels {replay.channel_labels} do not match configured {electrode_labels}")
+    order = [indexes[name] for name in requested_roles]
+    return dataclasses.replace(replay, electrode_mV=replay.electrode_mV[order],
+                               raw_V=replay.raw_V[order] if replay.raw_V is not None else None,
+                               channel_labels=electrode_labels,
+                               channel_roles=tuple(replay.channel_roles[i] for i in order),
+                               ctx_index=order.index(replay.ctx_index))
 
 
 class MockDaq(BaseDaq):
@@ -1691,50 +3015,133 @@ class MockDaq(BaseDaq):
         super().__init__(*args, **kwargs)
         self.overload_ms = overload_ms
         self.replay_index = 0
+        self.mock_sample_index = 0
+        self._source_epoch: Optional[float] = None
+        self._observed_acquiring = self.state.snapshot().acquiring
+        self._ao_stop = threading.Event()
+        self._ao_thread: Optional[threading.Thread] = None
+        self.scheduler = SimulatedAoScheduler(
+            self.config, self.state, self.core.recorder, self.core.commit_actuator_event,
+            self.core.record_ao_outcome,
+        )
         if self.config.mock_replay is None:
             raise ValueError("mock mode requires a replay recording")
-        self.replay = load_mock_replay(
-            self.config.mock_replay, self.config.electrode_labels, self.config.sample_rate
-        )
+        self.replay = (self.config.mock_replay_data if self.config.mock_replay_data is not None else
+            load_mock_replay(self.config.mock_replay, self.config.electrode_labels, self.config.sample_rate))
 
     def run(self) -> None:
         LOG.info("Mock replay acquisition started: %s", self.config.mock_replay)
         period_s = self.config.chunk_size / self.config.sample_rate
-        next_deadline = time.perf_counter()
-        while self.state.snapshot().running:
-            snapshot = self.state.snapshot()
-            if not snapshot.acquiring:
-                time.sleep(min(0.05, period_s))
-                next_deadline = time.perf_counter()
-                continue
-            block_started = time.perf_counter_ns()
-            next_deadline += period_s
-            ai = self._next_input()
-            if self.overload_ms:
-                time.sleep(self.overload_ms / 1_000)
-            source_index = self.core.sample_index
-            _, safe, esn_ms, _ = self.core.process(
-                ai, sample_index=source_index, ao_target_sample_index=source_index
-            )
-            if self.state.snapshot().mode != "closed-loop":
-                safe = np.zeros_like(safe)
-            self.last_command = safe
-            block_ms = (time.perf_counter_ns() - block_started) / 1e6
-            self.telemetry.update_block(
-                sample_index=self.core.sample_index, ai_ms=0.0, esn_ms=esn_ms, ao_ms=0.0, block_ms=block_ms,
-                deadline_ms=period_s * 1_000, logger_backlog=self.core.recorder.backlog,
-            )
-            remaining = next_deadline - time.perf_counter()
-            if remaining > 0:
-                time.sleep(remaining)
-            else:
-                next_deadline = time.perf_counter()
-        self.request_safe_zero()
+        self._source_epoch = time.perf_counter()
+        self._ao_stop.clear()
+        self._ao_thread = threading.Thread(target=self._run_ao_clock, args=(period_s,),
+                                           name="mock-ao-clock", daemon=True)
+        self._ao_thread.start()
+        try:
+            while self.state.snapshot().running:
+                snapshot = self.state.snapshot()
+                if snapshot.acquiring and not self._observed_acquiring:
+                    # A deliberate pause drops acquisition samples while the
+                    # shared hardware timeline continues. Resume at the current
+                    # AO sample frontier and record the resulting source gap.
+                    self.replay_index = min(
+                        max(self.replay_index, self.scheduler.generated_sample_count),
+                        self.replay.sample_count,
+                    )
+                    self.mock_sample_index = self.replay_index
+                    self._source_epoch = time.perf_counter() - (
+                        self.replay_index / self.config.sample_rate)
+                self._observed_acquiring = snapshot.acquiring
+                if not snapshot.acquiring:
+                    source_index = self.replay_index
+                    self.core.process(
+                        np.full((2, self.config.chunk_size), np.nan), sample_index=source_index,
+                        ao_target_sample_index=source_index + self.config.ao_lead_samples,
+                        input_is_electrode_mV=True,
+                    )
+                    target = math.ceil(self.scheduler.generated_sample_count / self.config.chunk_size)
+                    target += self.config.ao_lead_chunks
+                    zeros = np.zeros((1, self.config.chunk_size), dtype=np.float64)
+                    if not self.scheduler.submit(target, zeros, snapshot.generation):
+                        self.core.record_ao_outcome(snapshot.generation, False, "late or stale paused mock block")
+                    time.sleep(0.05)
+                    continue
+
+                if self.replay_index >= self.replay.sample_count:
+                    self.state.set_armed(False)
+                    self.state.set_acquiring(False)
+                    continue
+                source_index = self.replay_index
+                assert self._source_epoch is not None
+                source_available_at = self._source_epoch + (
+                    source_index + self.config.chunk_size) / self.config.sample_rate
+                remaining = source_available_at - time.perf_counter()
+                if remaining > 0:
+                    time.sleep(remaining)
+                block_started = time.perf_counter_ns()
+                electrode_mv, raw_v, valid_count = self._next_input()
+                if self.overload_ms:
+                    time.sleep(self.overload_ms / 1_000)
+                _, safe, esn_ms, _ = self.core.process(
+                    electrode_mv, sample_index=source_index,
+                    ao_target_sample_index=source_index + self.config.ao_lead_samples,
+                    input_is_electrode_mV=True, raw_ai_V=raw_v,
+                    input_roles=self.replay.channel_roles, input_labels=self.replay.channel_labels,
+                    input_ctx_index=self.replay.ctx_index,
+                )
+                if self.state.snapshot().mode != "closed-loop":
+                    safe = np.zeros_like(safe)
+                target_block = source_index // self.config.chunk_size + self.config.ao_lead_chunks
+                command_generation = self.core.last_processed_generation
+                if not self.scheduler.submit(target_block, safe, command_generation,
+                                             self.core.last_pulse_events,
+                                             self.core.last_admitted_pulse_plans):
+                    self.core.record_ao_outcome(command_generation, False,
+                                                "late or stale simulated command rejected")
+                block_ms = (time.perf_counter_ns() - block_started) / 1e6
+                self.mock_sample_index = source_index + valid_count
+                self.telemetry.update_block(
+                    sample_index=self.mock_sample_index, ai_ms=0.0, esn_ms=esn_ms, ao_ms=0.0,
+                    block_ms=block_ms, deadline_ms=period_s * 1_000,
+                    logger_backlog=self.core.recorder.backlog,
+                )
+        finally:
+            self._ao_stop.set()
+            if self._ao_thread is not None:
+                self._ao_thread.join(3.0)
+            self._ao_thread = None
+            self.request_safe_zero()
+
+    def _run_ao_clock(self, period_s: float) -> None:
+        last = time.perf_counter()
+        while not self._ao_stop.is_set() and self.state.snapshot().running:
+            now = time.perf_counter()
+            try:
+                generated = self.scheduler.advance_elapsed(now - last)
+            except Exception as exc:
+                self.state.fault(f"simulated AO clock failure: {type(exc).__name__}: {exc}")
+                return
+            last = now
+            if generated:
+                self.last_command = generated[-1].waveform_v.reshape(1, -1)
+                self.mock_sample_index = max(self.mock_sample_index, self.scheduler.generated_sample_count)
+            self._ao_stop.wait(min(0.001, period_s / 8))
 
     def _next_input(self) -> np.ndarray:
-        indices = (np.arange(self.config.chunk_size) + self.replay_index) % self.replay.shape[1]
-        self.replay_index = int((self.replay_index + self.config.chunk_size) % self.replay.shape[1])
-        return self.replay[:, indices].copy()
+        if self.replay_index >= self.replay.sample_count:
+            self.state.set_armed(False)
+            self.state.set_acquiring(False)
+            return (np.full((2, self.config.chunk_size), np.nan),
+                    np.full((2, self.config.chunk_size), np.nan), 0)
+        stop = min(self.replay.sample_count, self.replay_index + self.config.chunk_size)
+        count = stop - self.replay_index
+        mv = np.full((2, self.config.chunk_size), np.nan, dtype=np.float64)
+        mv[:, :count] = self.replay.electrode_mV[:, self.replay_index:stop]
+        raw = np.full_like(mv, np.nan)
+        if self.replay.raw_V is not None:
+            raw[:, :count] = self.replay.raw_V[:, self.replay_index:stop]
+        self.replay_index = stop
+        return mv, raw, count
 
 
 class Watchdog:
@@ -1762,19 +3169,20 @@ class Watchdog:
 
 
 def serializable_config(config: AppConfig) -> dict[str, Any]:
-    result = dataclasses.asdict(config)
+    result = dataclasses.asdict(dataclasses.replace(config, mock_replay_data=None))
     result["chunk_size"] = config.chunk_size
     result["ao_lead_samples"] = config.ao_lead_samples
     result["ao_deadline_samples"] = config.ao_deadline_samples
     result["record_dir"] = str(config.record_dir)
     result["mock_replay"] = str(config.mock_replay) if config.mock_replay else None
+    result.pop("mock_replay_data", None)
     result["model_artifact"] = str(config.model_artifact)
     result["hardware_profile"] = str(config.hardware_profile) if config.hardware_profile else None
     return result
 
 
 async def websocket_handler(websocket: Any, state: RuntimeState, recorder: H5Recorder,
-                            hub: UiHub, shutdown: asyncio.Event) -> None:
+                            hub: UiHub, shutdown: asyncio.Event, config: AppConfig) -> None:
     client_queue = hub.subscribe()
     LOG.info("UI client connected")
 
@@ -1801,11 +3209,36 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: H5Rec
                     state.set_acquiring(False)
                 elif name == "set_mode":
                     state.set_mode(str(command.get("mode", "")))
+                elif name == "set_controller":
+                    controller = str(command.get("controller", ""))
+                    state.set_controller(controller)
+                    if controller in {"rule", "pid"} and state.snapshot().stim_mode != "threshold_pulse":
+                        pulse_limit = pulse_amplitude_limit_v(config.safety, config.sample_rate)
+                        state.set_stim("threshold_pulse", min(state.snapshot().stim_gain, pulse_limit),
+                                       max_gain=pulse_limit)
+                elif name == "set_controller_settings":
+                    controller = state.snapshot().controller
+                    supplied = command.get("settings")
+                    if not isinstance(supplied, dict):
+                        raise ValueError("settings must be a complete JSON object")
+                    settings = complete_controller_settings(controller, supplied)
+                    prepared = build_controller(controller, config.sample_rate, settings)
+                    state.set_controller_settings(controller, settings, prepared)
                 elif name == "set_stim":
                     stim_mode = str(command.get("stim_mode", state.snapshot().stim_mode))
                     gain = float(command.get("stim_gain", state.snapshot().stim_gain))
-                    state.set_stim(stim_mode, gain)
+                    max_gain = 10.0
+                    if (state.snapshot().controller in {"rule", "pid"}
+                            or stim_mode == "threshold_pulse"):
+                        max_gain = pulse_amplitude_limit_v(config.safety, config.sample_rate)
+                    state.set_stim(stim_mode, gain, max_gain=max_gain)
                 elif name == "set_armed":
+                    if (bool(command.get("armed", False))
+                            and (state.snapshot().controller in {"rule", "pid"}
+                                 or state.snapshot().stim_mode == "threshold_pulse")):
+                        pulse_limit = pulse_amplitude_limit_v(config.safety, config.sample_rate)
+                        if state.snapshot().stim_gain > pulse_limit:
+                            raise ValueError(f"pulse amplitude exceeds configured safety limit ({pulse_limit:.3f} V)")
                     state.set_armed(bool(command.get("armed", False)))
                 elif name == "set_pulse_threshold":
                     state.set_pulse_threshold_std(float(command.get("pulse_threshold_std")))
@@ -1832,7 +3265,7 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: H5Rec
             except Exception as exc:
                 response = {"type": "command_result", "command": locals().get("name", "unknown"), "ok": False, "error": str(exc)}
                 LOG.warning("Rejected UI command: %s", exc)
-            await websocket.send(json.dumps(response))
+            await websocket.send(json.dumps(json_safe(response), allow_nan=False))
 
     async def transmit() -> None:
         while state.snapshot().running:
@@ -1889,6 +3322,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pulse-window-sec", type=float, default=DEFAULT_PULSE_WINDOW_SEC)
     parser.add_argument("--pulse-polarity", choices=("absolute", "positive", "negative"), default="absolute")
     parser.add_argument("--model-artifact", type=Path, default=ESN_ARTIFACT)
+    parser.add_argument("--controller", choices=("esn", "rule", "pid"), default="esn")
+    parser.add_argument("--controller-config", type=Path, help="JSON settings for the selected rule or PID controller")
     parser.add_argument("--esn-backend", choices=("auto", "numpy", "numba"), default="auto")
     parser.add_argument("--max-command-v", type=float)
     parser.add_argument("--max-slew-v-per-s", type=float)
@@ -2005,6 +3440,22 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
     )
     electrode_labels = tuple(profile.get("electrode_labels", ("CA3", "Cortex")))
     ctx_index = int(profile.get("ctx_index", 1))
+    replay_data = load_replay(mock_replay) if mock_replay is not None else None
+    if replay_data is not None:
+        electrode_labels = replay_data.channel_labels
+        ctx_index = replay_data.ctx_index
+    controller_settings = {
+        "rule": controller_settings_for("rule"),
+        "pid": controller_settings_for("pid"),
+    }
+    if args.controller_config:
+        loaded_settings = json.loads(args.controller_config.resolve().read_text(encoding="utf-8"))
+        if not isinstance(loaded_settings, dict):
+            raise ValueError("controller config file must contain a JSON object")
+        if args.controller not in {"rule", "pid"}:
+            raise ValueError("--controller-config applies only to rule or pid")
+        controller_settings[args.controller] = controller_settings_for(args.controller, loaded_settings)
+        build_controller(args.controller, args.sample_rate, controller_settings[args.controller])
     return AppConfig(
         device=args.device,
         ai_channels=tuple(args.ai),
@@ -2022,12 +3473,16 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
         pulse_polarity=args.pulse_polarity,
         esn_backend=args.esn_backend,
         model_artifact=args.model_artifact.resolve(),
+        controller=args.controller,
+        controller_config=args.controller_config.resolve() if args.controller_config else None,
+        controller_settings=controller_settings,
         hardware_profile=profile_path,
         terminal_config=args.terminal_config,
         record_dir=args.record_dir.resolve(),
         ws_host=args.host,
         ws_port=args.port,
         mock_replay=mock_replay,
+        mock_replay_data=replay_data,
         actual_stim_monitor_channel=args.stim_monitor_ai,
         start_paused=args.start_paused,
         open_browser=not args.no_browser,
@@ -2077,16 +3532,29 @@ async def main() -> int:
         pulse_threshold_std=config.pulse_threshold_std,
         pulse_window_sec=config.pulse_window_sec,
         pulse_polarity=config.pulse_polarity,
+        controller=config.controller,
+        controller_ready={"esn": esn.ready, "rule": True, "pid": True},
+        controller_settings=config.controller_settings,
+        pulse_max_amplitude_v=pulse_amplitude_limit_v(config.safety, config.sample_rate),
     )
     telemetry = Telemetry()
     hub = UiHub(config.ui_queue_packets)
     initial = state.snapshot()
-    hub.publish(json.dumps({
+    hub.publish(json.dumps(json_safe({
         "ai": [[], []], "ao": [[]], "passthrough_preview": [[]],
         "pulse_threshold_preview": [[]], "sample_indices": [],
         "mode": initial.mode, "is_recording": initial.recording,
+        "controller": initial.controller, "controller_ready": initial.controller_ready,
+                    "controller_calibrated": initial.controller_calibrated,
+        "transition_pending": initial.transition_pending,
+                    "controller_settings": dict(initial.controller_settings),
+        "config_generation": initial.generation, "controller_diagnostics": {},
         "is_acquiring": initial.acquiring, "stim_mode": initial.stim_mode,
-        "stim_gain": initial.stim_gain, "pulse_threshold_std": initial.pulse_threshold_std,
+        "stim_gain": initial.stim_gain,
+        "pulse_amplitude_V": (initial.stim_gain if initial.controller in {"rule", "pid"}
+                               or initial.stim_mode == "threshold_pulse" else None),
+        "max_pulse_amplitude_V": pulse_amplitude_limit_v(config.safety, config.sample_rate),
+        "pulse_threshold_std": initial.pulse_threshold_std,
         "pulse_window_sec": initial.pulse_window_sec,
         "pulse_polarity": initial.pulse_polarity, "armed": initial.armed,
         "fault": initial.fault, "esn_ready": initial.esn_ready,
@@ -2095,15 +3563,18 @@ async def main() -> int:
         "sample_rate_hz": config.sample_rate, "ai_unit": "mV", "ao_unit": "V",
         "amplifier_gain": list(config.amplifier_gain),
         "ao_command_gain_v_per_esn_unit": config.ao_command_gain_v_per_esn_unit,
-    }))
+    }), allow_nan=False))
     metadata = {
         "application": "echoChamber.py",
         "configuration": serializable_config(config),
         "esn_artifact": str(config.model_artifact),
         "esn_ready": esn.ready,
+        "controller": config.controller,
+        "controller_config": str(config.controller_config) if config.controller_config else None,
         "esn_error": esn.error,
         "esn_bridge": "application-owned chunk adaptation and stimulation mapping",
         "ao_scheduler": "dynamic non-regenerating writer; no fixed refill count or mandatory batch size",
+        "pulse_amplitude_unit": "AO V; independent of ESN passthrough scaling",
     }
     recorder = H5Recorder(config, metadata)
     loop = asyncio.get_running_loop()
@@ -2111,7 +3582,7 @@ async def main() -> int:
     # Bind the UI endpoint before starting any DAQ or AO thread. A port error
     # therefore cannot leave hardware acquisition running without controls.
     server = await websockets.serve(
-        lambda websocket: websocket_handler(websocket, state, recorder, hub, shutdown),
+        lambda websocket: websocket_handler(websocket, state, recorder, hub, shutdown, config),
         config.ws_host,
         config.ws_port,
     )

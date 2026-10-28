@@ -1,0 +1,12 @@
+{
+  "name": "pid_synthetic_demo_only",
+  "description": "Fixed non-zero deterministic test preset; not a biological or hardware tuning recommendation.",
+  "kp": 0.4,
+  "ki": 0.1,
+  "kd": 0.02,
+  "target_z": 1.0,
+  "direction": 1,
+  "max_rate_hz": 2.0,
+  "update_ms": 5.0,
+  "derivative_tau_s": 0.02
+}

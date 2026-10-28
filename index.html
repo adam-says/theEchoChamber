@@ -311,6 +311,37 @@
                 <label>Experiment Mode</label>
                 <button id="btn-ctrl" class="active mode-ctrl" onclick="setMode('control')">Control</button>
                 <button id="btn-loop" onclick="setMode('closed-loop')">Closed-Loop</button>
+                <label for="controller-select">Controller</label>
+                <select id="controller-select" onchange="setController()">
+                    <option value="esn">Reference ESN</option>
+                    <option value="rule">Rule (CA3 envelope)</option>
+                    <option value="pid">PID (CA3 envelope)</option>
+                </select>
+                <div id="controller-status" class="filename-hint">ESN begins unarmed.</div>
+                <div id="rule-settings" style="display:none">
+                    <label>Rule envelope thresholds (SD)</label>
+                    <div style="display:flex; gap:.4rem;">
+                        <input id="rule-lower" type="number" min="0" max="20" step="0.1" value="1.5" aria-label="Rule lower threshold">
+                        <input id="rule-upper" type="number" min="0.1" max="20" step="0.1" value="3" aria-label="Rule upper threshold">
+                    </div>
+                </div>
+                <div id="pid-settings" style="display:none">
+                    <label>PID gains and target z</label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:.35rem;">
+                        <input id="pid-kp" type="number" min="0" step="0.01" value="0" aria-label="Kp">
+                        <input id="pid-ki" type="number" min="0" step="0.01" value="0" aria-label="Ki">
+                        <input id="pid-kd" type="number" min="0" step="0.01" value="0" aria-label="Kd">
+                        <input id="pid-target" type="number" step="0.1" value="0" aria-label="PID target z">
+                    </div>
+                </div>
+                <div id="band-settings" style="display:none">
+                    <label>CA3 filter band (Hz)</label>
+                    <div style="display:flex; gap:.4rem;">
+                        <input id="band-low" type="number" min="1" max="9999" value="100" aria-label="Band low Hz">
+                        <input id="band-high" type="number" min="2" max="10000" value="250" aria-label="Band high Hz">
+                    </div>
+                </div>
+                <button id="apply-controller-settings" style="display:none" onclick="applyControllerSettings()">Apply Controller Settings</button>
             </div>
 
             <div class="controls-group">
@@ -328,23 +359,19 @@
                     <option value="passthrough">ESN Passthrough</option>
                     <option value="threshold_pulse">ESN Threshold Pulse</option>
                 </select>
-                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
-                Stim gain
-            </div>
+                <div id="stim-gain-description" style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">ESN passthrough gain</div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
                     <input id="stim-gain" type="range" min="0" max="10" step="0.001" value="0" oninput="setStim(true)" onchange="setStim(false)" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="stim-gain-label">×0.000</div>
                 </div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
-                Noise threshold for pulse generation
-            </div>
+                <div id="esn-pulse-settings">
+                <div id="esn-noise-settings">
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">Noise threshold for pulse generation</div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
                     <input id="pulse-threshold" type="range" min="0.1" max="10" step="0.1" value="3.0" oninput="setPulseThreshold()" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-threshold-label">3.0 SD</div>
                 </div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
-                Noise calculation window
-            </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">Noise calculation window</div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
                     <input id="pulse-window" type="range" min="1" max="60" step="1" value="10" oninput="setPulseWindow()" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-window-label">10 s</div>
@@ -355,6 +382,8 @@
                     <option value="positive">Positive</option>
                     <option value="negative">Negative</option>
                 </select>
+                </div>
+                </div>
                 <button id="btn-arm" onclick="toggleArmed()">Arm Output</button>
                 <div class="filename-hint">Closed-loop computation does not energize AO until output is armed.</div>
             </div>
@@ -373,13 +402,14 @@
         <div class="chartsarea">
             <div id="chart-ai0" class="chart-box"></div>
             <div id="chart-ai1" class="chart-box"></div>
+            <div id="chart-activity" class="chart-box"></div>
             <div id="chart-ao0" class="chart-box"></div>
         </div>
     </div>
 
     <script>
         // --- UPLOT SETUP (3 Stacked Charts) ---
-        let uplotAi0, uplotAi1, uplotAo0;
+        let uplotAi0, uplotAi1, uplotActivity, uplotAo0;
 
         function makeOpts(title, strokeColor) {
             return {
@@ -404,6 +434,17 @@
 
         uplotAi0 = new uPlot(makeOpts("CA3 (AI0, mV)", "#3b82f6"), [[], []], document.getElementById("chart-ai0"));
         uplotAi1 = new uPlot(makeOpts("Cortex (AI1, mV)", "#10b981"), [[], []], document.getElementById("chart-ai1"));
+        function makeActivityOpts() {
+            const opts = makeOpts("CA3 activity (normalized z)", "#f59e0b");
+            opts.series = [
+                {},
+                { label: "Activity z", stroke: "#f59e0b", width: 2 },
+                { label: "Target / upper", stroke: "#f87171", width: 1, dash: [5, 4] },
+                { label: "Lower", stroke: "#60a5fa", width: 1, dash: [5, 4] },
+            ];
+            return opts;
+        }
+        uplotActivity = new uPlot(makeActivityOpts(), [[], [], [], []], document.getElementById("chart-activity"));
         function makeAoOpts() {
             const opts = makeOpts("Stimulation (AO0, V)", "#ef4444");
             opts.series = [
@@ -421,10 +462,11 @@
             let boxes = [
                 document.getElementById("chart-ai0"),
                 document.getElementById("chart-ai1"),
+                document.getElementById("chart-activity"),
                 document.getElementById("chart-ao0")
             ];
 
-            [uplotAi0, uplotAi1, uplotAo0].forEach((u, i) => {
+            [uplotAi0, uplotAi1, uplotActivity, uplotAo0].forEach((u, i) => {
                 let box = boxes[i];
                 u.setSize({
                     width: box.clientWidth,
@@ -447,18 +489,31 @@
         let ao0Array = [];
         let previewArray = [];
         let thresholdArray = [];
+        let activityTArray = [];
+        let activityZArray = [];
+        let activityTargetArray = [];
+        let activityLowerArray = [];
 
         // UI STATE
         let isRecording = false;
         let currentMode = 'control';
         let stimMode = 'off';
+        let controllerId = 'esn';
+        let controllerReady = false;
+        let controllerCalibrated = false;
+        let controllerSettings = {};
+        let syncControllerSettings = true;
+        let observedConfigGeneration = -1;
+        let controllerDiagnostics = {};
         let stimGain = 0.0;
+        let maxPulseAmplitudeV = 1.0;
         let pulseThresholdStd = 3.0;
         let pulseWindowSec = 10.0;
         let pulsePolarity = 'absolute';
         let cortexAi = 'ai1';
         let isAcquiring = false;
         let isArmed = false;
+        let transitionPending = false;
         let currentFault = null;
         let shutdownRequested = false;
         let stimSendTimer = null;
@@ -517,8 +572,21 @@
                     if (typeof msg.is_recording === "boolean") isRecording = msg.is_recording;
                     if (typeof msg.is_acquiring === "boolean") isAcquiring = msg.is_acquiring;
                     if (msg.mode) currentMode = msg.mode;
+                    if (msg.controller) controllerId = msg.controller;
+                    if (typeof msg.config_generation === 'number' && msg.config_generation !== observedConfigGeneration) {
+                        observedConfigGeneration = msg.config_generation;
+                        syncControllerSettings = true;
+                    }
+                    if (typeof msg.controller_ready === 'boolean') controllerReady = msg.controller_ready;
+                    if (typeof msg.controller_calibrated === 'boolean') controllerCalibrated = msg.controller_calibrated;
+                    if (typeof msg.transition_pending === 'boolean') transitionPending = msg.transition_pending;
+                    if (msg.controller_settings) controllerSettings = msg.controller_settings;
+                    if (msg.controller_diagnostics) controllerDiagnostics = msg.controller_diagnostics;
                     if (msg.stim_mode) stimMode = msg.stim_mode;
                     if (typeof msg.stim_gain === "number") stimGain = msg.stim_gain;
+                    if (typeof msg.max_pulse_amplitude_V === "number") {
+                        maxPulseAmplitudeV = msg.max_pulse_amplitude_V;
+                    }
                     if (typeof msg.pulse_threshold_std === "number") pulseThresholdStd = msg.pulse_threshold_std;
                     if (typeof msg.pulse_window_sec === "number") pulseWindowSec = msg.pulse_window_sec;
                     if (msg.pulse_polarity) pulsePolarity = msg.pulse_polarity;
@@ -576,6 +644,31 @@
                     uplotAi1.setData([tArray, ai1Array]);
                     uplotAo0.setData([tArray, previewArray, thresholdArray, ao0Array]);
 
+                    if (sampleIds.length) {
+                        const diagnostics = msg.controller_diagnostics || {};
+                        const activityTime = sampleIds[sampleIds.length - 1] / rawFs;
+                        const activityZ = diagnostics.z_score !== null && diagnostics.z_score !== undefined &&
+                            Number.isFinite(Number(diagnostics.z_score)) ? Number(diagnostics.z_score) : null;
+                        let activityTarget = null;
+                        let activityLower = null;
+                        if (msg.controller === 'rule') {
+                            activityTarget = Number(msg.controller_settings?.upper_z ?? 3);
+                            activityLower = Number(msg.controller_settings?.lower_z ?? 1.5);
+                        } else if (msg.controller === 'pid') {
+                            activityTarget = Number(msg.controller_settings?.target_z ?? 0);
+                        }
+                        activityTArray.push(activityTime);
+                        activityZArray.push(activityZ);
+                        activityTargetArray.push(activityTarget);
+                        activityLowerArray.push(activityLower);
+                        const cutoff = activityTime - MAX_SECONDS;
+                        while (activityTArray.length && activityTArray[0] < cutoff) {
+                            activityTArray.shift(); activityZArray.shift();
+                            activityTargetArray.shift(); activityLowerArray.shift();
+                        }
+                    }
+                    uplotActivity.setData([activityTArray, activityZArray, activityTargetArray, activityLowerArray]);
+
                 } catch (err) {
                     console.error("RX Err:", err);
                 }
@@ -599,13 +692,60 @@
             let recordingFilename = document.getElementById('recording-filename');
             let pulsePolaritySelect = document.getElementById('pulse-polarity');
             let faultPanel = document.getElementById('fault-panel');
+            let controllerSelect = document.getElementById('controller-select');
+            let controllerStatus = document.getElementById('controller-status');
+            let gainDescription = document.getElementById('stim-gain-description');
+            let ruleSettings = document.getElementById('rule-settings');
+            let pidSettings = document.getElementById('pid-settings');
+            let bandSettings = document.getElementById('band-settings');
+            let applySettings = document.getElementById('apply-controller-settings');
+            let esnPulseSettings = document.getElementById('esn-pulse-settings');
+            let esnNoiseSettings = document.getElementById('esn-noise-settings');
+            let passthroughOption = stimModeSel?.querySelector('option[value="passthrough"]');
+            let pulseOption = stimModeSel?.querySelector('option[value="threshold_pulse"]');
 
             btnCtrl.className = currentMode === 'control' ? 'active mode-ctrl' : '';
             btnLoop.className = currentMode === 'closed-loop' ? 'active mode-loop' : '';
 
             if (stimModeSel) stimModeSel.value = stimMode;
-            if (stimGainSlider) stimGainSlider.value = stimGain;
-            if (stimGainLabel) stimGainLabel.textContent = `×${Number(stimGain).toFixed(3)}`;
+            if (controllerSelect) controllerSelect.value = controllerId;
+            if (ruleSettings) ruleSettings.style.display = controllerId === 'rule' ? 'block' : 'none';
+            if (pidSettings) pidSettings.style.display = controllerId === 'pid' ? 'block' : 'none';
+            if (bandSettings) bandSettings.style.display = controllerId === 'esn' ? 'none' : 'block';
+            if (applySettings) applySettings.style.display = controllerId === 'esn' ? 'none' : 'block';
+            if (esnPulseSettings) esnPulseSettings.style.display = controllerId === 'esn' ? 'block' : 'none';
+            if (esnNoiseSettings) esnNoiseSettings.style.display = controllerId === 'esn' ? 'block' : 'none';
+            if (passthroughOption) passthroughOption.hidden = controllerId !== 'esn';
+            if (pulseOption) pulseOption.textContent = controllerId === 'esn' ? 'ESN Threshold Pulse' : 'Fixed pulse';
+            if (syncControllerSettings) {
+                if (controllerSettings.band_hz) {
+                    document.getElementById('band-low').value = controllerSettings.band_hz[0];
+                    document.getElementById('band-high').value = controllerSettings.band_hz[1];
+                }
+                if (controllerId === 'rule') {
+                    document.getElementById('rule-lower').value = controllerSettings.lower_z ?? 1.5;
+                    document.getElementById('rule-upper').value = controllerSettings.upper_z ?? 3;
+                } else if (controllerId === 'pid') {
+                    document.getElementById('pid-kp').value = controllerSettings.kp ?? 0;
+                    document.getElementById('pid-ki').value = controllerSettings.ki ?? 0;
+                    document.getElementById('pid-kd').value = controllerSettings.kd ?? 0;
+                    document.getElementById('pid-target').value = controllerSettings.target_z ?? 0;
+                }
+                syncControllerSettings = false;
+            }
+            if (controllerStatus) {
+                const d = controllerDiagnostics || {};
+                controllerStatus.textContent = !controllerReady ? `${controllerId.toUpperCase()} unavailable` :
+                    transitionPending ? 'Output drain in progress' :
+                    controllerId === 'esn' ? 'ESN available' : controllerCalibrated ? 'Baseline calibrated · ready to arm' : 'Calibrating baseline · output disabled';
+            }
+            const pulseOutput = controllerId === 'rule' || controllerId === 'pid' || stimMode === 'threshold_pulse';
+            if (stimGainSlider) {
+                stimGainSlider.max = pulseOutput ? maxPulseAmplitudeV : 10;
+                stimGainSlider.value = stimGain;
+            }
+            if (gainDescription) gainDescription.textContent = pulseOutput ? 'Pulse amplitude (AO V)' : 'ESN passthrough gain';
+            if (stimGainLabel) stimGainLabel.textContent = pulseOutput ? `${Number(stimGain).toFixed(3)} V` : `×${Number(stimGain).toFixed(3)}`;
             if (pulseThreshold) pulseThreshold.value = pulseThresholdStd;
             if (pulseThresholdLabel) pulseThresholdLabel.textContent = `${Number(pulseThresholdStd).toFixed(1)} SD`;
             if (pulseWindow) pulseWindow.value = pulseWindowSec;
@@ -618,7 +758,9 @@
             if (btnArm) {
                 btnArm.textContent = isArmed ? 'Disarm Output' : 'Arm Output';
                 btnArm.className = isArmed ? 'active arm-on' : '';
-                btnArm.disabled = !isAcquiring || currentMode !== 'closed-loop' || stimMode === 'off' || stimGain <= 0 || !!currentFault;
+                btnArm.disabled = !isAcquiring || currentMode !== 'closed-loop' || !controllerReady ||
+                    ((controllerId === 'rule' || controllerId === 'pid') && !controllerCalibrated) ||
+                    transitionPending || stimMode === 'off' || stimGain <= 0 || !!currentFault;
             }
             if (faultPanel) {
                 faultPanel.style.display = currentFault ? 'block' : 'none';
@@ -645,6 +787,26 @@
             }
         }
 
+        function setController() {
+            const controller = document.getElementById('controller-select').value;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_controller', controller }));
+            }
+        }
+
+        function applyControllerSettings() {
+            const band_hz = [Number(document.getElementById('band-low').value), Number(document.getElementById('band-high').value)];
+            let settings;
+            if (controllerId === 'rule') {
+                settings = { lower_z: Number(document.getElementById('rule-lower').value), upper_z: Number(document.getElementById('rule-upper').value), band_hz };
+            } else if (controllerId === 'pid') {
+                settings = { kp: Number(document.getElementById('pid-kp').value), ki: Number(document.getElementById('pid-ki').value), kd: Number(document.getElementById('pid-kd').value), target_z: Number(document.getElementById('pid-target').value), direction: 1, max_rate_hz: 2, update_ms: 5, derivative_tau_s: .02, band_hz };
+            } else return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_controller_settings', settings }));
+            }
+        }
+
         function toggleRecording() {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 let cmd = isRecording ? 'stop_recording' : 'start_recording';
@@ -659,7 +821,8 @@
         function setStim(isLive = false) {
             const requestedMode = document.getElementById('stim-mode').value;
             const requestedGain = parseFloat(document.getElementById('stim-gain').value);
-            document.getElementById('stim-gain-label').textContent = `×${requestedGain.toFixed(3)}`;
+            const pulseOutput = controllerId === 'rule' || controllerId === 'pid' || requestedMode === 'threshold_pulse';
+            document.getElementById('stim-gain-label').textContent = pulseOutput ? `${requestedGain.toFixed(3)} V` : `×${requestedGain.toFixed(3)}`;
             const send = () => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ command: 'set_stim', stim_mode: requestedMode, stim_gain: requestedGain }));
@@ -732,7 +895,8 @@
             ws.send(JSON.stringify({ command: "shutdown" }));
         }
 
-        // Init App 
+        // Init App
+        updateButtonsVisually();
         connect();
     </script>
 </body>

@@ -24,6 +24,9 @@ class BridgeDiagnostics:
     pulse_threshold: float
     pulse_peak: float
     pulse_fired: bool
+    trigger_sample: Optional[int] = None
+    conditioned_output: Optional[np.ndarray] = None
+    passthrough_output: Optional[np.ndarray] = None
 
 
 class EchoChamberEsnBridge:
@@ -87,9 +90,8 @@ class EchoChamberEsnBridge:
         self._dc_previous_output = 0.0
         self._previous_pulse_metric: Optional[float] = None
         self._pending_pulse = np.empty(0, dtype=np.float64)
-        self._diagnostics = BridgeDiagnostics(
-            np.full((1, self.runtime_chunk_size), np.nan), float("nan"), float("nan"), False
-        )
+        self._diagnostics = BridgeDiagnostics(np.full((1, self.runtime_chunk_size), np.nan),
+                                              float("nan"), float("nan"), False)
 
         # The original streamer already contains stimulation modes. Keep it in
         # its identity-like passthrough configuration and perform all choices
@@ -167,11 +169,10 @@ class EchoChamberEsnBridge:
         self._dc_previous_output = 0.0
         self._previous_pulse_metric = None
         self._pending_pulse = np.empty(0, dtype=np.float64)
-        self._diagnostics = BridgeDiagnostics(
-            np.full((1, self.runtime_chunk_size), np.nan), float("nan"), float("nan"), False
-        )
+        self._diagnostics = BridgeDiagnostics(np.full((1, self.runtime_chunk_size), np.nan),
+                                              float("nan"), float("nan"), False)
 
-    def process(self, ai_chunk: np.ndarray, *, ctx_index: int) -> np.ndarray:
+    def process(self, ai_chunk: np.ndarray, *, ctx_index: int, render_legacy: bool = True) -> np.ndarray:
         data = np.asarray(ai_chunk, dtype=np.float64)
         if data.ndim != 2 or data.shape[1] != self.runtime_chunk_size:
             raise ValueError(
@@ -191,14 +192,18 @@ class EchoChamberEsnBridge:
 
         conditioned = self._condition_model_output(model_output)
         threshold, peak, fired, trigger_sample = self._update_pulse_state(conditioned)
-        if self.stim_mode == "off":
+        passthrough = self._passthrough_command(conditioned)
+        if not render_legacy:
+            command = np.zeros_like(model_output)
+        elif self.stim_mode == "off":
             command = np.zeros_like(model_output)
         elif self.stim_mode == "threshold_pulse":
             command = self._pulse_command(model_output.shape[1], trigger_sample if fired else None)
         else:
             command = self._passthrough_command(conditioned)
 
-        self._diagnostics = BridgeDiagnostics(model_output.copy(), threshold, peak, fired)
+        self._diagnostics = BridgeDiagnostics(model_output.copy(), threshold, peak, fired,
+                                              trigger_sample, conditioned.copy(), passthrough.copy())
         return command
 
     def diagnostics(self, samples: int) -> tuple[np.ndarray, float, float, bool]:
@@ -207,6 +212,14 @@ class EchoChamberEsnBridge:
         if model.shape != (1, samples):
             model = np.full((1, samples), np.nan)
         return model.copy(), diagnostics.pulse_threshold, diagnostics.pulse_peak, diagnostics.pulse_fired
+
+    def detailed_diagnostics(self) -> BridgeDiagnostics:
+        """Return exact threshold crossing and conditioned ESN output for shared-actuator adapters."""
+        item = self._diagnostics
+        return BridgeDiagnostics(item.model_output.copy(), item.pulse_threshold, item.pulse_peak,
+                                 item.pulse_fired, item.trigger_sample,
+                                 None if item.conditioned_output is None else item.conditioned_output.copy(),
+                                 None if item.passthrough_output is None else item.passthrough_output.copy())
 
     def _update_pulse_state(
         self, conditioned_output: np.ndarray
