@@ -92,7 +92,12 @@ class PIDController:
         diag_mean, diag_std = self.envelope.baseline or (float("nan"), float("nan"))
         valid = data.validity_mask & np.isfinite(z)
         valid &= ~stim
-        if not np.all(data.validity_mask):
+        feedback_blocked = data.feedback is not None and (not data.feedback.accepted or not data.feedback.armed)
+        if feedback_blocked:
+            self.rate = 0.0
+            self.derivative = 0.0
+            self.previous_z = None
+        elif not np.all(data.validity_mask):
             # A partial gap makes this block unusable for feedback; hold the integrator.
             self.rate = 0.0
             self.derivative = 0.0
@@ -100,19 +105,26 @@ class PIDController:
         elif not was_ready:
             self.rate = 0.0
         elif not np.any(valid):
-            self.rate = 0.0
-            if data.stimulated_mask is not None and np.any(data.stimulated_mask):
+            if self.envelope.last_feature_invalid_sample_count:
+                # Do not schedule pulses from an interval with no valid feature.
+                # The shared actuator resets fractional phase at rate zero; it
+                # never repays this inhibited time as catch-up pulses.
+                self.rate = 0.0
                 self.derivative = 0.0
                 self.previous_z = None
+            else:
+                self.rate = 0.0
         else:
             # Update only at the configured 5 ms grid; the final value is held between updates.
             for j in range(z.size):
                 index = data.first_sample_index + int(j)
-                if stim[j]:
+                if stim[j] or not self.envelope.feature_valid_mask[j]:
                     self.derivative = 0.0
                     self.previous_z = None
                     continue
                 if not valid[j]:
+                    self.derivative = 0.0
+                    self.previous_z = None
                     continue
                 if (index + 1) % self.update_samples:
                     continue
@@ -126,7 +138,8 @@ class PIDController:
                 self.rate = self._compute_output(measured)
                 self._last_update_index = index
         ready = self.envelope.baseline is not None
-        if not ready or not was_ready or not np.all(valid):
+        if (not ready or not was_ready or not np.all(data.validity_mask)
+                or self.envelope.last_feature_invalid_sample_count):
             self.rate = 0.0
         action = ControllerAction(kind="pulse_rate", requested_rate_hz=self.rate) if ready else ControllerAction()
         lastz = float(z[-1]) if z.size and np.isfinite(z[-1]) else float("nan")
@@ -134,6 +147,11 @@ class PIDController:
             float(env[-1]) if env.size and np.isfinite(env[-1]) else float("nan"), diag_mean, diag_std, lastz,
             self.target_z, lastz - self.target_z if np.isfinite(lastz) else float("nan"), self.rate,
             "active" if ready else "calibrating", data.generation,
-            ("actuator rejected or disarmed" if data.feedback and (not data.feedback.accepted or not data.feedback.armed)
-             else self.envelope.calibration_reason if not ready else "calibration completed this block" if not was_ready else ""))
+            ("actuator rejected or disarmed" if feedback_blocked
+             else self.envelope.calibration_reason if not ready
+             else "calibration completed this block" if not was_ready
+             else "stimulus_feature_recovery" if self.envelope.last_feature_invalid_sample_count else ""),
+            bool(np.all(self.envelope.feature_valid_mask)), self.envelope.feature_recovery_samples,
+            self.envelope.feature_recovery_remaining_samples, self.envelope.last_stimulated_sample_count,
+            self.envelope.last_feature_invalid_sample_count)
         return StepResult(action, diag)

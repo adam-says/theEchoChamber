@@ -125,6 +125,42 @@
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
+            min-width: 0;
+        }
+
+        .controls,
+        #rule-settings,
+        #pid-settings,
+        #band-settings {
+            min-width: 0;
+        }
+
+        .controls input[type="number"] {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+
+        .numeric-fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.35rem;
+        }
+
+        .numeric-fields label {
+            font-size: 0.68rem;
+            color: #94a3b8;
+            text-transform: none;
+            letter-spacing: 0;
+            font-weight: 500;
+        }
+
+        .numeric-field {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
         }
 
         .controls-group label {
@@ -318,20 +354,39 @@
                     <option value="pid">PID (CA3 envelope)</option>
                 </select>
                 <div id="controller-status" class="filename-hint">ESN begins unarmed.</div>
+                <div id="feature-diagnostics" class="filename-hint" aria-live="polite"></div>
                 <div id="rule-settings" style="display:none">
                     <label>Rule envelope thresholds (SD)</label>
-                    <div style="display:flex; gap:.4rem;">
-                        <input id="rule-lower" type="number" min="0" max="20" step="0.1" value="1.5" aria-label="Rule lower threshold">
-                        <input id="rule-upper" type="number" min="0.1" max="20" step="0.1" value="3" aria-label="Rule upper threshold">
+                    <div class="numeric-fields">
+                        <div class="numeric-field">
+                            <label for="rule-lower">Lower SD</label>
+                            <input id="rule-lower" type="number" min="0" max="20" step="0.1" value="1.5" aria-label="Rule lower threshold">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="rule-upper">Upper SD</label>
+                            <input id="rule-upper" type="number" min="0.1" max="20" step="0.1" value="3" aria-label="Rule upper threshold">
+                        </div>
                     </div>
                 </div>
                 <div id="pid-settings" style="display:none">
                     <label>PID gains and target z</label>
-                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:.35rem;">
-                        <input id="pid-kp" type="number" min="0" step="0.01" value="0" aria-label="Kp">
-                        <input id="pid-ki" type="number" min="0" step="0.01" value="0" aria-label="Ki">
-                        <input id="pid-kd" type="number" min="0" step="0.01" value="0" aria-label="Kd">
-                        <input id="pid-target" type="number" step="0.1" value="0" aria-label="PID target z">
+                    <div class="numeric-fields">
+                        <div class="numeric-field">
+                            <label for="pid-kp">Kp</label>
+                            <input id="pid-kp" type="number" min="0" step="0.01" value="0" aria-label="Kp">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="pid-ki">Ki</label>
+                            <input id="pid-ki" type="number" min="0" step="0.01" value="0" aria-label="Ki">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="pid-kd">Kd</label>
+                            <input id="pid-kd" type="number" min="0" step="0.01" value="0" aria-label="Kd">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="pid-target">Target z</label>
+                            <input id="pid-target" type="number" step="0.1" value="0" aria-label="PID target z">
+                        </div>
                     </div>
                 </div>
                 <div id="band-settings" style="display:none">
@@ -511,6 +566,7 @@
         let pulseWindowSec = 10.0;
         let pulsePolarity = 'absolute';
         let cortexAi = 'ai1';
+        let inputMappingLocked = false;
         let isAcquiring = false;
         let isArmed = false;
         let transitionPending = false;
@@ -573,6 +629,7 @@
                     if (typeof msg.is_acquiring === "boolean") isAcquiring = msg.is_acquiring;
                     if (msg.mode) currentMode = msg.mode;
                     if (msg.controller) controllerId = msg.controller;
+                    if (typeof msg.input_mapping_locked === 'boolean') inputMappingLocked = msg.input_mapping_locked;
                     if (typeof msg.config_generation === 'number' && msg.config_generation !== observedConfigGeneration) {
                         observedConfigGeneration = msg.config_generation;
                         syncControllerSettings = true;
@@ -605,8 +662,14 @@
                         document.getElementById("fs-info").innerHTML = `<strong>Data Stream FS:</strong> ${msg.fs} Hz`;
                     }
                     if (Array.isArray(msg.amplifier_gain) && typeof msg.ao_command_gain_v_per_esn_unit === "number") {
-                        document.getElementById("calibration-info").innerHTML =
-                            `<strong>Calibration:</strong> AI gains ${msg.amplifier_gain.join(' / ')}; AO ${msg.ao_command_gain_v_per_esn_unit} V per ESN unit`;
+                        const inputScaling = msg.input_source_kind === "electrode_mV" ||
+                            msg.input_source_kind === "replay_electrode_mV"
+                            ? "Input is already in electrode mV; NI AI gains are not applied."
+                            : `NI raw AI V → electrode mV using gains ${msg.amplifier_gain.join(' / ')}.`;
+                        const outputScaling = msg.controller === "esn" && msg.stim_mode === "passthrough"
+                            ? `ESN passthrough: ${msg.ao_command_gain_v_per_esn_unit} AO V per ESN output unit.`
+                            : "Fixed pulse amplitude is direct AO volts; ESN passthrough scaling is not applied.";
+                        document.getElementById("calibration-info").textContent = `${inputScaling} ${outputScaling}`;
                     }
 
                     let ai0 = (msg.ai || [[], []])[0] || [];
@@ -701,6 +764,7 @@
             let applySettings = document.getElementById('apply-controller-settings');
             let esnPulseSettings = document.getElementById('esn-pulse-settings');
             let esnNoiseSettings = document.getElementById('esn-noise-settings');
+            let featureDiagnostics = document.getElementById('feature-diagnostics');
             let passthroughOption = stimModeSel?.querySelector('option[value="passthrough"]');
             let pulseOption = stimModeSel?.querySelector('option[value="threshold_pulse"]');
 
@@ -734,10 +798,30 @@
                 syncControllerSettings = false;
             }
             if (controllerStatus) {
-                const d = controllerDiagnostics || {};
-                controllerStatus.textContent = !controllerReady ? `${controllerId.toUpperCase()} unavailable` :
+                controllerStatus.textContent = currentFault ? `Fault · ${currentFault}` :
+                    !controllerReady ? `${controllerId.toUpperCase()} unavailable` :
                     transitionPending ? 'Output drain in progress' :
-                    controllerId === 'esn' ? 'ESN available' : controllerCalibrated ? 'Baseline calibrated · ready to arm' : 'Calibrating baseline · output disabled';
+                    isArmed ? 'Output armed' :
+                    controllerId === 'esn' ? 'ESN available' :
+                    controllerCalibrated ? 'Baseline calibrated · ready to arm' :
+                    isAcquiring && currentMode === 'closed-loop'
+                        ? 'Calibrating baseline · output disabled'
+                        : 'Start acquisition and enter closed-loop to calibrate';
+            }
+            if (featureDiagnostics) {
+                const diagnostics = controllerDiagnostics || {};
+                if (controllerId === 'rule' || controllerId === 'pid') {
+                    const valid = diagnostics.feature_valid !== false;
+                    const stimulated = Number(diagnostics.stimulated_sample_count || 0);
+                    const invalid = Number(diagnostics.feature_invalid_sample_count || 0);
+                    const guard = Number(diagnostics.feature_recovery_samples || 0);
+                    const remaining = Number(diagnostics.feature_recovery_remaining_samples || 0);
+                    const reason = diagnostics.reason === 'stimulus_feature_recovery'
+                        ? 'stimulus feature recovery' : (valid ? 'feature valid' : 'feature unavailable');
+                    featureDiagnostics.textContent = `Feature ${reason} · ${stimulated} stimulated · ${invalid} feature-ineligible · guard ${remaining}/${guard} samples remaining. Acquisition gaps are tracked separately.`;
+                } else {
+                    featureDiagnostics.textContent = '';
+                }
             }
             const pulseOutput = controllerId === 'rule' || controllerId === 'pid' || stimMode === 'threshold_pulse';
             if (stimGainSlider) {
@@ -768,7 +852,9 @@
             }
             if (cortexChannel) {
                 cortexChannel.value = cortexAi;
-                cortexChannel.disabled = isRecording;
+                cortexChannel.disabled = isRecording || inputMappingLocked;
+                cortexChannel.title = inputMappingLocked
+                    ? 'Channel mapping is fixed by the calibrated mV input source.' : '';
             }
             if (recordingFilename) recordingFilename.disabled = isRecording;
 

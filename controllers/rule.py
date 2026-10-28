@@ -73,5 +73,9 @@ class RuleController:
             float(z[-1]) if z.size and np.isfinite(z[-1]) else float("nan"), self.upper_z,
             float(z[-1] - self.upper_z) if z.size and np.isfinite(z[-1]) else float("nan"),
             0.0, "armed" if self._armed else "latched", data.generation,
-            self.envelope.calibration_reason if not ready else "")
+            (self.envelope.calibration_reason if not ready else
+             "stimulus_feature_recovery" if self.envelope.last_feature_invalid_sample_count else ""),
+            bool(np.all(self.envelope.feature_valid_mask)), self.envelope.feature_recovery_samples,
+            self.envelope.feature_recovery_remaining_samples, self.envelope.last_stimulated_sample_count,
+            self.envelope.last_feature_invalid_sample_count)
         return StepResult(action, diag)

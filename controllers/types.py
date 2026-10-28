@@ -54,6 +54,11 @@ class ControllerDiagnostics:
     state: str
     generation: int
     reason: str = ""
+    feature_valid: bool = True
+    feature_recovery_samples: int = 0
+    feature_recovery_remaining_samples: int = 0
+    stimulated_sample_count: int = 0
+    feature_invalid_sample_count: int = 0
 
 
 @dataclass(frozen=True)

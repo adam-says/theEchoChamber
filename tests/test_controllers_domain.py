@@ -141,6 +141,133 @@ def test_envelope_chunk_invariance_freezes_masked_baseline_and_invalidates_gap()
     assert whole.baseline is None
 
 
+@pytest.mark.parametrize("mask_ms", [2, 5, 20])
+@pytest.mark.parametrize("phase", [0.0, .25, .5, .75])
+@pytest.mark.parametrize("band_hz,noise_sd", [((100.0, 250.0), .004), ((150.0, 300.0), .01)])
+def test_feature_recovery_is_causal_and_bounds_mask_transient(mask_ms, phase, band_hz, noise_sd):
+    fs = 20000
+    rng = np.random.default_rng(20261028)
+    n = 4 * fs
+    t = np.arange(n) / fs
+    signal = .12 * np.sin(2 * np.pi * 150 * t + phase * 2 * np.pi) + rng.normal(0, noise_sd, n)
+    mask_start = 2 * fs
+    mask_n = round(mask_ms * fs / 1000)
+    stim = np.zeros(n, bool)
+    stim[mask_start:mask_start + mask_n] = True
+    valid = np.ones(n, bool)
+    actual = CausalEnvelope(fs, band_hz=band_hz, settle_s=0, calibration_s=.5)
+    reference = CausalEnvelope(fs, band_hz=band_hz, settle_s=0, calibration_s=.5)
+    # Freeze exactly the same clean calibration before the masked comparison.
+    actual.process(signal[:mask_start], 0, valid[:mask_start])
+    reference.process(signal[:mask_start], 0, valid[:mask_start])
+    baseline = actual.baseline
+    assert baseline == reference.baseline and baseline is not None
+    got = actual.process(signal[mask_start:], mask_start, valid[mask_start:], stim[mask_start:])
+    expected = reference.process(signal[mask_start:], mask_start, valid[mask_start:])
+    guard_end = mask_n + actual.feature_recovery_samples
+    assert actual.feature_recovery_samples == actual.filter_settle_samples + actual.window - 1
+    assert not np.any(actual.feature_valid_mask[:guard_end])
+    assert np.all(actual.feature_valid_mask[guard_end:])
+    assert np.isnan(got[:guard_end]).all()
+    assert actual.baseline == baseline
+    resumed_z_error = np.abs((got[guard_end:] - expected[guard_end:]) / baseline[1])
+    assert resumed_z_error.size
+    assert np.max(resumed_z_error) <= .1
+
+
+def test_masked_artifact_is_excluded_and_guard_is_chunk_invariant():
+    fs = 20000
+    rng = np.random.default_rng(90210)
+    n = 4 * fs
+    t = np.arange(n) / fs
+    clean = .12 * np.sin(2 * np.pi * 150 * t) + rng.normal(0, .004, n)
+    stim = np.zeros(n, bool); stim[2 * fs:2 * fs + 100] = True
+    artifact = clean.copy(); artifact[stim] = 1e9
+    whole = CausalEnvelope(fs, settle_s=0, calibration_s=.5)
+    chunked = CausalEnvelope(fs, settle_s=0, calibration_s=.5)
+    a = whole.process(artifact, 0, np.ones(n, bool), stim)
+    pieces = []
+    feature_pieces = []
+    for start in range(0, n, 137):
+        end = min(n, start + 137)
+        pieces.append(chunked.process(artifact[start:end], start, np.ones(end-start, bool), stim[start:end]))
+        feature_pieces.append(chunked.feature_valid_mask.copy())
+    b = np.concatenate(pieces)
+    np.testing.assert_allclose(a, b, atol=1e-13, rtol=0, equal_nan=True)
+    np.testing.assert_array_equal(whole.feature_valid_mask, np.concatenate(feature_pieces))
+    assert whole.baseline == chunked.baseline
+    assert whole.feature_recovery_remaining_samples == chunked.feature_recovery_remaining_samples
+    assert np.isnan(a[stim]).all()
+    assert whole.last_stimulated_sample_count == 100
+    assert whole.last_feature_invalid_sample_count == 100 + whole.feature_recovery_samples
+
+
+def test_pid_holds_integral_and_rate_and_reseeds_derivative_during_feature_guard():
+    fs = 1000
+    pid = PIDController(fs, kp=.1, ki=.2, kd=.01)
+    pid.envelope.baseline = (.1, .02)
+    pid.rate = .8; pid.integral = .25; pid.derivative = 2.0; pid.previous_z = 1.0
+    stim = np.ones(5, bool)
+    inp = make_input(np.full(5, .1), 0, fs)
+    inp = ControllerInput(inp.samples_mv, 0, fs, inp.ctx_index, inp.validity_mask, stim,
+        inp.channel_labels, inp.roles, 4, inp.region, inp.generation)
+    first = pid.step(inp)
+    assert first.diagnostics.feature_recovery_remaining_samples == pid.envelope.feature_recovery_samples
+    assert first.diagnostics.stimulated_sample_count == 5
+    assert first.diagnostics.feature_invalid_sample_count == 5
+    assert pid.integral == .25 and pid.derivative == 0 and pid.previous_z is None
+    assert pid.rate == 0.0  # no request during feature-invalid time; actuator cannot accrue phase debt
+
+    remaining = pid.envelope.feature_recovery_remaining_samples
+    follow = make_input(np.full(remaining, .1), 5, fs)
+    result = pid.step(follow)
+    assert result.diagnostics.feature_recovery_remaining_samples == 0
+    assert result.diagnostics.feature_invalid_sample_count == remaining
+    assert pid.integral == .25 and pid.derivative == 0 and pid.previous_z is None
+    assert pid.rate == 0.0
+
+
+def test_keep_calibration_reset_guards_filter_startup_before_control_resumes():
+    fs = 1000
+    rng = np.random.default_rng(2810)
+    t = np.arange(2500) / fs
+    signal = .12 * np.sin(2 * np.pi * 150 * t) + rng.normal(0, .004, t.size)
+    ref = CausalEnvelope(fs, settle_s=0, calibration_s=.5)
+    ref.process(signal[:1000], 0, np.ones(1000, bool))
+    baseline = ref.baseline
+    assert baseline is not None
+    expected_post = ref.process(signal[1000:], 1000, np.ones(signal.size - 1000, bool))
+
+    env = CausalEnvelope(fs, settle_s=0, calibration_s=.5)
+    pid = PIDController(fs, kp=.1, ki=.2, kd=.01, envelope=env)
+    env.process(signal[:1000], 0, np.ones(1000, bool))
+    assert env.baseline == baseline
+    pid.reset(keep_calibration=True)
+    assert env.baseline == baseline
+    assert env.feature_recovery_remaining_samples == env.feature_recovery_samples
+    pid.integral = .375
+    guard = env.feature_recovery_samples
+    first = make_input(signal[1000:1000 + guard], 1000, fs)
+    guarded = pid.step(first)
+    assert guarded.diagnostics.calibrated
+    assert not guarded.diagnostics.feature_valid
+    assert guarded.diagnostics.feature_invalid_sample_count == guard
+    assert guarded.action.requested_rate_hz == 0
+    assert pid.integral == .375 and pid.derivative == 0 and pid.previous_z is None
+
+    resumed = make_input(signal[1000 + guard:1100 + guard], 1000 + guard, fs)
+    result = pid.step(resumed)
+    reference_values = expected_post[guard:guard + 100]
+    assert result.diagnostics.feature_valid
+    assert env.baseline == baseline
+    np.testing.assert_array_equal(env.feature_valid_mask, np.ones(100, bool))
+    # Compare the actual first post-guard measurement to the same continuous
+    # reference samples. The guard is sufficient even after resetting SOS/RMS.
+    actual_values = np.asarray([result.diagnostics.envelope_mv])
+    assert np.isfinite(actual_values[0]) and np.isfinite(reference_values[-1])
+    assert abs(actual_values[0] - reference_values[-1]) / baseline[1] <= .1
+
+
 def test_masked_large_artifact_is_held_out_of_filter_and_pid_recovery():
     fs = 1000
     rng = np.random.default_rng(77)

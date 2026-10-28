@@ -124,7 +124,26 @@ def test_reserved_refill_is_not_removed_until_successful_writer_commit():
     zeros = np.zeros(config.chunk_size)
     scheduler.drain_barrier.committed((target + 1) * config.chunk_size, [zeros], config.chunk_size)
     assert not scheduler.drain_barrier.drained(state.snapshot().generation, target * config.chunk_size)
-    assert scheduler.drain_barrier.drained(state.snapshot().generation, (target + 1) * config.chunk_size)
+    assert scheduler.drain_barrier.drained(state.snapshot().generation, (target + 2) * config.chunk_size)
+
+
+def test_drain_barrier_requires_generated_and_committed_sample_after_exclusive_end():
+    barrier = app.AoDrainBarrier()
+    generation = 3
+    exclusive_end = 100
+    barrier.begin(generation, generated_sample_count=0)
+    barrier.preserve_until(exclusive_end)
+
+    # The counter at N still permits the device to be outputting sample N-1.
+    barrier.last_zero_commit_end = exclusive_end + 1
+    assert not barrier.drained(generation, exclusive_end)
+
+    # N+1 generated is necessary, but a successful zero commit must also cover
+    # sample N; a commit ending at N alone does not establish that.
+    barrier.last_zero_commit_end = exclusive_end
+    assert not barrier.drained(generation, exclusive_end + 1)
+    barrier.last_zero_commit_end = exclusive_end + 1
+    assert barrier.drained(generation, exclusive_end + 1)
 
 
 def test_generation_switch_preserves_only_partially_committed_tail_at_same_target():
@@ -161,6 +180,121 @@ def test_transition_block_cannot_relabel_previous_block_pulse_events():
     core.process(np.zeros((2, config.chunk_size)), sample_index=0, input_is_electrode_mV=True)
     assert core.last_processed_generation == current_generation
     assert core.last_pulse_events == ()
+    assert core._input_source_kind == "electrode_mV"
+    core.process(np.zeros((2, config.chunk_size)), sample_index=config.chunk_size,
+                 input_is_electrode_mV=False)
+    assert core._input_source_kind == "ni_ai_raw_V"
+
+
+def _make_baseline_handoff_core(*, band_rule=(100.0, 250.0), band_pid=(100.0, 250.0)):
+    class Core(app.ProcessingCore):
+        def _publish_ui(self, *args, **kwargs):
+            pass
+
+    settings = {
+        "rule": app.controller_settings_for("rule", {"band_hz": band_rule}),
+        "pid": app.controller_settings_for("pid", {"band_hz": band_pid}),
+    }
+    config = app.dataclasses.replace(make_config(), controller="rule", controller_settings=settings)
+    state = app.RuntimeState(
+        esn_ready=False, start_paused=False, electrode_labels=("CA3", "EC"), ctx_index=1,
+        pulse_threshold_std=3.0, pulse_window_sec=10.0, controller="rule",
+        controller_ready={"esn": False, "rule": True, "pid": True},
+        controller_settings=settings,
+    )
+    esn = SimpleNamespace(ready=False, streamer=None, reset=lambda: None)
+    core = Core(config, state, esn, object(), object(), None, app.Telemetry())
+    return core, state
+
+
+def test_rule_to_pid_reuses_frozen_baseline_for_same_feature_and_starts_filter_guard():
+    core, state = _make_baseline_handoff_core()
+    block = np.zeros((2, core.config.chunk_size))
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    baseline = (0.25, 0.05)
+    core.controllers["rule"].envelope.baseline = baseline
+
+    state.set_mode("closed-loop")
+    state.acknowledge_drain(state.snapshot().generation)
+    core.process(block, sample_index=core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["rule"].envelope.baseline == baseline
+
+    state.set_controller("pid")
+    state.acknowledge_drain(state.snapshot().generation)
+    core.process(block, sample_index=2 * core.config.chunk_size, input_is_electrode_mV=True)
+    pid_envelope = core.controllers["pid"].envelope
+    assert pid_envelope.baseline == baseline
+    assert pid_envelope.feature_recovery_remaining_samples == (
+        pid_envelope.feature_recovery_samples - core.config.chunk_size
+    )
+
+
+def test_controller_switch_does_not_reuse_baseline_across_feature_bands():
+    core, state = _make_baseline_handoff_core(band_pid=(150.0, 350.0))
+    block = np.zeros((2, core.config.chunk_size))
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    core.controllers["rule"].envelope.baseline = (0.25, 0.05)
+    state.set_controller("pid")
+    state.acknowledge_drain(state.snapshot().generation)
+    core.process(block, sample_index=core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["pid"].envelope.baseline is None
+    assert core.controllers["pid"].envelope.feature_recovery_remaining_samples == 0
+
+
+def test_acquisition_gap_in_control_invalidates_all_cached_controller_baselines():
+    core, state = _make_baseline_handoff_core()
+    block = np.zeros((2, core.config.chunk_size))
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    core.controllers["rule"].envelope.baseline = (0.25, 0.05)
+    core.controllers["pid"].envelope.baseline = (0.5, 0.1)
+
+    # The missing acquisition span arrives while in Control mode.
+    core.process(block, sample_index=5 * core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["rule"].envelope.baseline is None
+    assert core.controllers["pid"].envelope.baseline is None
+    assert not state.snapshot().controller_calibrated
+
+    state.set_controller("pid")
+    state.acknowledge_drain(state.snapshot().generation)
+    core.process(block, sample_index=6 * core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["pid"].envelope.baseline is None
+
+
+def test_nonfinite_unmasked_input_in_control_invalidates_all_cached_baselines():
+    core, state = _make_baseline_handoff_core()
+    block = np.zeros((2, core.config.chunk_size))
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    core.controllers["rule"].envelope.baseline = (0.25, 0.05)
+    core.controllers["pid"].envelope.baseline = (0.5, 0.1)
+
+    invalid = block.copy()
+    invalid[0, 50] = np.nan
+    core.process(invalid, sample_index=core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["rule"].envelope.baseline is None
+    assert core.controllers["pid"].envelope.baseline is None
+    assert not state.snapshot().controller_calibrated
+
+
+def test_nonfinite_input_inside_programmed_stim_mask_invalidates_before_controller_switch():
+    core, state = _make_baseline_handoff_core()
+    block = np.zeros((2, core.config.chunk_size))
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    core.controllers["rule"].envelope.baseline = (0.25, 0.05)
+    core.controllers["pid"].envelope.baseline = (0.5, 0.1)
+    core._stimulated_intervals = [(core.config.chunk_size, 2 * core.config.chunk_size)]
+
+    artifact = block.copy()
+    artifact[0, 50] = np.nan
+    core.process(artifact, sample_index=core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["rule"].envelope.baseline is None
+    assert core.controllers["pid"].envelope.baseline is None
+    assert not state.snapshot().controller_calibrated
+
+    state.set_controller("pid")
+    state.acknowledge_drain(state.snapshot().generation)
+    core.process(block, sample_index=2 * core.config.chunk_size, input_is_electrode_mV=True)
+    assert core.controllers["pid"].envelope.baseline is None
+    assert not state.snapshot().controller_calibrated
 
 
 def test_simulated_ao_uses_real_lead_and_waits_on_generated_counter():
@@ -732,6 +866,34 @@ def test_fake_ni_write_failure_never_commits_pulse_or_acknowledges_switch():
             assert state.snapshot().transition_pending
         finally:
             writer.release.set()
+            scheduler.stop()
+
+
+def test_fake_ni_routine_zero_refills_do_not_create_action_stage_rows():
+    class StageRecorder:
+        def __init__(self):
+            self.stages = []
+
+        def record_action_stage(self, **stage):
+            self.stages.append(stage)
+
+    config, state, writer = make_config(), make_state(), FakeNiWriter()
+    recorder = StageRecorder()
+    counter = [0]
+    scheduler = app.ScheduledAo(config, state, "/Dev1/ai/StartTrigger", recorder=recorder)
+    task_patch = mock.patch.object(app.nidaqmx, "Task", side_effect=lambda name: FakeNiTask(name, counter))
+    writer_patch = mock.patch.object(app, "AnalogSingleChannelWriter", return_value=writer)
+    with task_patch, writer_patch:
+        scheduler.start()
+        scheduler.notify_clock_started()
+        try:
+            deadline = time.monotonic() + 3.0
+            while writer.calls < 2 and time.monotonic() < deadline:
+                time.sleep(0.005)
+            assert writer.calls >= 2
+            assert all(not np.any(values) for values in writer.writes)
+            assert recorder.stages == []
+        finally:
             scheduler.stop()
 
 
