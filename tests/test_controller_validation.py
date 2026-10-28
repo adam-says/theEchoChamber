@@ -325,6 +325,69 @@ class ResponsivePlantTests(unittest.TestCase):
         self.assertEqual(result["plant_effect_pulse_count"], 0)
 
 class ActualCoreBenchmarkTests(unittest.TestCase):
+    def test_canonical_replay_labels_and_roles_survive_into_recording_header(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "canonical_ec.h5"
+            with h5py.File(trace, "w") as h5:
+                h5.attrs.update(schema="echo-chamber-replay", schema_version=1,
+                                sample_rate_hz=20_000, committed_samples=5_000)
+                dataset = h5.create_dataset(
+                    "signals/electrode_mV",
+                    data=np.vstack((0.05 * np.sin(2 * np.pi * 150 * np.arange(5_000) / 20_000),
+                                    0.03 * np.sin(2 * np.pi * 80 * np.arange(5_000) / 20_000))),
+                )
+                text = h5py.string_dtype(encoding="utf-8")
+                dataset.attrs.update(unit="mV")
+                dataset.attrs["channel_labels"] = np.asarray(["CA3", "EC"], dtype=text)
+                dataset.attrs["channel_roles"] = np.asarray(["CA3", "Cortex"], dtype=text)
+                dataset.attrs["channel_regions"] = np.asarray(["CA3", "EC"], dtype=text)
+            recording_dir = Path(directory) / "out"
+            result, environment = run_replay_case(
+                trace, "rule", limit_seconds=0.25, paced=True, recording_dir=recording_dir,
+            )
+            self.assertTrue(result.recording_completed)
+            self.assertEqual(tuple(environment["config"]["electrode_labels"]), ("CA3", "EC"))
+            self.assertEqual(environment["config"]["ctx_index"], 1)
+            self.assertEqual(environment["ui_channel_mapping"],
+                             {"channels": ["CA3", "EC"], "cortex_ai": "ai1"})
+            with h5py.File(environment["recording_file"], "r") as recorded:
+                channel_data = recorded["signals/electrode_mV"]
+                self.assertEqual([x.decode() if isinstance(x, bytes) else str(x)
+                                  for x in channel_data.attrs["channel_labels"]], ["CA3", "EC"])
+                self.assertEqual([x.decode() if isinstance(x, bytes) else str(x)
+                                  for x in channel_data.attrs["channel_roles"]], ["CA3", "Cortex"])
+                self.assertEqual([x.decode() if isinstance(x, bytes) else str(x)
+                                  for x in channel_data.attrs["channel_regions"]], ["CA3", "EC"])
+                metadata = json.loads(recorded.attrs["metadata_json"])
+                self.assertEqual(tuple(metadata["configuration"]["electrode_labels"]), ("CA3", "EC"))
+                self.assertEqual(metadata["configuration"]["ctx_index"], 1)
+
+    def test_reversed_ec_channel_order_is_preserved_in_websocket_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trace = Path(directory) / "reversed_ec.h5"
+            with h5py.File(trace, "w") as h5:
+                h5.attrs.update(schema="echo-chamber-replay", schema_version=1,
+                                sample_rate_hz=20_000, committed_samples=5_000)
+                dataset = h5.create_dataset(
+                    "signals/electrode_mV",
+                    data=np.vstack((0.03 * np.sin(2 * np.pi * 80 * np.arange(5_000) / 20_000),
+                                    0.05 * np.sin(2 * np.pi * 150 * np.arange(5_000) / 20_000))),
+                )
+                text = h5py.string_dtype(encoding="utf-8")
+                dataset.attrs.update(unit="mV")
+                dataset.attrs["channel_labels"] = np.asarray(["EC", "CA3"], dtype=text)
+                dataset.attrs["channel_roles"] = np.asarray(["Cortex", "CA3"], dtype=text)
+                dataset.attrs["channel_regions"] = np.asarray(["EC", "CA3"], dtype=text)
+            result, environment = run_replay_case(
+                trace, "rule", limit_seconds=0.25, paced=True,
+                recording_dir=Path(directory) / "out",
+            )
+        self.assertTrue(result.recording_completed)
+        self.assertEqual(tuple(environment["config"]["electrode_labels"]), ("EC", "CA3"))
+        self.assertEqual(environment["config"]["ctx_index"], 0)
+        self.assertEqual(environment["ui_channel_mapping"],
+                         {"channels": ["EC", "CA3"], "cortex_ai": "ai0"})
+
     def test_short_benchmark_uses_recorder_ui_and_shared_ao_scheduler(self) -> None:
         trace = Path(app.__file__).resolve().parent / "sample" / "test_AI0_CA3_AI1_CTX.h5"
         with tempfile.TemporaryDirectory() as directory:
@@ -492,6 +555,36 @@ class BenchmarkGateTests(unittest.TestCase):
         self.assertFalse(result["acceptance"][0]["passed"])
         self.assertEqual(rows[0]["case_status"], "failed")
         self.assertEqual(rows[0]["failure_type"], "RuntimeError")
+
+    def test_completed_case_checkpoint_survives_later_case_exception(self) -> None:
+        completed = RunMetrics(
+            case_id="first-case", source_name="fixture", controller="rule",
+            sample_rate_hz=20_000, block_samples=100, block_ms=5.0,
+            ao_lead_ms=100.0, deadline_ms=5.0, processed_blocks=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(validate_cli, "run_replay_case",
+                              side_effect=[(completed, {"source_sha256": "fixture-hash"}),
+                                            RuntimeError("second case failed")]):
+                code = validate_cli.main([
+                    "--matrix", "--trace", "synthetic-fixture.h5", "--controller", "rule",
+                    "--controller", "pid", "--duration-seconds", "0.25", "--output-dir", directory,
+                ])
+            checkpoints = sorted(Path(directory).glob("controller_case_*.json"))
+            self.assertEqual(len(checkpoints), 2)
+            documents = [json.loads(path.read_text(encoding="utf-8")) for path in checkpoints]
+            rows_by_status = {document["case_status"]: document for document in documents}
+            self.assertEqual(code, 1)
+            self.assertEqual(rows_by_status["completed"]["case"]["case_id"], "first-case")
+            self.assertEqual(rows_by_status["completed"]["environment"]["source_sha256"], "fixture-hash")
+            self.assertFalse(rows_by_status["completed"]["matrix_complete"])
+            self.assertEqual(rows_by_status["failed"]["failure"]["message"], "second case failed")
+            self.assertFalse(rows_by_status["failed"]["matrix_complete"])
+            for checkpoint in checkpoints:
+                with checkpoint.with_suffix(".csv").open(encoding="utf-8", newline="") as stream:
+                    csv_rows = list(csv.DictReader(stream))
+                self.assertEqual(len(csv_rows), 1)
+                self.assertEqual(csv_rows[0]["matrix_complete"], "False")
 
 
 class RuntimeHealthMetricsTests(unittest.TestCase):

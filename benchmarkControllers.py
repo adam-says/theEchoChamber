@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 from urllib.parse import urlsplit, urlunsplit
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
@@ -366,7 +366,7 @@ class _Harness:
         self.esn = app.EsnRuntime(config.model_artifact, config)
         self.state = app.RuntimeState(
             esn_ready=self.esn.ready, start_paused=False,
-            electrode_labels=("CA3", "Cortex"), ctx_index=1,
+            electrode_labels=config.electrode_labels, ctx_index=config.ctx_index,
             pulse_threshold_std=config.pulse_threshold_std,
             pulse_window_sec=config.pulse_window_sec,
             controller=config.controller,
@@ -1078,6 +1078,7 @@ class _CountingUiHub(app.UiHub):
     def __init__(self, queue_size: int, browser_presence: _BrowserPresenceTracker):
         super().__init__(queue_size)
         self.publish_count = 0
+        self.last_packet: str | None = None
         self.browser_presence = browser_presence
         self._external_browser_present = False
 
@@ -1102,6 +1103,7 @@ class _CountingUiHub(app.UiHub):
 
     def publish(self, packet: str) -> None:
         self.publish_count += 1
+        self.last_packet = packet
         super().publish(packet)
 
 
@@ -1140,7 +1142,11 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
         tmp = None
         record_dir = recording_dir
         record_dir.mkdir(parents=True, exist_ok=True)
-    config = _make_config(controller, lead_ms, record_dir)
+    config = replace(
+        _make_config(controller, lead_ms, record_dir),
+        electrode_labels=replay.channel_labels,
+        ctx_index=replay.ctx_index,
+    )
     trace_meta = {
         "path": str(replay_path), "sha256": file_sha256(replay_path),
         "sample_count": replay.sample_count, "sample_rate_hz": replay.sample_rate_hz,
@@ -1197,9 +1203,18 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
                          "packets_submitted": metrics.ui_packets_submitted,
                          "packets_consumed": metrics.ui_packets_consumed,
                          "browser_rendering_verified": False},
+        "ui_channel_mapping": _ui_channel_mapping(harness.hub.last_packet),
         "physical_pulse_claims": False,
     }
     return metrics, environment
+
+
+def _ui_channel_mapping(packet: str | None) -> dict[str, Any] | None:
+    """Extract channel fields from the latest actual UI WebSocket frame."""
+    if packet is None:
+        return None
+    message = parse_ui_packet(packet)
+    return {key: message.get(key) for key in ("channels", "cortex_ai")}
 
 
 def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]], output_dir: Path,
@@ -1250,4 +1265,67 @@ def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]],
                 "acceptance_failures": json.dumps([failure.get("message", "case failed")]),
             })
             writer.writerow(row)
+    return json_path, csv_path
+
+
+def write_case_checkpoint(output_dir: Path, *, run_kind: str, case_index: int,
+                          metrics: RunMetrics | None = None,
+                          environment: dict[str, Any] | None = None,
+                          failure: dict[str, Any] | None = None,
+                          acceptance_required: bool = False) -> tuple[Path, Path]:
+    """Persist one case immediately; the checkpoint never marks a matrix complete."""
+    if (metrics is None) == (failure is None):
+        raise ValueError("provide exactly one of metrics or failure")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    case_status = "completed" if metrics is not None else "failed"
+    case_id = metrics.case_id if metrics is not None else str(failure.get("case_id", "unknown"))
+    safe_case_id = "".join(char if char.isalnum() or char in "-_" else "_" for char in case_id)
+    stem = f"controller_case_{case_index:03d}_{safe_case_id}"
+    json_path = output_dir / f"{stem}.json"
+    csv_path = output_dir / f"{stem}.csv"
+    acceptance = None
+    if metrics is not None and acceptance_required:
+        failures = acceptance_failures(metrics)
+        acceptance = {"case_id": case_id, "passed": not failures, "failures": failures}
+    elif failure is not None:
+        acceptance = {
+            "case_id": case_id, "passed": False,
+            "failures": [f"{failure.get('exception_type', 'Exception')}: {failure.get('message', 'case failed')}"],
+        }
+    document = {
+        "schema": "echo-chamber-controller-case-checkpoint-v1",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "git_revision": git_revision(), "python": platform.python_version(),
+        "machine": platform.platform(), "processor": platform.processor(),
+        "run_kind": run_kind, "case_index": case_index,
+        "checkpoint_scope": "single_case", "case_status": case_status,
+        "matrix_status": "in_progress", "matrix_complete": False,
+        "case": asdict(metrics) if metrics is not None else None,
+        "environment": environment,
+        "failure": failure,
+        "acceptance": acceptance,
+        "physical_pulse_claims": False,
+    }
+    json_path.write_text(json.dumps(json_safe(document), indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    metric_fields = [item.name for item in fields(RunMetrics)]
+    row = asdict(metrics) if metrics is not None else {name: "" for name in metric_fields}
+    if failure is not None:
+        for name in ("case_id", "source_name", "controller", "ao_lead_ms"):
+            if name in failure:
+                row[name] = failure[name]
+    row.update({
+        "case_status": case_status,
+        "failure_type": failure.get("exception_type", "Exception") if failure else "",
+        "failure_message": failure.get("message", "") if failure else "",
+        "acceptance_passed": acceptance["passed"] if acceptance is not None else "",
+        "acceptance_failures": json.dumps(acceptance["failures"]) if acceptance is not None else "",
+        "matrix_complete": False,
+    })
+    with csv_path.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=metric_fields + [
+            "case_status", "failure_type", "failure_message", "acceptance_passed",
+            "acceptance_failures", "matrix_complete",
+        ])
+        writer.writeheader()
+        writer.writerow(row)
     return json_path, csv_path

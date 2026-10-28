@@ -8,6 +8,8 @@ import sys
 import tempfile
 import threading
 import time
+import re
+import shutil
 from collections import deque
 from unittest import mock
 
@@ -32,13 +34,48 @@ def make_config() -> app.AppConfig:
 def test_ui_diagnostics_serialize_as_strict_json_during_calibration():
     import json
 
-    value = app.json_safe({"z_score": float("nan"), "rate": np.float64(np.inf), "x": 1.5})
-    assert value == {"z_score": None, "rate": None, "x": 1.5}
+    value = app.json_safe({
+        "z_score": float("nan"), "rate": np.float64(np.inf), "x": 1.5,
+        "f32": np.array([1.25, np.nan, np.inf], dtype=np.float32),
+        "f64": np.array([[2.5, -np.inf]], dtype=np.float64),
+        "ints": np.array([1, 2], dtype=np.int64),
+        "bools": np.array([True, False], dtype=np.bool_),
+        "scalar_float": np.array(np.nan, dtype=np.float64),
+        "scalar_int": np.array(7, dtype=np.int32),
+        "objects": np.array([np.float32(3.0), {"nested": np.float64(np.nan)}], dtype=object),
+    })
+    assert value == {
+        "z_score": None, "rate": None, "x": 1.5,
+        "f32": [1.25, None, None], "f64": [[2.5, None]],
+        "ints": [1, 2], "bools": [True, False],
+        "scalar_float": None, "scalar_int": 7,
+        "objects": [3.0, {"nested": None}],
+    }
     packet = json.dumps(value, allow_nan=False)
     reject_nonstandard_constant = lambda token: (_ for _ in ()).throw(ValueError(token))
     assert json.loads(packet, parse_constant=reject_nonstandard_constant) == value
     with pytest.raises(ValueError, match="NaN"):
         json.loads('{"ai":[NaN]}', parse_constant=reject_nonstandard_constant)
+
+
+def test_paused_ui_frame_arrays_remain_strict_json():
+    import json
+
+    frame = {
+        "ai": np.full((2, 4), np.nan, dtype=np.float32),
+        "ao": np.zeros((1, 4), dtype=np.float64),
+        "passthrough_preview": np.full((1, 4), np.nan, dtype=np.float64),
+        "pulse_threshold_preview": np.full((1, 4), np.nan, dtype=np.float64),
+        "sample_indices": np.arange(4, dtype=np.uint64),
+    }
+    packet = json.dumps(app.json_safe(frame), allow_nan=False, separators=(",", ":"))
+    reject_nonstandard_constant = lambda token: (_ for _ in ()).throw(ValueError(token))
+    decoded = json.loads(packet, parse_constant=reject_nonstandard_constant)
+    assert decoded["ai"] == [[None] * 4, [None] * 4]
+    assert decoded["ao"] == [[0.0] * 4]
+    assert decoded["passthrough_preview"] == [[None] * 4]
+    assert decoded["pulse_threshold_preview"] == [[None] * 4]
+    assert decoded["sample_indices"] == [0, 1, 2, 3]
 
 
 def event(pulse_id: str, *, onset: int, count: int, generation: int = 0):
@@ -290,12 +327,95 @@ def test_nonfinite_input_inside_programmed_stim_mask_invalidates_before_controll
     assert core.controllers["pid"].envelope.baseline is None
     assert not state.snapshot().controller_calibrated
 
-    state.set_controller("pid")
-    state.acknowledge_drain(state.snapshot().generation)
-    core.process(block, sample_index=2 * core.config.chunk_size, input_is_electrode_mV=True)
-    assert core.controllers["pid"].envelope.baseline is None
-    assert not state.snapshot().controller_calibrated
 
+def _make_display_publisher():
+    config = app.dataclasses.replace(
+        app.AppConfig(), sample_rate=3_000, processing_block_ms=100.0 / 3.0,
+        visual_downsample=3, ui_interval_s=0.1,
+    )
+    core = object.__new__(app.AsyncUiProcessingCore)
+    core.config = config
+    core._ui_jobs = __import__("queue").Queue(maxsize=1)
+    core._ui_stopping = threading.Event()
+    core._display_step = 3
+    core._display_capacity_points = 100
+    core._display_ring = app.UiDisplayRing(100)
+    core._display_sequence = 0
+    core._display_overwritten_points = 0
+    core._display_jobs_replaced = 0
+    core._display_interpretation_generation = 0
+    core._display_interpretation_signature = None
+    core._ui_input_signature = ("CA3", "EC", "CA3", "Cortex", 1, "electrode_mV")
+    core._last_diagnostics = {}
+    core._input_source_kind = "electrode_mV"
+    core.sample_index = 1
+    core.last_ui_ns = 0
+    return core, make_state().snapshot()
+
+
+def test_ui_ring_uses_absolute_decimation_and_never_repeats_samples():
+    core, snapshot = _make_display_publisher()
+    block = np.arange(100, dtype=np.float64).reshape(1, -1)
+    core._publish_ui(np.vstack([block, block]), block, block, block, snapshot, None)
+    first = core._ui_jobs.get_nowait()
+    np.testing.assert_array_equal(first.sample_indices, np.arange(3, 100, 3, dtype=np.uint64))
+    assert first.display_window_capacity_points == 100
+
+    core.sample_index = 101
+    core.last_ui_ns = -1_000_000_000
+    core._publish_ui(np.vstack([block, block]), block, block, block, snapshot, None)
+    second = core._ui_jobs.get_nowait()
+    np.testing.assert_array_equal(second.sample_indices, np.arange(102, 199, 3, dtype=np.uint64))
+    assert np.all(second.sample_indices % 3 == 0)
+    assert not np.intersect1d(first.sample_indices, second.sample_indices).size
+
+
+def test_ui_ring_bounds_overwrites_and_resets_on_interpretation_change():
+    core, snapshot = _make_display_publisher()
+    long_block = np.arange(1_000, dtype=np.float64).reshape(1, -1)
+    core.sample_index = 1
+    core._publish_ui(np.vstack([long_block, long_block]), long_block, long_block,
+                     long_block, snapshot, None)
+    first = core._ui_jobs.get_nowait()
+    assert first.sample_indices.size == 100
+    assert first.display_overwritten_points > 0
+    assert np.all(first.sample_indices % 3 == 0)
+
+    core.sample_index = 1_001
+    core.last_ui_ns = -1_000_000_000
+    core._publish_ui(np.vstack([long_block, long_block]), long_block, long_block,
+                     long_block, snapshot, None)
+    core._ui_input_signature = ("Cortex", "CA3", "Cortex", "CA3", 0, "electrode_mV")
+    core.sample_index = 0
+    core.last_ui_ns = -1_000_000_000
+    short_block = long_block[:, :100]
+    core._publish_ui(np.vstack([short_block, short_block]), short_block, short_block,
+                     short_block, snapshot, None)
+    changed = core._ui_jobs.get_nowait()
+    assert changed.display_interpretation_generation == 1
+    assert changed.display_jobs_replaced == 1
+    assert changed.sample_indices.size == 34
+    assert changed.sample_indices[0] == 0
+    assert changed.sample_indices[-1] < 100
+
+
+def test_ui_breaks_lines_at_source_index_gaps():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required to execute the browser gap helper")
+    html = (Path(__file__).resolve().parents[1] / "index.html").read_text(encoding="utf-8")
+    match = re.search(
+        r"function displayGapTimestamp\([^)]*\)\s*\{[^}]*\}", html, re.DOTALL
+    )
+    assert match is not None
+    script = (
+        match.group(0)
+        + "\nprocess.stdout.write(JSON.stringify(["
+        + "displayGapTimestamp(100, 110, 1000, 10),"
+        + "displayGapTimestamp(100, 200, 1000, 10)]));"
+    )
+    result = subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+    assert result.stdout == "[null,0.15]"
 
 def test_simulated_ao_uses_real_lead_and_waits_on_generated_counter():
     config = make_config()

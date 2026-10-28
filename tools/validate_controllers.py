@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 from benchmarkControllers import (  # noqa: E402
     CONTROLLERS, DEFAULT_TRACES, LEAD_SWEEP_MS, acceptance_failures, json_safe,
-    _browser_connection_url, run_replay_case, write_progress, write_results,
+    _browser_connection_url, run_replay_case, write_case_checkpoint, write_progress, write_results,
 )
 from simulation import (  # noqa: E402
     TRACKING_PID_SETTINGS, TRACKING_PLANT_SETTINGS, run_feedback_comparison,
@@ -233,6 +233,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     leads = args.leads_ms if args.lead_sweep else [args.lead_ms]
+    run_kind = "smoke" if args.smoke else "paced" if args.paced else "lead_sweep" if args.lead_sweep else "matrix"
+    gate_enabled = bool(args.matrix or args.paced)
+    case_index = 0
     if args.lead_sweep and args.duration_seconds is None and not args.smoke:
         print("Lead sweep uses full traces unless --duration-seconds limits each run.")
     if args.smoke:
@@ -246,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     for lead in leads:
         for trace in traces:
             for controller in controllers:
+                case_index += 1
                 print(f"start controller={controller} trace={trace.name} lead_ms={lead:g}", flush=True)
                 try:
                     result, environment = run_replay_case(
@@ -272,16 +276,30 @@ def main(argv: list[str] | None = None) -> int:
                         "failed_at_utc": datetime.now(timezone.utc).isoformat(),
                     }
                     case_failures.append(failure)
+                    checkpoint_json, checkpoint_csv = write_case_checkpoint(
+                        output_dir, run_kind=run_kind, case_index=case_index,
+                        failure=failure, acceptance_required=gate_enabled,
+                    )
+                    write_progress(progress, {"type": "case_checkpoint", "case_index": case_index,
+                                              "case_status": "failed", "json": str(checkpoint_json),
+                                              "csv": str(checkpoint_csv), "matrix_complete": False})
                     write_progress(progress, {"type": "case_failed", **failure})
                     print(f"failed case={failure['case_id']}: {failure['exception_type']}: {failure['message']}",
                           file=sys.stderr, flush=True)
                     continue
                 metrics.append(result)
                 environments.append(environment)
+                checkpoint_json, checkpoint_csv = write_case_checkpoint(
+                    output_dir, run_kind=run_kind, case_index=case_index,
+                    metrics=result, environment=environment,
+                    acceptance_required=gate_enabled,
+                )
+                write_progress(progress, {"type": "case_checkpoint", "case_index": case_index,
+                                          "case_id": result.case_id, "case_status": "completed",
+                                          "json": str(checkpoint_json), "csv": str(checkpoint_csv),
+                                          "matrix_complete": False})
                 print(f"done case={result.case_id} blocks={result.processed_blocks} "
                       f"p99={result.process_p99_ms:.3f}ms late={result.deadline_exceeded_blocks}", flush=True)
-    run_kind = "smoke" if args.smoke else "paced" if args.paced else "lead_sweep" if args.lead_sweep else "matrix"
-    gate_enabled = bool(args.matrix or args.paced)
     acceptance = [
         {"case_id": result.case_id, "passed": not acceptance_failures(result),
          "failures": acceptance_failures(result)}

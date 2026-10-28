@@ -1489,13 +1489,149 @@ def ui_series(values: np.ndarray, downsample: int) -> list[list[float | None]]:
     ]
 
 
+class UiDisplayRing:
+    """Fixed-size, globally decimated display-only sample window."""
+
+    def __init__(self, capacity_points: int) -> None:
+        self.capacity = max(1, int(capacity_points))
+        self.sample_indices = np.empty(self.capacity, dtype=np.uint64)
+        self.ai = np.empty((2, self.capacity), dtype=np.float64)
+        self.ao = np.empty((1, self.capacity), dtype=np.float64)
+        self.preview = np.empty((1, self.capacity), dtype=np.float64)
+        self.threshold = np.empty((1, self.capacity), dtype=np.float64)
+        self.next_write = 0
+        self.count = 0
+        self.last_source_index: Optional[int] = None
+        self.emitted_through: Optional[int] = None
+
+    def _chronological(self, values: np.ndarray) -> np.ndarray:
+        start = (self.next_write - self.count) % self.capacity
+        output = np.empty((*values.shape[:-1], self.count), dtype=values.dtype)
+        first_count = min(self.count, self.capacity - start)
+        output[..., :first_count] = values[..., start:start + first_count]
+        if first_count < self.count:
+            output[..., first_count:] = values[..., :self.count - first_count]
+        return output
+
+    def pending_count(self) -> int:
+        if not self.count:
+            return 0
+        indices = self._chronological(self.sample_indices)
+        return int(np.count_nonzero(
+            indices > (-1 if self.emitted_through is None else self.emitted_through)
+        ))
+
+    def clear(self) -> int:
+        pending = self.pending_count()
+        self.next_write = 0
+        self.count = 0
+        self.last_source_index = None
+        self.emitted_through = None
+        return pending
+
+    def append(self, first_sample_index: int, ai: np.ndarray, ao: np.ndarray,
+               preview: np.ndarray, threshold: np.ndarray, step: int) -> int:
+        sample_count = ai.shape[1]
+        if sample_count == 0:
+            return 0
+        source_indices = np.arange(first_sample_index, first_sample_index + sample_count,
+                                   dtype=np.uint64)
+        if self.last_source_index is not None:
+            source_indices = source_indices[source_indices > self.last_source_index]
+        self.last_source_index = int(first_sample_index + sample_count - 1)
+        if not source_indices.size:
+            return 0
+        offsets = source_indices.astype(np.int64) - int(first_sample_index)
+        selected = (source_indices % max(1, int(step))) == 0
+        source_indices = source_indices[selected]
+        offsets = offsets[selected]
+        if not source_indices.size:
+            return 0
+
+        values = (
+            source_indices,
+            np.asarray(ai, dtype=np.float64)[:, offsets],
+            np.asarray(ao, dtype=np.float64)[:, offsets],
+            np.asarray(preview, dtype=np.float64)[:, offsets],
+            np.asarray(threshold, dtype=np.float64)[:, offsets],
+        )
+        old_pending = self.pending_count()
+        point_count = int(source_indices.size)
+        dropped = 0
+        if point_count >= self.capacity:
+            dropped = old_pending + point_count - self.capacity
+            source_indices = values[0][-self.capacity:]
+            arrays = [value[..., -self.capacity:] for value in values[1:]]
+            self.sample_indices[:] = source_indices
+            self.ai[:] = arrays[0]
+            self.ao[:] = arrays[1]
+            self.preview[:] = arrays[2]
+            self.threshold[:] = arrays[3]
+            self.count = self.capacity
+            self.next_write = 0
+            return dropped
+
+        overflow = max(0, self.count + point_count - self.capacity)
+        if overflow:
+            indices = self._chronological(self.sample_indices)
+            dropped += int(np.count_nonzero(
+                indices[:overflow] > (-1 if self.emitted_through is None else self.emitted_through)
+            ))
+            self.count -= overflow
+
+        first_count = min(point_count, self.capacity - self.next_write)
+        second_count = point_count - first_count
+        self.sample_indices[self.next_write:self.next_write + first_count] = values[0][:first_count]
+        self.ai[:, self.next_write:self.next_write + first_count] = values[1][:, :first_count]
+        self.ao[:, self.next_write:self.next_write + first_count] = values[2][:, :first_count]
+        self.preview[:, self.next_write:self.next_write + first_count] = values[3][:, :first_count]
+        self.threshold[:, self.next_write:self.next_write + first_count] = values[4][:, :first_count]
+        if second_count:
+            self.sample_indices[:second_count] = values[0][first_count:]
+            self.ai[:, :second_count] = values[1][:, first_count:]
+            self.ao[:, :second_count] = values[2][:, first_count:]
+            self.preview[:, :second_count] = values[3][:, first_count:]
+            self.threshold[:, :second_count] = values[4][:, first_count:]
+        self.next_write = (self.next_write + point_count) % self.capacity
+        self.count += point_count
+        return dropped
+
+    def take_new_points(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        indices = self._chronological(self.sample_indices)
+        ai = self._chronological(self.ai)
+        ao = self._chronological(self.ao)
+        preview = self._chronological(self.preview)
+        threshold = self._chronological(self.threshold)
+        if self.emitted_through is not None and indices.size:
+            new = indices > self.emitted_through
+            indices, ai, ao, preview, threshold = (
+                indices[new], ai[:, new], ao[:, new], preview[:, new], threshold[:, new]
+            )
+        return indices.copy(), ai.copy(), ao.copy(), preview.copy(), threshold.copy()
+
+    def mark_emitted(self, sample_indices: np.ndarray) -> None:
+        if sample_indices.size:
+            self.emitted_through = int(sample_indices[-1])
+
+
 def json_safe(value: Any) -> Any:
     """Convert runtime diagnostics to strict JSON without leaking NaN/Infinity."""
     if isinstance(value, dict):
         return {str(key): json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [json_safe(item) for item in value]
-    if isinstance(value, (np.ndarray,)):
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0:
+            return json_safe(value.item())
+        if value.dtype.kind in "biu":
+            return value.tolist()
+        if value.dtype.kind == "f":
+            finite = np.isfinite(value)
+            if finite.all():
+                return value.tolist()
+            safe = value.astype(object, copy=True)
+            safe[~finite] = None
+            return safe.tolist()
         return json_safe(value.tolist())
     if isinstance(value, (np.floating, float)):
         numeric = float(value)
@@ -1519,11 +1655,7 @@ class ProcessingCore:
         self.telemetry = telemetry
         self.safety = StimulusSafetyAdapter(config.safety, config.sample_rate)
         self.sample_index = 0
-        self.ui_ai: list[np.ndarray] = []
-        self.ui_ao: list[np.ndarray] = []
-        self.ui_preview: list[np.ndarray] = []
-        self.ui_threshold: list[np.ndarray] = []
-        self.ui_sample_indices: list[np.ndarray] = []
+        self._ui_input_signature: tuple[Any, ...] = ()
         self.last_ui_ns = time.perf_counter_ns()
         self._last_esn_config: Optional[tuple[str, float, float, float, str]] = None
         # ESN/filter state belongs exclusively to the DAQ thread.  UI commands
@@ -1918,6 +2050,10 @@ class ProcessingCore:
             preview = np.full_like(safe, np.nan)
             threshold_preview = np.full_like(safe, np.nan)
         self._input_source_kind = ("electrode_mV" if input_is_electrode_mV else "ni_ai_raw_V")
+        self._ui_input_signature = (
+            tuple(snapshot.electrode_labels), int(snapshot.ctx_index), labels, roles,
+            int(input_ctx), self._input_source_kind,
+        )
         self._publish_ui(electrode_lfp_mv, safe, preview, threshold_preview, snapshot, safety_reason)
         self.sample_index = source_sample_index + self.config.chunk_size
         return raw, safe, esn_ms, safety_reason
@@ -1941,6 +2077,11 @@ class UiJob:
     safety_reason: Optional[str]
     controller_diagnostics: dict[str, Any]
     input_source_kind: str
+    display_sequence: int
+    display_overwritten_points: int
+    display_jobs_replaced: int
+    display_interpretation_generation: int
+    display_window_capacity_points: int
 
 
 RULE_CONTROLLER_DEFAULTS: Final = {"upper_z": 3.0, "lower_z": 1.5, "band_hz": (100.0, 250.0)}
@@ -1989,6 +2130,16 @@ class AsyncUiProcessingCore(ProcessingCore):
         super().__init__(*args, **kwargs)
         self._ui_jobs: queue.Queue[Optional[UiJob]] = queue.Queue(maxsize=self.config.ui_queue_packets)
         self._ui_stopping = threading.Event()
+        self._display_step = max(1, int(self.config.visual_downsample))
+        self._display_capacity_points = max(1, int(math.ceil(
+            self.config.sample_rate * self.config.ui_interval_s / self._display_step
+        )))
+        self._display_ring = UiDisplayRing(self._display_capacity_points)
+        self._display_sequence = 0
+        self._display_overwritten_points = 0
+        self._display_jobs_replaced = 0
+        self._display_interpretation_generation = 0
+        self._display_interpretation_signature: Optional[tuple[Any, ...]] = None
         self._ui_thread = threading.Thread(target=self._ui_worker, name="ui-serializer", daemon=True)
         self._ui_thread.start()
 
@@ -2004,33 +2155,46 @@ class AsyncUiProcessingCore(ProcessingCore):
     def _publish_ui(self, ai: np.ndarray, ao: np.ndarray, preview: np.ndarray, threshold: np.ndarray,
                     snapshot: StateSnapshot,
                     safety_reason: Optional[str]) -> None:
-        # The DAQ thread copies data and queues a bounded latest-only job. It
-        # never converts arrays to lists or JSON, and stale display data is
-        # deliberately discarded rather than delaying hardware timing.
-        self.ui_ai.append(ai.copy())
-        self.ui_ao.append(ao.copy())
-        self.ui_preview.append(preview.copy())
-        self.ui_threshold.append(threshold.copy())
-        self.ui_sample_indices.append(
-            np.arange(self.sample_index, self.sample_index + ai.shape[1], dtype=np.uint64)
+        # Keep only a fixed 100 ms source window of already-decimated display
+        # data. These arrays are display-only; recording and controller input
+        # retain every acquired sample.
+        signature = self._ui_input_signature
+        if self._display_interpretation_signature is None:
+            self._display_interpretation_signature = signature
+        elif signature != self._display_interpretation_signature:
+            self._display_overwritten_points += self._display_ring.clear()
+            with contextlib.suppress(queue.Empty):
+                pending = self._ui_jobs.get_nowait()
+                if pending is not None:
+                    self._display_jobs_replaced += 1
+            self._display_interpretation_generation += 1
+            self._display_interpretation_signature = signature
+        self._display_overwritten_points += self._display_ring.append(
+            self.sample_index, ai, ao, preview, threshold, self._display_step
         )
         now = time.perf_counter_ns()
         if (now - self.last_ui_ns) / 1e9 < self.config.ui_interval_s:
             return
-        job = UiJob(
-            np.hstack(self.ui_ai), np.hstack(self.ui_ao), np.hstack(self.ui_preview),
-            np.hstack(self.ui_threshold), np.hstack(self.ui_sample_indices), snapshot, safety_reason,
-            dict(self._last_diagnostics), self._input_source_kind,
+        sample_indices, display_ai, display_ao, display_preview, display_threshold = (
+            self._display_ring.take_new_points()
         )
-        self.ui_ai.clear()
-        self.ui_ao.clear()
-        self.ui_preview.clear()
-        self.ui_threshold.clear()
-        self.ui_sample_indices.clear()
-        self.last_ui_ns = now
+        replaced = False
         if self._ui_jobs.full():
             with contextlib.suppress(queue.Empty):
-                self._ui_jobs.get_nowait()
+                pending = self._ui_jobs.get_nowait()
+                if pending is not None:
+                    replaced = True
+        if replaced:
+            self._display_jobs_replaced += 1
+        self._display_sequence += 1
+        job = UiJob(
+            display_ai, display_ao, display_preview, display_threshold, sample_indices,
+            snapshot, safety_reason, dict(self._last_diagnostics), self._input_source_kind,
+            self._display_sequence, self._display_overwritten_points, self._display_jobs_replaced,
+            self._display_interpretation_generation, self._display_capacity_points,
+        )
+        self._display_ring.mark_emitted(sample_indices)
+        self.last_ui_ns = now
         with contextlib.suppress(queue.Full):
             self._ui_jobs.put_nowait(job)
 
@@ -2047,11 +2211,17 @@ class AsyncUiProcessingCore(ProcessingCore):
                 telemetry = self.telemetry.snapshot()
                 telemetry["recorder_submit_wait"] = self.recorder.submit_wait_snapshot()
                 packet = json.dumps(json_safe({
-                    "ai": job.ai[:, ::self.config.visual_downsample].tolist(),
-                    "ao": job.ao[:, ::self.config.visual_downsample].tolist(),
-                    "passthrough_preview": ui_series(job.preview, self.config.visual_downsample),
-                    "pulse_threshold_preview": ui_series(job.threshold, self.config.visual_downsample),
-                    "sample_indices": job.sample_indices[::self.config.visual_downsample].tolist(),
+                    "ai": job.ai,
+                    "ao": job.ao,
+                    "passthrough_preview": job.preview,
+                    "pulse_threshold_preview": job.threshold,
+                    "sample_indices": job.sample_indices,
+                    "visual_sample_step": self._display_step,
+                    "display_sequence": job.display_sequence,
+                    "display_overwritten_points": job.display_overwritten_points,
+                    "display_jobs_replaced": job.display_jobs_replaced,
+                    "display_interpretation_generation": job.display_interpretation_generation,
+                    "display_window_capacity_points": job.display_window_capacity_points,
                     "mode": snapshot.mode,
                     "is_recording": snapshot.recording,
                     "is_acquiring": snapshot.acquiring,

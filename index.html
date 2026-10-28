@@ -501,7 +501,7 @@
         }
         uplotActivity = new uPlot(makeActivityOpts(), [[], [], [], []], document.getElementById("chart-activity"));
         function makeAoOpts() {
-            const opts = makeOpts("Stimulation (AO0, V)", "#ef4444");
+            const opts = makeOpts("AO command (AO0, V; source time)", "#ef4444");
             opts.series = [
                 {},
                 { label: "Passthrough preview", stroke: "rgba(148, 163, 184, 0.8)", width: 1 },
@@ -548,6 +548,10 @@
         let activityZArray = [];
         let activityTargetArray = [];
         let activityLowerArray = [];
+        let displayInterpretationGeneration = null;
+        let lastDisplaySampleIndex = null;
+        let lastDisplaySequence = null;
+        let lastActivityDisplaySequence = null;
 
         // UI STATE
         let isRecording = false;
@@ -576,6 +580,12 @@
 
         // --- WEBSOCKETS ---
         let ws;
+
+        function displayGapTimestamp(lastIndex, sampleIndex, sampleRate, displayStep) {
+            return sampleIndex - lastIndex > displayStep
+                ? (lastIndex + sampleIndex) / (2 * sampleRate)
+                : null;
+        }
 
         function connect() {
             const query = new URLSearchParams(window.location.search);
@@ -639,6 +649,19 @@
                     if (typeof msg.transition_pending === 'boolean') transitionPending = msg.transition_pending;
                     if (msg.controller_settings) controllerSettings = msg.controller_settings;
                     if (msg.controller_diagnostics) controllerDiagnostics = msg.controller_diagnostics;
+                    if (typeof msg.display_interpretation_generation === 'number') {
+                        if (displayInterpretationGeneration !== null &&
+                            displayInterpretationGeneration !== msg.display_interpretation_generation) {
+                            tArray = []; ai0Array = []; ai1Array = []; ao0Array = [];
+                            previewArray = []; thresholdArray = [];
+                            activityTArray = []; activityZArray = [];
+                            activityTargetArray = []; activityLowerArray = [];
+                            lastDisplaySampleIndex = null;
+                            lastActivityDisplaySequence = null;
+                        }
+                        displayInterpretationGeneration = msg.display_interpretation_generation;
+                    }
+                    if (typeof msg.display_sequence === 'number') lastDisplaySequence = msg.display_sequence;
                     if (msg.stim_mode) stimMode = msg.stim_mode;
                     if (typeof msg.stim_gain === "number") stimGain = msg.stim_gain;
                     if (typeof msg.max_pulse_amplitude_V === "number") {
@@ -681,25 +704,43 @@
                     if (!numPoints) return;
                     let sampleIds = msg.sample_indices || [];
                     let rawFs = msg.sample_rate_hz || (downsampledFS * 2);
+                    let displayStep = Math.max(1, Number(msg.visual_sample_step) || 1);
 
                     for (let i = 0; i < numPoints; i++) {
+                        const sampleIndex = sampleIds.length === numPoints ? Number(sampleIds[i]) : null;
+                        if (sampleIndex !== null && lastDisplaySampleIndex !== null &&
+                            sampleIndex <= lastDisplaySampleIndex) continue;
+                        if (sampleIndex !== null && lastDisplaySampleIndex !== null) {
+                            const gapTime = displayGapTimestamp(
+                                lastDisplaySampleIndex, sampleIndex, rawFs, displayStep
+                            );
+                            if (gapTime !== null) {
+                                tArray.push(gapTime);
+                                ai0Array.push(null); ai1Array.push(null); ao0Array.push(null);
+                                previewArray.push(null); thresholdArray.push(null);
+                            }
+                        }
                         const fallback = tArray.length ? (tArray[tArray.length - 1] + 1 / downsampledFS) : 0;
-                        tArray.push(sampleIds.length === numPoints ? sampleIds[i] / rawFs : fallback);
+                        tArray.push(sampleIndex !== null ? sampleIndex / rawFs : fallback);
                         ai0Array.push(ai0[i]);
                         ai1Array.push(ai1[i]);
                         ao0Array.push(ao0[i]);
                         previewArray.push(preview[i] ?? null);
                         thresholdArray.push(threshold[i] ?? null);
+                        if (sampleIndex !== null) lastDisplaySampleIndex = sampleIndex;
                     }
-                    // Enforce max window using slice
-                    let maxP = Math.floor(MAX_SECONDS * downsampledFS);
-                    if (tArray.length > maxP) {
-                        tArray = tArray.slice(-maxP);
-                        ai0Array = ai0Array.slice(-maxP);
-                        ai1Array = ai1Array.slice(-maxP);
-                        ao0Array = ao0Array.slice(-maxP);
-                        previewArray = previewArray.slice(-maxP);
-                        thresholdArray = thresholdArray.slice(-maxP);
+                    // Clip on source time, so omitted display packets do not
+                    // change the plotted time window or source sample spacing.
+                    const displayCutoff = tArray.length ? tArray[tArray.length - 1] - MAX_SECONDS : -Infinity;
+                    let firstVisible = 0;
+                    while (firstVisible < tArray.length && tArray[firstVisible] < displayCutoff) firstVisible++;
+                    if (firstVisible) {
+                        tArray = tArray.slice(firstVisible);
+                        ai0Array = ai0Array.slice(firstVisible);
+                        ai1Array = ai1Array.slice(firstVisible);
+                        ao0Array = ao0Array.slice(firstVisible);
+                        previewArray = previewArray.slice(firstVisible);
+                        thresholdArray = thresholdArray.slice(firstVisible);
                     }
 
                     // Plot immediately directly from standard JS arrays
@@ -710,6 +751,12 @@
                     if (sampleIds.length) {
                         const diagnostics = msg.controller_diagnostics || {};
                         const activityTime = sampleIds[sampleIds.length - 1] / rawFs;
+                        if (lastActivityDisplaySequence !== null &&
+                            typeof msg.display_sequence === 'number' &&
+                            msg.display_sequence > lastActivityDisplaySequence + 1) {
+                            activityTArray.push(activityTime - 1 / (msg.fs || downsampledFS));
+                            activityZArray.push(null); activityTargetArray.push(null); activityLowerArray.push(null);
+                        }
                         const activityZ = diagnostics.z_score !== null && diagnostics.z_score !== undefined &&
                             Number.isFinite(Number(diagnostics.z_score)) ? Number(diagnostics.z_score) : null;
                         let activityTarget = null;
@@ -724,10 +771,18 @@
                         activityZArray.push(activityZ);
                         activityTargetArray.push(activityTarget);
                         activityLowerArray.push(activityLower);
+                        if (typeof msg.display_sequence === 'number') {
+                            lastActivityDisplaySequence = msg.display_sequence;
+                        }
                         const cutoff = activityTime - MAX_SECONDS;
-                        while (activityTArray.length && activityTArray[0] < cutoff) {
-                            activityTArray.shift(); activityZArray.shift();
-                            activityTargetArray.shift(); activityLowerArray.shift();
+                        let firstActivityVisible = 0;
+                        while (firstActivityVisible < activityTArray.length &&
+                               activityTArray[firstActivityVisible] < cutoff) firstActivityVisible++;
+                        if (firstActivityVisible) {
+                            activityTArray = activityTArray.slice(firstActivityVisible);
+                            activityZArray = activityZArray.slice(firstActivityVisible);
+                            activityTargetArray = activityTargetArray.slice(firstActivityVisible);
+                            activityLowerArray = activityLowerArray.slice(firstActivityVisible);
                         }
                     }
                     uplotActivity.setData([activityTArray, activityZArray, activityTargetArray, activityLowerArray]);
@@ -816,9 +871,10 @@
                     const invalid = Number(diagnostics.feature_invalid_sample_count || 0);
                     const guard = Number(diagnostics.feature_recovery_samples || 0);
                     const remaining = Number(diagnostics.feature_recovery_remaining_samples || 0);
-                    const reason = diagnostics.reason === 'stimulus_feature_recovery'
-                        ? 'stimulus feature recovery' : (valid ? 'feature valid' : 'feature unavailable');
-                    featureDiagnostics.textContent = `Feature ${reason} · ${stimulated} stimulated · ${invalid} feature-ineligible · guard ${remaining}/${guard} samples remaining. Acquisition gaps are tracked separately.`;
+                    const featureState = diagnostics.reason === 'stimulus_feature_recovery'
+                        ? `Waiting for filter recovery (${remaining}/${guard} samples)`
+                        : valid ? 'Feature valid' : 'Feature unavailable';
+                    featureDiagnostics.textContent = `${featureState} · ${stimulated} stimulated · ${invalid} feature-ineligible. Acquisition gaps are tracked separately.`;
                 } else {
                     featureDiagnostics.textContent = '';
                 }
