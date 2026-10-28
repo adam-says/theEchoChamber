@@ -297,8 +297,14 @@ class ResponsivePlantTests(unittest.TestCase):
         self.assertEqual(quiet["generated_nonzero_ao_command_samples"], 0)
         self.assertEqual(quiet["plant_effect_pulse_count"], 0)
         self.assertGreater(active["plant_effect_pulse_count"], 0)
-        self.assertIsNotNone(active["plant_rate_capacity"]["measured_generated_rate_hz"])
-        self.assertFalse(active["plant_rate_capacity"]["measured_generated_rate_reaches_target"])
+        # A short regulated run reports actual pulse usage separately; it is
+        # not presented as a maximum-capacity reference measurement.
+        self.assertIsNone(active["plant_rate_capacity"]["measured_generated_rate_hz"])
+        self.assertIsNone(active["plant_rate_capacity"]["measured_generated_rate_reaches_target"])
+        self.assertGreater(
+            active["regulated_controller_output_usage"]["generated_effect_rate_hz_in_disturbance"], 0.0)
+        self.assertEqual(
+            quiet["regulated_controller_output_usage"]["generated_effect_rate_hz_in_disturbance"], 0.0)
         self.assertGreater(active["activity"]["disturbance_ca3_block_rms_mv"], 0)
         self.assertLess(active["activity"]["disturbance_ca3_block_rms_mv"],
                         quiet["activity"]["disturbance_ca3_block_rms_mv"])
