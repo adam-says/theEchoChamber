@@ -34,7 +34,7 @@ output into either a passthrough command or a threshold-triggered pulse.
   is the default. The current pulse is an explicit 5 ms, 100 Hz sine half-cycle.
 - Real-hardware startup uses the included confirmed-pending-test profile by
   default and warns until its values are replaced with measured ones.
-- Recording uses compact, compressed `echoChamber_H5_v4` files with true NI
+- Recording uses compact, compressed `echoChamber_H5_v5` files with true NI
   sample indices, calibration metadata, AO target indices, arm state, faults,
   and sparse events.
 - The browser monitor is self-contained and does not require internet access.
@@ -113,6 +113,61 @@ python echoChamber.py `
 The explicit arm step, software limits, and warnings do not replace electrical
 isolation, current/charge protection, an emergency stop, or bench observation.
 
+## Select and validate a controller
+
+The application supports the ESN, rule, and PID controllers. The ESN remains
+the default. Select a controller from the browser UI or with `--controller`.
+The rule and PID controllers use the causal CA3 envelope from 100 to 250 Hz.
+The envelope smooths squared values over 10 ms. Rule and PID each need one
+second of settling and ten valid unstimulated seconds before they are ready.
+The rule controller triggers above 3 standard deviations and rearms below
+1.5. The PID controller requests a bounded rate from 0 to 2 Hz.
+
+Rule and PID output stays disarmed until baseline calibration and the AO drain
+complete. You must arm explicitly. The hardware PID settings are zero-gain in
+[`controller_configs/pid_hardware.json`](controller_configs/pid_hardware.json).
+The nonzero values in
+[`controller_configs/pid_synthetic_demo.json`](controller_configs/pid_synthetic_demo.json)
+are for software demonstrations only. They are not hardware tuning values.
+
+On a fault, the scheduler cancels AO commands that have not reached the writer.
+Samples already accepted into the NI output buffer may still play at their
+scheduled indices while the output drains. `ao_committed` records software
+buffer acceptance. It does not confirm voltage or current at an isolator or
+electrode.
+
+The canonical replay files go in `recordings/ca3_slow_waves/`. Their channel
+positions retain the labels CA3 and EC. The controller roles are CA3 and
+Cortex. The importer treats ABF samples as stored mV values and applies no
+second amplifier-gain conversion.
+
+Run a short software smoke test or the full nine-case matrix after importing
+the replay files:
+
+```powershell
+python tools\validate_controllers.py --smoke
+python tools\validate_controllers.py --matrix --keep-recordings
+```
+
+To keep the real UI and recorder active for a 30-minute software run, start a
+local static server, then run the paced command. Open each `browser_required`
+URL from `work/validation_runs/progress.jsonl` in the browser.
+
+```powershell
+python -m http.server 8000 --directory .
+python tools\validate_controllers.py --paced --external-browser `
+  --browser-base-url http://127.0.0.1:8000 --paced-seconds 1800 --keep-recordings
+```
+
+Run `--tracking-simulation` to compare the PID controller against the
+deterministic responsive plant with stimulation disabled. The plant is a
+software fixture, not a tissue model. These replay and simulation commands do
+not establish SWR ground truth, biological efficacy, or physical stimulation.
+The staged NI procedure remains unverified and requires a lab operator.
+Read the [controller validation guide](docs/controller_validation.md),
+[replay import guide](docs/replay_import.md), and
+[NI staged test protocol](docs/ni_controller_protocol.md) before those runs.
+
 ## Corrected ESN training
 
 The supplied notebook reused one scaler for CTX and CA3 and serialized only its
@@ -177,7 +232,7 @@ python readEchoChamberData.py recordings\recording.h5 `
   --start 10 --duration 30 --save echo-plot.png --no-show
 ```
 
-HDF5 v4 stores compressed `float32` AI/AO signals, calibration, block-level ESN
+HDF5 v5 stores compressed `float32` AI/AO signals, calibration, block-level ESN
 diagnostics, AO pipeline delay, arm state, and discontinuity/mode/pulse events.
 The reader also supports prior Echo Chamber HDF5 versions.
 

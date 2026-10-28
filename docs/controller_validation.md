@@ -10,7 +10,7 @@ Run the nine trace and controller combinations for one second each:
 .\.venv\Scripts\python.exe tools\validate_controllers.py --smoke
 ```
 
-Add `--trace PATH` once per trace to choose other replay files. Add `--controller rule --controller pid` to select controller paths. The smoke mode processes real canonical input through the core. It does not shorten a block or skip the scheduler.
+By default, the command reads the three canonical files from `recordings/ca3_slow_waves/`. Import them first as described in [the replay import guide](replay_import.md). If a default file is missing, the command reports its path and stops. Add `--trace PATH` once per trace to choose other replay files. Add `--controller rule --controller pid` to select controller paths. The smoke mode processes real canonical input through the core. It does not shorten a block or skip the scheduler.
 
 ## Run the finite replay matrix
 
@@ -21,6 +21,8 @@ Process each of the three full, finite 30-minute recordings once with each contr
 ```
 
 The command does not wrap at end of file. It stops source input, disarms output, and advances the shared simulated AO clock to record the zero drain. Use `--duration-seconds 60` for a shorter run. That option reads only the requested prefix.
+
+Pass three `--trace PATH` options to use replay files outside the default directory. Each full canonical input must contain 36,000,000 samples. The matrix rejects missing or invalid files instead of skipping a case.
 
 ## Sweep AO target lead
 
@@ -50,6 +52,8 @@ For a controlled producer-overrun check, inject one 150 ms stall at 12 seconds o
 ```
 
 The simulator records the stall, active-demand misses, fault, pulse request IDs, and committed pulse IDs. A request that misses its target must not alter the synthetic plant.
+
+On a fault, the scheduler cancels commands that have not reached the AO writer. Samples already accepted into the NI output buffer may still play at their scheduled indices. The simulator models that residual output. Keep the scope or dummy load connected until the committed output drains.
 
 ## Compare the responsive synthetic plant
 

@@ -27,10 +27,10 @@ import echoChamber as app
 from replay import ReplayData, load_replay
 
 
-DEFAULT_TRACES = (
-    Path(__file__).resolve().parent.parent / "tmp" / "ca3_import_validation" / "2026_05_29_0001.h5",
-    Path(__file__).resolve().parent.parent / "tmp" / "ca3_import_validation" / "2026_08_05_0000.h5",
-    Path(__file__).resolve().parent.parent / "tmp" / "ca3_import_validation" / "2026_08_06_0000.h5",
+REPLAY_DIRECTORY = Path(__file__).resolve().parent / "recordings" / "ca3_slow_waves"
+DEFAULT_TRACES = tuple(
+    REPLAY_DIRECTORY / f"{name}.h5"
+    for name in ("2026_05_29_0001", "2026_08_05_0000", "2026_08_06_0000")
 )
 CONTROLLERS = ("rule", "pid", "esn")
 LEAD_SWEEP_MS = (100.0, 75.0, 50.0, 40.0, 30.0, 20.0)
@@ -58,6 +58,11 @@ def git_revision() -> str | None:
 def load_sources(paths: Iterable[Path]) -> list[ReplayData]:
     result = []
     for path in paths:
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"replay file not found: {path}. Import the canonical ABF files into "
+                "recordings/ca3_slow_waves; see docs/replay_import.md."
+            )
         replay = load_replay(path)
         if not np.isclose(replay.sample_rate_hz, 20_000):
             raise ValueError(f"{path} has {replay.sample_rate_hz:g} Hz; expected 20000 Hz")
@@ -927,6 +932,11 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
                     inject_stall_ms: float = 0.0,
                     stall_at_seconds: float | None = None) -> tuple[RunMetrics, dict[str, Any]]:
     replay_path = replay_path.resolve()
+    if not replay_path.is_file():
+        raise FileNotFoundError(
+            f"replay file not found: {replay_path}. Import the canonical ABF files into "
+            "recordings/ca3_slow_waves; see docs/replay_import.md, or pass an existing file with --trace."
+        )
     replay = load_replay(replay_path)
     if replay.sample_rate_hz != 20_000:
         raise ValueError("benchmark trace must be 20 kHz")
