@@ -1,0 +1,51 @@
+{
+  "schema": "echo-chamber-h5-batch-parity-v1",
+  "result": "pass",
+  "baseline_commit": "f99968a20618afd118496a236ac8be5e7e19689e",
+  "candidate_base_commit": "b609661758144f9b6e36df679f563a1f100881c6",
+  "candidate_uncommitted": true,
+  "scope": "Exact deterministic old/new comparison: five100sample blocks; gap at3+2 batch boundary; mode/controller/generation changes; pulse rows; ordered action stages; optional NaN monitor; final partial batch. No timing/hardware claim.",
+  "datasets_compared": [
+    "signals/ai_raw_V",
+    "signals/electrode_mV",
+    "signals/ao_command_V",
+    "signals/actual_stim_monitor_V",
+    "diagnostics/blocks",
+    "diagnostics/controller_blocks",
+    "events/mode_changes",
+    "events/sample_discontinuities",
+    "events/pulses",
+    "events/action_stages"
+  ],
+  "committed_samples": 500,
+  "complete": 1,
+  "schema_version": 5,
+  "source_and_tools_before": {
+    "old_core": "38c1fb7b3e5319839e138346a97984a38cf2fa14161eef2775862d927ee6389c",
+    "new_core": "2626b8f285d7e39ece7779127d492f4b5efb5e07ca55222336130feb96f26ba3",
+    "old_runner": "a024025c3c7fa3909d4378dfd2028d5fceb42a74c3f54eee557132681080bb1d",
+    "new_runner": "a024025c3c7fa3909d4378dfd2028d5fceb42a74c3f54eee557132681080bb1d",
+    "old_fixture_inputs": "a7d13b44efe52df5f6c3d70890aac4fba1a0a31ea2c3a0a32a23763b29413125",
+    "new_fixture_inputs": "dec91a85e805d0b34d168f93020fe5ed5b5f92092679e37cb88ce293b4b3cfb9"
+  },
+  "source_and_tools_after": {
+    "old_core": "38c1fb7b3e5319839e138346a97984a38cf2fa14161eef2775862d927ee6389c",
+    "new_core": "2626b8f285d7e39ece7779127d492f4b5efb5e07ca55222336130feb96f26ba3",
+    "old_runner": "a024025c3c7fa3909d4378dfd2028d5fceb42a74c3f54eee557132681080bb1d",
+    "new_runner": "a024025c3c7fa3909d4378dfd2028d5fceb42a74c3f54eee557132681080bb1d",
+    "old_fixture_inputs": "a7d13b44efe52df5f6c3d70890aac4fba1a0a31ea2c3a0a32a23763b29413125",
+    "new_fixture_inputs": "dec91a85e805d0b34d168f93020fe5ed5b5f92092679e37cb88ce293b4b3cfb9"
+  },
+  "all_source_and_tools_unchanged": true,
+  "identical_input_fixture_ast_sha256": "362dcbdc55932798ca74c7a520ca86f02d64429c34235a44e73f0591524015fa",
+  "snapshots": {
+    "old": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\h5-batch-old-root-frozen.json",
+      "sha256": "d3658da0f5ae97ed56146e770672a27f547eae77d64af292c358966de319ae07"
+    },
+    "new": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\h5-batch-new-root-frozen.json",
+      "sha256": "d3658da0f5ae97ed56146e770672a27f547eae77d64af292c358966de319ae07"
+    }
+  }
+}

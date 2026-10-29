@@ -8,7 +8,9 @@ The reviewed software paths listed below are implemented. The current full test
 suite passes on Python 3.12.14 and Python 3.14.0. The latest nine-case replay
 matrix completed every 30-minute recording but failed strict timing limits.
 That matrix predates the current ESN moment-only rebase. Full replay timing and
-ESN parity on the current bridge, plus the three paced cases, remain pending.
+the three paced cases remain pending. Full-recording ESN parity on the current
+bridge passed all three canonical recordings; see
+[`docs/validation/esn-full-parity-88469989/`](docs/validation/esn-full-parity-88469989/).
 No hardware requirement has been verified.
 
 ## Implemented software behavior
@@ -41,7 +43,18 @@ No hardware requirement has been verified.
   Faults latch and disarm output.
 - HDF5 v5 stores calibrated AI values, raw AI values when available, AO data,
   sample indices, calibration metadata, controller diagnostics, and sparse
-  event and gap records.
+  event and gap records. The writer prepares metadata in source block order
+  and appends each populated metadata dataset once per existing recorder batch.
+  It preserves source offsets, gaps, mode changes, controller rows, pulse rows,
+  and sparse action-stage insertion order. The v5 schema is unchanged.
+- The v3/v5 reader reads the file-level format tag once. It uses that value for
+  the metadata default and v5 channel-role validation.
+- Recorder shutdown preserves the first writer or stop error across cleanup.
+  Close retries reuse the same shutdown sentinel. A failed metadata or event
+  append leaves the file incomplete and keeps `committed_samples` at the last
+  complete batch. Normal stop drains admitted queue tasks before closing the
+  file. If stop fails before ownership resolves, cleanup waits for the writer
+  to exit before closing the file.
 - Finite-source EOF and application shutdown flush queued AO outcomes after the
   AO producer stops. The core does not create a synthetic source block to flush
   them. Shutdown keeps the recorder open until the DAQ owner and AO producer
@@ -49,9 +62,9 @@ No hardware requirement has been verified.
 
 ## Current test status
 
-The full suite passes with 240 tests and 15 subtests under both supported
-interpreters. Python 3.12.14 completed in 53.27 seconds. Python 3.14.0 completed
-in 47.75 seconds. Run `python -m pytest -q` with each interpreter to reproduce
+The full suite passes with 252 tests and 17 subtests under both supported
+interpreters. Python 3.12.14 completed in 52.34 seconds. Python 3.14.0 completed
+in 48.96 seconds. Run `python -m pytest -q` with each interpreter to reproduce
 these counts.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
@@ -93,10 +106,20 @@ and recorded float32 model means and thresholds reconstructed with no
 mismatches. That report used the earlier `f6147a59` ESN bridge. The current
 moment-only rebase has SHA-256
 `88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749`. The old
-result remains previous-revision evidence. Rerun parity on the current bridge.
-Neither result establishes real-time timing or hardware acceptance.
+result remains previous-revision evidence.
 
-## Synthetic tracking evidence
+The current bridge parity rerun passed on all three full recordings: May 29,
+Aug 5, and Aug 6. Each covered 360,000 blocks and 36,000,000 samples. Fired and
+trigger sample indices matched exactly; there were no recorded float32 model
+mean or threshold reconstruction mismatches. Maximum threshold errors were
+`3.410605e-13`, `5.400125e-13`, and `7.212009e-13`, below the unchanged
+`max(2e-12, 4 ULP)` gate. The model recurrence and artifact were unchanged. See
+[`docs/validation/esn-full-parity-88469989/`](docs/validation/esn-full-parity-88469989/).
+The earlier `f6147a59` parity bundle remains historical evidence for the prior
+bridge revision. Neither parity result establishes real-time timing or hardware
+acceptance.
+
+## Prior synthetic tracking evidence
 
 The final deterministic 64-second PID case uses `kp=0.2`, `ki=0.06`, `kd=0`,
 and `target_z=1`. Tracking, plant recovery, and pair acceptance passed in the
@@ -112,6 +135,29 @@ with no gaps or skipped samples.
 
 This is software-only evidence from a deterministic plant. It does not prove
 physical output, hardware safety, or biological efficacy.
+Rerun the full simulation matrix and tracking pair on the current recorder
+revision before treating these results as current acceptance evidence.
+
+## HDF5 batching evidence
+
+The deterministic recorder fixture compared the prior and updated HDF5 writers
+on the same input. All ten datasets matched exactly, including signal arrays,
+diagnostic rows, mode and gap rows, pulse rows, and ordered action-stage rows.
+The fixture covers a 3-block batch, a 2-block partial final batch, and a source
+gap at the batch boundary. Its output is
+[the fixture proof](docs/validation/recorder-batching/h5-batching-fixture-parity.json).
+
+Failure tests cover a metadata write error, a one-shot action-stage flush error,
+and a failure in the second batch after the first 300 samples commit. They check
+that the first error survives close cleanup, the owner stops, the queue drains,
+and the file remains incomplete at the prior commit boundary.
+
+An earlier 60-second `f999` recorder pair measured p99 at 2.823 ms with the
+writer active and 1.937 ms when metadata-batch processing and HDF5 writes were
+discarded while the queue-draining worker remained active. That comparison
+motivated the metadata batching change, but it does not isolate the
+batched append itself. The candidate has exact data-equivalence evidence only;
+its performance effect remains unmeasured.
 
 ## Full replay matrix: failed timing gates
 
@@ -123,6 +169,11 @@ from 2.700 to 3.022 ms. These results predate the current moment-only ESN
 rebase. They establish full input and recording coverage for that revision,
 not timing acceptance for the current bridge. See
 [`docs/validation/replay-e965d80/`](docs/validation/replay-e965d80/).
+
+The current bridge parity rerun is separate from the matrix: all three
+recordings passed exact event and trigger-index checks and the threshold gate.
+Updated full timing, all three paced runs, the lead sweep, the full simulation
+matrix, and a recorder performance comparison also remain pending.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID
 cases had positive requested-rate blocks: 80,123 for May 29, 79,272 for Aug 5,

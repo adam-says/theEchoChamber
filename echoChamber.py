@@ -957,6 +957,8 @@ class H5Recorder:
         self.items: queue.Queue[Optional[RecordBlock]] = queue.Queue(maxsize=config.logger_queue_blocks)
         self._lock = threading.RLock()
         self._admission_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._shutdown_sentinel_sent = False
         self._recording_open = False
         self._submit_stats_lock = threading.Lock()
         self._submit_count = 0
@@ -980,6 +982,7 @@ class H5Recorder:
         self._last_mode: Optional[int] = None
         self._action_stage_lock = threading.Lock()
         self._pending_action_stages: list[tuple[int, int, str, str, float, str, str, int, int, int, int]] = []
+        self._action_stage_flush_failed = False
         self._last_flush = time.monotonic()
         self._batch_samples = max(
             config.chunk_size,
@@ -1159,6 +1162,7 @@ class H5Recorder:
             self._last_flush = time.monotonic()
             with self._action_stage_lock:
                 self._pending_action_stages.clear()
+            self._action_stage_flush_failed = False
             with self._admission_lock:
                 self._recording_open = True
                 self._accepting = True
@@ -1272,7 +1276,13 @@ class H5Recorder:
         with self._lock:
             if self._file:
                 self._file.attrs["committed_samples"] = self._committed_samples
-                self._flush_action_stages()
+                if not self._action_stage_flush_failed:
+                    try:
+                        self._flush_action_stages()
+                    except Exception as exc:
+                        self._action_stage_flush_failed = True
+                        if self._error is None:
+                            self._error = f"recording writer failed: {type(exc).__name__}: {exc}"
                 self._file.attrs["completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
                 self._file.attrs.modify("complete", np.uint8(self._error is None))
                 self._file.flush()
@@ -1290,11 +1300,56 @@ class H5Recorder:
             raise RuntimeError(self._error)
 
     def close(self) -> None:
-        self.stop_recording()
-        self.items.put(None, timeout=1.0)
-        self._thread.join(timeout=5.0)
-        if self._thread.is_alive():
-            raise TimeoutError("recording writer did not stop within 5 seconds")
+        with self._close_lock:
+            stop_error: Optional[BaseException] = None
+            cleanup_errors: list[BaseException] = []
+            try:
+                self.stop_recording()
+            except BaseException as exc:
+                stop_error = exc
+
+            if self._thread.is_alive() and not self._shutdown_sentinel_sent:
+                deadline = time.monotonic() + 5.0
+                while self._thread.is_alive() and not self._shutdown_sentinel_sent:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        cleanup_errors.append(
+                            TimeoutError("recording writer queue did not accept shutdown sentinel within 5 seconds"))
+                        break
+                    try:
+                        self.items.put(None, timeout=min(0.1, remaining))
+                        self._shutdown_sentinel_sent = True
+                    except queue.Full:
+                        continue
+            if self._thread.is_alive():
+                self._thread.join(timeout=5.0)
+                if self._thread.is_alive():
+                    cleanup_errors.append(TimeoutError("recording writer did not stop within 5 seconds"))
+
+            if not self._thread.is_alive() and self._file is not None:
+                if stop_error is not None:
+                    with self._lock:
+                        if self._error is None:
+                            self._error = f"recording close failed: {type(stop_error).__name__}: {stop_error}"
+                try:
+                    self.stop_recording()
+                except BaseException as exc:
+                    if stop_error is None:
+                        stop_error = exc
+                    elif exc is not stop_error:
+                        cleanup_errors.append(exc)
+
+            if stop_error is not None:
+                for cleanup_error in cleanup_errors:
+                    stop_error.add_note(
+                        f"recorder cleanup also failed: {type(cleanup_error).__name__}: {cleanup_error}")
+                raise stop_error
+            if cleanup_errors:
+                first_cleanup_error = cleanup_errors[0]
+                for cleanup_error in cleanup_errors[1:]:
+                    first_cleanup_error.add_note(
+                        f"recorder cleanup also failed: {type(cleanup_error).__name__}: {cleanup_error}")
+                raise first_cleanup_error
 
 
     def _writer_loop(self) -> None:
@@ -1303,6 +1358,11 @@ class H5Recorder:
             if first is None:
                 self.items.task_done()
                 return
+            with self._lock:
+                failed = self._error is not None
+            if failed:
+                self.items.task_done()
+                continue
             batch = [first]
             sample_count = first.ai.shape[1]
             deadline = time.monotonic() + self.config.recorder_batch_s
@@ -1347,20 +1407,29 @@ class H5Recorder:
                         ]).astype(np.float32, copy=False)
                         self._actual_dataset.resize(stop, axis=1)
                         self._actual_dataset[:, start:stop] = actual
-                    offset = start
-                    for item in batch:
-                        self._append_block_records(item, offset)
-                        offset += item.ai.shape[1]
-                    self._committed_samples = stop
+                    self._append_block_record_batch(batch, start)
+                    try:
+                        self._flush_action_stages()
+                    except Exception:
+                        self._action_stage_flush_failed = True
+                        raise
                     self._file.attrs.modify("committed_samples", stop)
-                    self._flush_action_stages()
+                    self._committed_samples = stop
                     if time.monotonic() - self._last_flush >= self.config.recorder_flush_s:
                         self._file.flush()
                         self._last_flush = time.monotonic()
             except Exception as exc:
                 with self._lock:
-                    self._flush_action_stages()
                     self._error = f"recording writer failed: {type(exc).__name__}: {exc}"
+                    if not self._action_stage_flush_failed:
+                        try:
+                            self._flush_action_stages()
+                        except Exception as flush_exc:
+                            self._action_stage_flush_failed = True
+                            self._error += (
+                                f"; action-stage flush also failed: "
+                                f"{type(flush_exc).__name__}: {flush_exc}"
+                            )
                 with self._admission_lock:
                     self._accepting = False
                 LOG.exception("Recording writer failed")
@@ -1395,23 +1464,25 @@ class H5Recorder:
         dataset.resize(start + records.shape[0], axis=0)
         dataset[start:] = records
 
-    def _append_block_records(self, item: RecordBlock, offset: int) -> None:
+    def _append_block_records(self, item: RecordBlock, offset: int) -> tuple[
+            Optional[np.ndarray], Optional[np.ndarray], np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        """Prepare one block's ordered rows; the batch writer performs all HDF5 appends."""
         assert self._file is not None
         count = item.ai.shape[1]
+        gap_record = None
+        mode_record = None
+        pulse_record = None
         if self._last_source_end is None:
             self._file.attrs.modify("first_ai_sample_index", np.uint64(item.sample_index))
         elif item.sample_index != self._last_source_end:
-            record = np.asarray(
+            gap_record = np.asarray(
                 [(offset, self._last_source_end, item.sample_index)], dtype=self._gap_dataset.dtype
             )
-            self._append_records(self._gap_dataset, record)
         self._last_source_end = item.sample_index + count
 
         mode = int(item.mode_value)
         if mode != self._last_mode:
-            self._append_records(
-                self._mode_dataset, np.asarray([(offset, mode)], dtype=self._mode_dataset.dtype)
-            )
+            mode_record = np.asarray([(offset, mode)], dtype=self._mode_dataset.dtype)
             self._last_mode = mode
 
         diagnostic = np.asarray([(
@@ -1421,8 +1492,6 @@ class H5Recorder:
             self._finite_mean(item.pulse_threshold), self._finite_mean(item.pulse_peak),
             int(item.armed),
         )], dtype=self._diagnostics_dataset.dtype)
-        self._append_records(self._diagnostics_dataset, diagnostic)
-
         diag = item.controller_diagnostics or {}
         states = {"inactive": 0, "calibrating": 1, "active": 2, "armed": 3,
                   "latched": 4, "fault": 5}
@@ -1443,7 +1512,6 @@ class H5Recorder:
             int(diag.get("feature_invalid_sample_count", 0)),
             (str(diag.get("reason", "")) if diag.get("reason") == "stimulus_feature_recovery" else "").encode()[:40],
         )], dtype=self._controller_dataset.dtype)
-        self._append_records(self._controller_dataset, controller_record)
         for event in diag.get("pulse_events", ()):
             self._append_action_stage(
                 sample_index=int(event.get("target_onset_sample_index", item.ao_target_sample_index)),
@@ -1457,11 +1525,38 @@ class H5Recorder:
             )
 
         if np.any(item.pulse_fired > 0.5):
-            pulse = np.asarray([(
+            pulse_record = np.asarray([(
                 offset, item.sample_index,
                 self._finite_mean(item.pulse_threshold), self._finite_mean(item.pulse_peak),
             )], dtype=self._pulse_dataset.dtype)
-            self._append_records(self._pulse_dataset, pulse)
+        return gap_record, mode_record, diagnostic, controller_record, pulse_record
+
+    def _append_block_record_batch(self, batch: list[RecordBlock], start: int) -> None:
+        """Append each block-metadata dataset once, preserving source block order."""
+        gaps: list[np.ndarray] = []
+        modes: list[np.ndarray] = []
+        diagnostics: list[np.ndarray] = []
+        controllers: list[np.ndarray] = []
+        pulses: list[np.ndarray] = []
+        offset = start
+        for item in batch:
+            gap, mode, diagnostic, controller, pulse = self._append_block_records(item, offset)
+            if gap is not None:
+                gaps.append(gap)
+            if mode is not None:
+                modes.append(mode)
+            diagnostics.append(diagnostic)
+            controllers.append(controller)
+            if pulse is not None:
+                pulses.append(pulse)
+            offset += item.ai.shape[1]
+        for dataset, rows in (
+            (self._gap_dataset, gaps), (self._mode_dataset, modes),
+            (self._diagnostics_dataset, diagnostics), (self._controller_dataset, controllers),
+            (self._pulse_dataset, pulses),
+        ):
+            if rows:
+                self._append_records(dataset, np.concatenate(rows, axis=0))
 
 
 def record_sparse_ao_outcome(recorder: Optional[H5Recorder], *, sample_index: int,

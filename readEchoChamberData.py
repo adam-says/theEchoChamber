@@ -88,6 +88,7 @@ def load_hdf5_recording(data_path: Path) -> Recording:
 def load_hdf5_v3_recording(data_path: Path) -> Recording:
     """Materialize the compact v3 signals needed by the standard viewer."""
     with h5py.File(data_path, "r") as source:
+        format_tag = str(source.attrs.get("format_tag", "echoChamber_H5_v3"))
         ai = source.get("signals/ai_raw_V")
         calibrated = source.get("signals/electrode_mV")
         ao = source.get("signals/ao_command_V")
@@ -99,7 +100,7 @@ def load_hdf5_v3_recording(data_path: Path) -> Recording:
         if committed <= 0:
             raise ValueError(f"recording contains no committed samples: {data_path}")
         metadata = json.loads(str(source.attrs.get("metadata_json", "{}")))
-        metadata.setdefault("format_tag", str(source.attrs.get("format_tag", "echoChamber_H5_v3")))
+        metadata.setdefault("format_tag", format_tag)
         configuration = metadata.get("configuration", {})
         sample_rate = float(source.attrs.get("sample_rate_hz", configuration.get("sample_rate", 0)))
         labels = tuple(
@@ -117,7 +118,7 @@ def load_hdf5_v3_recording(data_path: Path) -> Recording:
                                            for x in calibrated.attrs.get("channel_regions", ())]
             roles, regions = metadata["channel_roles"], metadata["channel_regions"]
             if len(roles) != len(labels) or len(regions) != len(labels):
-                if str(format_tag) == "echoChamber_H5_v5":
+                if format_tag == "echoChamber_H5_v5":
                     raise ValueError("HDF5 v5 electrode_mV must declare channel roles and regions")
                 ctx_index = int(configuration.get("ctx_index", 1))
                 roles = ["Cortex" if i == ctx_index else "CA3" for i in range(len(labels))]

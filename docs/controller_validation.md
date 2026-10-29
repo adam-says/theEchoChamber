@@ -82,7 +82,7 @@ and keep mean requested rate after two recovery constants at or below 0.10 Hz.
 The pair summary reports `plant_recovery_passed` and
 `simulation_acceptance_passed` alongside `tracking_gate_passed`.
 
-The final software pair passed these gates. The reference generated 25 pulse
+An earlier software pair passed these gates. The reference generated 25 pulse
 effects from seconds 22 to 42, at 1.25 Hz. It measured a 0.003076 mV mean reduction
 against a 0.002616 mV target correction, for a 0.000460 mV margin. The regulated
 PID generated 32 effects during the disturbance, at 1.067 Hz. Its formula-based
@@ -91,7 +91,8 @@ disturbance began. Final moving-mean absolute error was 0.0532 z. Full-window
 raw error SD was 1.9045 z, and post-settling raw error SD was 1.0168 z. All
 4,672 eligible observations were present, and the source had no gaps or skipped
 samples. This result is software-only evidence, not a hardware or biological
-claim. The JSON and CSV are under
+claim. Rerun the simulation matrix and tracking pair on the current recorder
+revision before treating them as current acceptance evidence. The JSON and CSV are under
 `work/validation_runs/tracking-kp02-ki006-capacity-reference/`.
 
 ## Run the finite replay matrix
@@ -225,24 +226,55 @@ completion, UI packet counts, scheduler counters, pulse outcomes, and AO drain
 state. The progress JSONL records the process ID, run state, and case progress.
 
 The [full-recording ESN threshold parity report](validation/esn-full-parity/README.md)
-documents exact trigger-index parity and float32 reconstruction on all three
-30-minute ESN recordings for the earlier `f6147a59` bridge. The current bridge
-has SHA-256
+documents the historical result for the earlier `f6147a59` bridge. The current
+bridge has SHA-256
 `88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749` and includes
 the reviewed moment-only rebase. That rebase recalculates count, origin, mean,
 and M2 while preserving the live peak queue and absolute sequence. Contraction
 and drift callers reset scale high-water to the current live peak. Window resize
-still rebuilds peak metadata. Full three-recording parity on the current bridge
-is pending. Neither parity result establishes real-time timing or hardware
-acceptance.
+still rebuilds peak metadata. The [current-bridge parity evidence](validation/esn-full-parity-88469989/README.md)
+covers all three full recordings, with 360,000 blocks and 36,000,000 samples
+per recording. Fired and trigger sample indices matched exactly, and recorded
+float32 model means and thresholds reconstructed without mismatches. Maximum
+threshold errors were `3.410605e-13`, `5.400125e-13`, and `7.212009e-13`, below
+the unchanged `max(2e-12, 4 ULP)` gate. The model recurrence and artifact were
+unchanged. The older bundle remains historical evidence. Neither parity result
+establishes real-time timing or hardware acceptance.
 
-The full current Python test suite passes with 240 tests and 15 subtests on both
-Python 3.12.14 and Python 3.14.0. The 3.12 run took 53.27 seconds; the 3.14 run
-took 47.75 seconds. It includes controller readiness transactions, AO range
-attribution, unresolved-write retention, shutdown outcome flushing, and the
-moment-only ESN rebase. Run `python -m pytest -q` with each interpreter to
-reproduce these counts. These tests do not establish full replay timing or
-hardware acceptance.
+The full current Python test suite passes with 252 tests and 17 subtests on both
+Python 3.12.14 and Python 3.14.0. The 3.12 run took 52.34 seconds; the 3.14 run
+took 48.96 seconds. It includes controller readiness transactions, AO range
+attribution, unresolved-write retention, shutdown outcome flushing, the
+moment-only ESN rebase, and HDF5 batching and failure cases. Run
+`python -m pytest -q` with each interpreter to reproduce these counts. These
+tests do not establish full replay timing or hardware acceptance.
+
+The HDF5 v5 writer prepares block metadata in source order and appends each
+populated metadata dataset once per existing batch. It keeps absolute sample
+indices, gaps, mode changes, diagnostics, controller rows, pulse rows, and
+sparse action-stage order. The file schema does not change. Close retries reuse
+one shutdown sentinel. A failed write preserves the first error and leaves the
+recording incomplete at the last fully committed batch. Normal stop drains
+admitted queue tasks before closing the file. If stop fails before ownership
+resolves, cleanup waits for the writer to exit before closing the file.
+
+The reader uses the HDF5 file-level `format_tag` for metadata defaults and v5
+channel-role validation. This fixes an undefined `format_tag` lookup that
+raised `NameError` on the legacy fallback and malformed-v5 validation paths.
+
+The deterministic old/new fixture matched all ten signal and metadata datasets
+exactly. It covers three blocks in one batch, two blocks in the partial final
+batch, and a sample gap at the batch boundary. The [fixture proof](validation/recorder-batching/h5-batching-fixture-parity.json)
+records the comparison. Failure tests include a second-batch
+metadata error after the first 300 samples commit; the incomplete file retains
+that boundary.
+
+An earlier 60-second `f999` diagnostic measured p99 at 2.823 ms with the writer
+active and 1.937 ms when metadata-batch processing and HDF5 writes were
+discarded while the queue-draining worker remained active. This motivated
+metadata batching but does not measure the candidate's performance. The
+candidate has data-equivalence evidence only. A focused performance comparison
+remains pending.
 
 Treat the timing limits as strict: process p99 must be below 2.5 ms, and the
 maximum process time must be below the 5 ms block deadline. The process interval
@@ -274,8 +306,11 @@ against the `<5 ms>` limit. The three ESN cases also failed the p99 limit, at
 [`validation/replay-e965d80/`](validation/replay-e965d80/).
 
 This matrix predates the reviewed moment-only ESN rebase. It is not timing or
-parity evidence for the current bridge. Full replay timing and three paced
-30-minute runs on the current implementation remain pending. The historical
+parity evidence for the current bridge. All three current-bridge full-recording
+parity cases passed; see
+[`validation/esn-full-parity-88469989/`](validation/esn-full-parity-88469989/).
+Full replay timing, three paced 30-minute runs, the lead sweep, the full
+simulation matrix, and the recorder performance comparison remain pending. The historical
 `6cc4035` matrix is available in
 [`validation/baseline-6cc4035/`](validation/baseline-6cc4035/); its maxima were
 7.095 to 34.104 ms, and its ESN p99 values were 4.745 to 4.830 ms. See

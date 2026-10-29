@@ -11,12 +11,14 @@ controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
 > **Software validation is in progress.** The current full test suite passes
-> with 240 tests and 15 subtests on Python 3.12.14 and Python 3.14.0. The
+> with 252 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. The runs
+> took 52.34 and 48.96 seconds, respectively. The
 > `e965d808` replay matrix completed all nine 30-minute cases and failed the
 > strict timing gates: all nine maxima were 9.959 to 199.559 ms, and the three
 > ESN p99 values were 2.700 to 3.022 ms. That matrix predates the reviewed
-> moment-only ESN rebase. Full replay timing and ESN parity on the current
-> bridge, and all three paced acceptance runs, remain pending. See
+> moment-only ESN rebase. All three current-bridge full-recording ESN parity
+> cases passed exact event/trigger-index checks and the unchanged threshold
+> tolerance. Full replay timing and all three paced runs remain pending. See
 > [implementation and validation status](IMPLEMENTATION_STATUS.md) for the
 > evidence and remaining software gates.
 >
@@ -38,8 +40,9 @@ passthrough mode.
   `88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749`. Its
   moment-only rebase recalculates centered moments without rebuilding the live
   peak queue or changing its absolute sample sequence. Full-recording parity
-  for this bridge remains pending; the existing parity report uses an earlier
-  bridge revision.
+  passed on all three canonical recordings; the prior `f6147a59` parity bundle
+  remains historical evidence for the earlier bridge revision. The model
+  recurrence and artifact were unchanged.
 - Input and target scaling are separate in the corrected training path.
 - The 20 kHz input is anti-aliased, decimated to 2 kHz, causally low-pass
   filtered, evaluated by the ESN, and causally returned to 20 kHz.
@@ -49,9 +52,20 @@ passthrough mode.
   runtime retains unresolved writes until the scheduler confirms commitment or
   cancellation. Settings revisions, calibration epochs, and drain acknowledgments
   gate rearming; changes never arm output automatically.
+- The HDF5 v5 recorder prepares metadata rows in source order and appends each
+  populated dataset once per batch. The reader uses the top-level format tag to
+  validate v5 channel metadata. This also fixes an undefined `format_tag`
+  lookup that raised `NameError` on the legacy fallback and malformed-v5
+  validation paths. Exact old/new fixture comparison matched all
+  ten signal and metadata datasets. The comparison is saved in
+  [the fixture proof](docs/validation/recorder-batching/h5-batching-fixture-parity.json).
+  The performance effect remains
+  unmeasured.
 - Finite-source EOF and application shutdown flush queued AO outcomes after the
-  AO producer stops and before HDF5 closes. The runtime does not create a
-  synthetic source block for that flush.
+  AO producer stops and before HDF5 closes. Recorder close retries do not queue
+  duplicate sentinels. Failed writes leave an incomplete file at the last fully
+  committed boundary. The runtime does not create a synthetic source block for
+  the AO flush.
 - Pulse detection supports absolute, positive, and negative polarity. Absolute
   is the default. The current pulse is an explicit 5 ms, 100 Hz sine half-cycle.
 - Real-hardware startup uses the included confirmed-pending-test profile by

@@ -143,7 +143,7 @@ class EchoChamberRecorderTests(unittest.TestCase):
                 writer_entered.set()
                 if not writer_release.wait(5.0):
                     raise TimeoutError("test writer was not released")
-                original(item, offset)
+                return original(item, offset)
 
             recorder._append_block_records = blocked_append
             recorder.submit(self.make_block(0, config.chunk_size, 1.0, 1.0))
