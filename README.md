@@ -11,14 +11,18 @@ controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
 > **Software validation is in progress.** The current full test suite passes
-> with 252 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. The runs
-> took 52.34 and 48.96 seconds, respectively. The
+> with 269 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. The
+> reviewed source is published as `7c5d62d`; the tested isolated checkout had
+> the same Git tree (`11f21095`). The
 > `e965d808` replay matrix completed all nine 30-minute cases and failed the
 > strict timing gates: all nine maxima were 9.959 to 199.559 ms, and the three
 > ESN p99 values were 2.700 to 3.022 ms. That matrix predates the reviewed
 > moment-only ESN rebase. All three current-bridge full-recording ESN parity
 > cases passed exact event/trigger-index checks and the unchanged threshold
-> tolerance. Full replay timing and all three paced runs remain pending. See
+> tolerance. Later paced Rule and PID attempts processed all 36 million replay
+> samples but faulted and recorded only prefixes: Rule recorded 16,608,200
+> samples; PID recorded 480,300. Their timing gates failed, and the paced ESN
+> run remains pending. See
 > [implementation and validation status](IMPLEMENTATION_STATUS.md) for the
 > evidence and remaining software gates.
 >
@@ -59,8 +63,9 @@ passthrough mode.
   validation paths. Exact old/new fixture comparison matched all
   ten signal and metadata datasets. The comparison is saved in
   [the fixture proof](docs/validation/recorder-batching/h5-batching-fixture-parity.json).
-  The performance effect remains
-  unmeasured.
+  A balanced 10-versus-50 diagnostic improved p99 but worsened backlog and
+  runtime; the default batch size remains 50. The diagnostic does not establish
+  a performance benefit from metadata batching.
 - Finite-source EOF and application shutdown flush queued AO outcomes after the
   AO producer stops and before HDF5 closes. Recorder close retries do not queue
   duplicate sentinels. Failed writes leave an incomplete file at the last fully

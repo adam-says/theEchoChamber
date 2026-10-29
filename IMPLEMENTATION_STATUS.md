@@ -2,14 +2,16 @@
 
 Status date: 2026-10-29
 
-Current implementation: `88469989` ESN bridge revision
+Current reviewed source: published `7c5d62d`; the isolated test checkout was
+`1665c6a` with the same Git tree (`11f21095`).
 
 The reviewed software paths listed below are implemented. The current full test
-suite passes on Python 3.12.14 and Python 3.14.0. The latest nine-case replay
-matrix completed every 30-minute recording but failed strict timing limits.
-That matrix predates the current ESN moment-only rebase. Full replay timing and
-the three paced cases remain pending. Full-recording ESN parity on the current
-bridge passed all three canonical recordings; see
+suite passes with 269 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
+The earlier nine-case replay matrix completed every 30-minute recording but
+failed strict timing limits. That matrix predates the current ESN moment-only
+rebase. The two completed pre-fix paced Rule and PID attempts also failed after
+runtime faults and recorded only a prefix; the paced ESN run remains pending.
+Full-recording ESN parity on the current bridge passed all three canonical recordings; see
 [`docs/validation/esn-full-parity-88469989/`](docs/validation/esn-full-parity-88469989/).
 No hardware requirement has been verified.
 
@@ -62,10 +64,10 @@ No hardware requirement has been verified.
 
 ## Current test status
 
-The full suite passes with 252 tests and 17 subtests under both supported
-interpreters. Python 3.12.14 completed in 52.34 seconds. Python 3.14.0 completed
-in 48.96 seconds. Run `python -m pytest -q` with each interpreter to reproduce
-these counts.
+The full suite passes with 269 tests and 17 subtests under both supported
+interpreters. The logs and manifest are in
+[`docs/validation/fault-event-recording/`](docs/validation/fault-event-recording/).
+Run `python -m pytest -q` with each interpreter to reproduce these counts.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
 3.12 and 3.14. Its counts are historical and do not describe the current
@@ -156,8 +158,9 @@ An earlier 60-second `f999` recorder pair measured p99 at 2.823 ms with the
 writer active and 1.937 ms when metadata-batch processing and HDF5 writes were
 discarded while the queue-draining worker remained active. That comparison
 motivated the metadata batching change, but it does not isolate the
-batched append itself. The candidate has exact data-equivalence evidence only;
-its performance effect remains unmeasured.
+batched append itself. A separate balanced 10-versus-50 diagnostic improved
+p99 but worsened backlog and runtime; the default remains 50. The diagnostic
+does not establish a performance benefit from metadata batching.
 
 ## Full replay matrix: failed timing gates
 
@@ -172,8 +175,9 @@ not timing acceptance for the current bridge. See
 
 The current bridge parity rerun is separate from the matrix: all three
 recordings passed exact event and trigger-index checks and the threshold gate.
-Updated full timing, all three paced runs, the lead sweep, the full simulation
-matrix, and a recorder performance comparison also remain pending.
+Passing current-source full timing and paced runs (including a new ESN attempt),
+the lead sweep, the full simulation matrix, and a conclusive recorder performance
+comparison remain pending.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID
 cases had positive requested-rate blocks: 80,123 for May 29, 79,272 for Aug 5,
@@ -193,11 +197,28 @@ complete recording, consume UI packets, and finish AO drain with an empty queue.
 The collection cannot pass if any individual full case fails its coverage or
 runtime checks.
 
-The separate paced acceptance set remains pending: it requires one 30-minute
-run per controller with the real browser page connected. Any browser disconnect
-fails the case, even if the page reconnects. The run must meet the same source,
-timing, AO, recorder, UI, and drain requirements. The short smoke and synthetic
-simulations do not count toward either full-duration set.
+### Paced browser attempts: Rule and PID failed; ESN pending
+
+The completed Rule and PID attempts each processed 36,000,000 replay samples,
+but a latched AO fault stopped acquisition and further `RecordBlock` submission.
+The recorder therefore contains only the clean prefix; the UI remaining open or
+recording-enabled does not establish full recording coverage. The summary's
+all-call p99 includes calls after the fault, when active control had stopped,
+and is not evidence that the paced timing gate passed.
+
+| Controller | Recorded samples | Deadline misses | AO active-demand misses | Browser disconnects | All-call p99 | Maximum |
+|---|---:|---:|---:|---:|---:|---:|
+| Rule | 16,608,200 | 578 | 1 | 1 | 1.774801 ms | 428.0297 ms |
+| PID | 480,300 | 103 | 1 | 0 | 0.9009 ms | 66.7837 ms |
+
+These are failed pre-fix attempts from the `09ebf1e` run. Their saved reports are in
+[`docs/validation/paced-browser-09ebf1e-attempt1/`](docs/validation/paced-browser-09ebf1e-attempt1/)
+and [`docs/validation/paced-pid-09ebf1e/`](docs/validation/paced-pid-09ebf1e/).
+The paced ESN run and a passing current-source paced set remain pending. A full
+paced acceptance requires one 30-minute run per controller with the real browser
+connected and passing source, timing, AO, recorder, UI, and drain gates. Any
+browser disconnect fails that case, even if the page reconnects. Short smoke
+runs and synthetic simulations do not count.
 
 ## Hardware status: ALL UNVERIFIED
 
