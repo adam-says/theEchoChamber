@@ -1,0 +1,16 @@
+.........                                                             [100%]
+============================== warnings summary ===============================
+work/test_audit_lead_sweep_evidence.py::LeadSweepAuditFixtureTests::test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file
+  C:\Users\angel\Documents\Codex\2026-10-28\make-a-plan-for-this-project-3\work\test_audit_lead_sweep_evidence.py:177: H5pyDeprecationWarning: Creating a dataset without passing data or dtype is deprecated. Pass an explicit dtype. Using dtype='f4' will keep the current default behaviour.
+    signals.create_dataset("ai_raw_V", shape=(2, 1000))
+
+work/test_audit_lead_sweep_evidence.py::LeadSweepAuditFixtureTests::test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file
+  C:\Users\angel\Documents\Codex\2026-10-28\make-a-plan-for-this-project-3\work\test_audit_lead_sweep_evidence.py:178: H5pyDeprecationWarning: Creating a dataset without passing data or dtype is deprecated. Pass an explicit dtype. Using dtype='f4' will keep the current default behaviour.
+    signals.create_dataset("electrode_mV", shape=(2, 1000))
+
+work/test_audit_lead_sweep_evidence.py::LeadSweepAuditFixtureTests::test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file
+  C:\Users\angel\Documents\Codex\2026-10-28\make-a-plan-for-this-project-3\work\test_audit_lead_sweep_evidence.py:179: H5pyDeprecationWarning: Creating a dataset without passing data or dtype is deprecated. Pass an explicit dtype. Using dtype='f4' will keep the current default behaviour.
+    signals.create_dataset("ao_command_V", shape=(1, 1000))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+9 passed, 3 warnings, 3 subtests passed in 0.42s
