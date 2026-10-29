@@ -82,7 +82,7 @@ and keep mean requested rate after two recovery constants at or below 0.10 Hz.
 The pair summary reports `plant_recovery_passed` and
 `simulation_acceptance_passed` alongside `tracking_gate_passed`.
 
-An earlier software pair passed these gates. The reference generated 25 pulse
+An earlier pre-progress-fix software pair passed these gates. The reference generated 25 pulse
 effects from seconds 22 to 42, at 1.25 Hz. It measured a 0.003076 mV mean reduction
 against a 0.002616 mV target correction, for a 0.000460 mV margin. The regulated
 PID generated 32 effects during the disturbance, at 1.067 Hz. Its formula-based
@@ -91,8 +91,12 @@ disturbance began. Final moving-mean absolute error was 0.0532 z. Full-window
 raw error SD was 1.9045 z, and post-settling raw error SD was 1.0168 z. All
 4,672 eligible observations were present, and the source had no gaps or skipped
 samples. This result is software-only evidence, not a hardware or biological
-claim. Rerun the simulation matrix and tracking pair on the current recorder
-revision before treating them as current acceptance evidence. The JSON and CSV are under
+claim. The 64-second `6657c88` pre-progress-fix run also passed its simulation
+tracking and recovery gates with 4,673 eligible observations and complete
+source coverage. Its actual-Core timing gates failed: all three maximum times
+exceeded 5 ms. These results do not establish current full-runtime behavior.
+See [the compact tracking report](validation/tracking-6657c88/tracking-summary.json).
+The older JSON and CSV are under
 `work/validation_runs/tracking-kp02-ki006-capacity-reference/`.
 
 ## Run the finite replay matrix
@@ -164,20 +168,23 @@ one-second settling and ten-second baseline calibration complete. Treat a
 smoke lead sweep as scheduler timing diagnostics, not evidence of active Rule
 or PID output.
 
-To inspect controller activity after calibration, pace a 20-second run at each
-lead and controller. Start the local UI server, then pass one trace explicitly:
+To inspect controller activity after calibration, pace for 45 seconds at each
+lead and controller. Thirty-two seconds is only a nominal floor based on
+11 seconds of expected settling and calibration; it may not leave 20 seconds of
+eligible data. Start the local UI server, then pass one trace explicitly:
 
 ```powershell
 python -m http.server 8000 --directory .
 .\.venv\Scripts\python.exe tools\validate_controllers.py --paced --external-browser `
   --browser-base-url http://127.0.0.1:8000 `
   --trace recordings\ca3_slow_waves\2026_08_06_0000.h5 `
-  --lead-sweep --duration-seconds 20 --keep-recordings
+  --lead-sweep --duration-seconds 45 --keep-recordings
 ```
 
-The 20-second duration leaves about nine seconds after the 11-second filter
-settling and baseline calibration. This short paced sweep checks scheduler
-behavior after readiness. It does not pass the 30-minute acceptance gate.
+Verify that each case records at least 400,000 eligible post-calibration source
+samples, with contiguous absolute indices and no gaps. A readiness banner or
+elapsed duration does not prove post-calibration coverage. This sweep does not
+pass the 30-minute acceptance gate.
 
 ## Run the paced 30-minute acceptance set
 
@@ -241,20 +248,19 @@ the unchanged `max(2e-12, 4 ULP)` gate. The model recurrence and artifact were
 unchanged. The older bundle remains historical evidence. Neither parity result
 establishes real-time timing or hardware acceptance.
 
-The full Python test suite on published revision `09ebf1e` passed with 252 tests
-and 17 subtests on Python 3.12.14 and Python 3.14.0. Those results are historical
-for that revision. The full suite on the current isolated candidate, based on
-`c32d151` with uncommitted changes, passed with 269 tests and 17 subtests on
-both interpreters. The 3.12 run took 38.79 seconds. The 3.14 run took 36.84
-seconds. Input hashes stayed unchanged through both runs. See the [test
-manifest](validation/fault-event-recording/unit-test-manifest.json), [Python
-3.12 log](validation/fault-event-recording/unit-tests-python312.txt), and
-[Python 3.14 log](validation/fault-event-recording/unit-tests-python314.txt).
-Coverage includes v1-v3 legacy recordings, actual-core fault and EOF
-classification, controller readiness, AO range attribution, unresolved-write
-retention, shutdown flushing, ESN rebase, and HDF5 batching and failure handling.
-Run `python -m pytest -q` with each interpreter to reproduce the full-suite
-counts. These tests do not establish replay timing or hardware acceptance.
+Earlier suite runs on `09ebf1e`, `c32d151`, and the fault-event candidate are
+historical and superseded by the current suite below.
+
+The current suite was run on an uncommitted candidate based on
+`95603cf056b9c7b09fafc560ab56b32c76c4fa66`. It passed 285 tests and 17
+subtests on Python 3.12.14 in 40.47 seconds and Python 3.14.0 in 40.44 seconds.
+The candidate was committed as `0d57f3c` in the isolated checkout and
+cherry-picked to `bb65477` in the main checkout. Both commits map to tree
+`8524f3b3b450d5cc0732743269f69cf9a17b16e5`. The original run manifest and
+logs are in [progress-reporting validation](validation/progress-reporting/).
+Coverage includes AO ownership and terminal outcomes, calibration and settings
+transactions, EOF and shutdown drains, bounded progress reporting, and legacy
+reader behavior. The suite does not establish timing acceptance.
 
 The HDF5 v5 writer prepares block metadata in source order and appends each
 populated metadata dataset once per existing batch. It keeps absolute sample
@@ -298,8 +304,7 @@ An earlier 60-second `f999` diagnostic measured p99 at 2.823 ms with the writer
 active and 1.937 ms when metadata-batch processing and HDF5 writes were
 discarded while the queue-draining worker remained active. This motivated
 metadata batching but does not measure the candidate's performance. The
-candidate has data-equivalence evidence only. A focused performance comparison
-remains pending.
+candidate has data-equivalence evidence only. No timing benefit is claimed.
 
 Treat the timing limits as strict: process p99 must be below 2.5 ms, and the
 maximum process time must be below the 5 ms block deadline. The process interval
@@ -334,9 +339,13 @@ This matrix predates the reviewed moment-only ESN rebase. It is not timing or
 parity evidence for the current bridge. All three current-bridge full-recording
 parity cases passed; see
 [`validation/esn-full-parity-88469989/`](validation/esn-full-parity-88469989/).
-The full replay matrix for the current isolated recorder revision, the lead
-sweep, the full simulation matrix, and a performance comparison for the fault
-event change remain pending. A paced Rule run and a separate paced PID run on
+As of 2026-10-29, the current full nine-case replay matrix is running. Its
+first case, May 29 Rule, recorded all 36,000,000 samples and completed AO drain.
+It measured p99 2.244601 ms, maximum 16.7774 ms, and 47 processing deadline
+misses. It passed p99 and failed the strict maximum-time gate. The other eight
+cases remain incomplete. The lead sweep and full simulation matrix remain
+pending. A paced
+Rule run and a separate paced PID run on
 `09ebf1e` processed all 36,000,000 source samples, but both failed. The Rule
 recording contains only 16,608,200 samples. Its fault stopped acquisition and
 `RecordBlock` submission near source second 830.41. It had 578 processing
@@ -355,11 +364,36 @@ active controller timing after the fault.
 
 The original combined PID and ESN startup attempts timed out after 120 seconds
 while waiting for browser connections, before producing case metrics. They are
-not completed runs. The separate PID attempt completed and failed. A separate
-30-minute paced ESN run remains pending. The [Rule attempt evidence](validation/paced-browser-09ebf1e-attempt1/summary.json)
-and [PID attempt evidence](validation/paced-pid-09ebf1e/controller_paced_20261029T125918Z.json)
-retain the reports. The fault event recorder change described above was made
-after these attempts. These results do not test that change.
+not completed runs. The separate PID attempt completed and failed. These Rule
+and PID results are historical pre-fix evidence from `09ebf1e`.
+
+The `6657c88` pre-progress-fix paced ESN attempt faulted near source second
+1,080 and stopped acquisition and recording at 21,606,700 samples. The replay
+loop continued afterward and processed the remaining input, reaching
+36,000,000 source samples. It had 237 processing deadline misses, p99 2.1158 ms,
+and maximum 38.7395 ms. The browser remained connected, and AO drain completed,
+but full recording and runtime timing gates failed. These numeric Core and
+recorder results apply only to revision `6657c88`; current full-runtime reruns
+remain pending. The compact report is in
+[`validation/paced-esn-6657c88/`](validation/paced-esn-6657c88/). The
+[historical Rule attempt](validation/paced-browser-09ebf1e-attempt1/summary.json)
+and [historical PID attempt](validation/paced-pid-09ebf1e/controller_paced_20261029T125918Z.json)
+retain the earlier reports. Those runs predate the fault-event recorder change.
+
+A 32-second diagnostic on `bb65477` processed and recorded 640,000 samples for
+each controller. Rule p99/max were 2.190158/4.2422 ms with zero deadline
+misses. PID measured 2.439674/5.7394 ms with one miss. ESN measured
+2.776818/5.401 ms with one miss. These short cases are diagnostics, not timing
+acceptance. The current full matrix is still running.
+The figures are summarized in
+[`validation/reporting-prefix-bb65477/summary.json`](validation/reporting-prefix-bb65477/summary.json).
+
+For the post-calibration lead sweep, use 45 seconds per controller and lead.
+Thirty-two seconds is a nominal floor based on an expected 11-second calibration
+and settling period; it does not guarantee 20 seconds of eligible data. Verify
+at least 400,000 eligible post-calibration samples and contiguous HDF5 source
+coverage in each case. A readiness banner or elapsed duration does not prove
+post-calibration coverage.
 
 The benchmark keeps a bounded history of the 32 most recent Core calls for
 fault diagnostics. Each row separates call start from completion. The snapshot
@@ -369,15 +403,6 @@ sees a fault. This observation is not the fault onset. History capture occurs
 outside the measured Core interval, though it adds harness work that may affect
 later scheduling. These diagnostics do not change the strict p99 `<2.5 ms` or
 maximum `<5 ms` limits.
-
-The benchmark stores a bounded history of the 32 most recent Core calls for
-fault diagnostics. Each row records call start and completion. The snapshot
-reports the latest completed source index separately from the latest-started
-and active source indices. The AO-clock observer captures that history after it
-sees a fault. This observation is not the fault onset. Copying the history
-happens outside the measured Core interval, but adds harness work that may
-affect later scheduling. These diagnostics do not change the strict p99
-`<2.5 ms` or maximum `<5 ms` limits.
 
 The historical
 `6cc4035` matrix is available in

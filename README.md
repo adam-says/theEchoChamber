@@ -11,20 +11,34 @@ controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
 > **Software validation is in progress.** The current full test suite passes
-> with 269 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. The
-> reviewed source is published as `7c5d62d`; the tested isolated checkout had
-> the same Git tree (`11f21095`). The
+> with 285 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. The suite
+> ran on the uncommitted candidate based on `95603cf`; the candidate was then
+> committed in isolation and cherry-picked to the main checkout. Both commits
+> map to tree `8524f3b3b450d5cc0732743269f69cf9a17b16e5`. Logs and the
+> original run manifest are in
+> [progress-reporting validation](docs/validation/progress-reporting/README.md).
+> The
 > `e965d808` replay matrix completed all nine 30-minute cases and failed the
 > strict timing gates: all nine maxima were 9.959 to 199.559 ms, and the three
 > ESN p99 values were 2.700 to 3.022 ms. That matrix predates the reviewed
 > moment-only ESN rebase. All three current-bridge full-recording ESN parity
 > cases passed exact event/trigger-index checks and the unchanged threshold
-> tolerance. Later paced Rule and PID attempts processed all 36 million replay
-> samples but faulted and recorded only prefixes: Rule recorded 16,608,200
-> samples; PID recorded 480,300. Their timing gates failed, and the paced ESN
-> run remains pending. See
+> tolerance. The `6657c88` paced ESN diagnostic, run before the progress-
+> reporting fix, faulted and stopped recording at 21,606,700 samples. The replay
+> later processed all 36 million source samples. Its 38.7395 ms maximum and
+> 237 deadline misses failed timing. A 64-second synthetic PID tracking
+> diagnostic on that revision passed its simulation gates, but all three
+> actual-Core segments failed the strict maximum-time gate. Neither diagnostic
+> establishes runtime performance for the later progress-reporting fix. See
 > [implementation and validation status](IMPLEMENTATION_STATUS.md) for the
 > evidence and remaining software gates.
+>
+> A 32-second diagnostic on `bb65477` processed and recorded 640,000 samples
+> per controller. Rule p99/max were 2.190158/4.2422 ms with zero deadline
+> misses. PID measured 2.439674/5.7394 ms with one miss. ESN measured
+> 2.776818/5.401 ms with one miss. These short runs are not acceptance. The
+> current full nine-case replay matrix is running, and the post-calibration
+> lead sweep remains pending.
 >
 > **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
 > working assumptions, not measured calibration. Do not treat software results
@@ -71,6 +85,17 @@ passthrough mode.
   duplicate sentinels. Failed writes leave an incomplete file at the last fully
   committed boundary. The runtime does not create a synthetic source block for
   the AO flush.
+- Benchmark progress reporting uses a bounded, single-owner writer and a
+  rolling 2,048-call interim p99 window; final timing gates still use the full
+  latency history. Writer and simulated-AO shutdown timeouts are explicit case
+  failures. An unresolved owner stops collection and prevents further writes
+  to its shared progress log.
+- The recorder process prototype remains parked. In one 60-second A/B/A ESN
+  diagnostic, the process arm's p99 of 3.533 ms was higher than both threaded
+  runs at 3.423 and 3.495 ms. Its 8.898 ms maximum was between threaded maxima
+  of 6.855 and 9.286 ms. All three missed strict
+  timing limits. The comparison did not isolate a cause or show a repeatable
+  benefit. See [the prototype diagnostic](docs/validation/process-recorder-prototype/README.md).
 - Pulse detection supports absolute, positive, and negative polarity. Absolute
   is the default. The current pulse is an explicit 5 ms, 100 Hz sine half-cycle.
 - Real-hardware startup uses the included confirmed-pending-test profile by
@@ -78,6 +103,9 @@ passthrough mode.
 - Recording uses compact, compressed `echoChamber_H5_v5` files with true NI
   sample indices, calibration metadata, AO target indices, arm state, faults,
   and sparse events.
+- A full reader check compared an earlier complete 36-million-sample v5 Rule
+  file with canonical mV input. It found zero sample, index, block, controller,
+  or mode mismatches. See [the reader report](docs/validation/full-reader-98b6ed/README.md).
 - The browser monitor is self-contained and does not require internet access.
 
 See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for completed

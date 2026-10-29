@@ -2,18 +2,30 @@
 
 Status date: 2026-10-29
 
-Current reviewed source: published `7c5d62d`; the isolated test checkout was
-`1665c6a` with the same Git tree (`11f21095`).
+Current source: isolated commit `0d57f3c0f8d84274e4201d63d17ed228501a456b`;
+main-checkout cherry-pick `bb65477dfb79b5372013d9f3ec52cfa2fd263401`. Both
+map to Git tree `8524f3b3b450d5cc0732743269f69cf9a17b16e5`.
 
 The reviewed software paths listed below are implemented. The current full test
-suite passes with 269 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
+suite passes with 285 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
 The earlier nine-case replay matrix completed every 30-minute recording but
 failed strict timing limits. That matrix predates the current ESN moment-only
-rebase. The two completed pre-fix paced Rule and PID attempts also failed after
-runtime faults and recorded only a prefix; the paced ESN run remains pending.
+rebase. A paced ESN diagnostic on revision `6657c88`, before the progress-
+reporting fix, faulted and stopped recording at 21,606,700 samples. The replay
+loop continued afterward and processed all 36,000,000 source samples. This
+result is scoped to that revision and does not establish current full-runtime
+behavior. A 64-second synthetic PID tracking diagnostic on the same revision
+passed simulation tracking and recovery gates, but all three measured Core
+segments exceeded the strict maximum-time limit. Its numerical results also
+predate the progress-reporting fix.
 Full-recording ESN parity on the current bridge passed all three canonical recordings; see
 [`docs/validation/esn-full-parity-88469989/`](docs/validation/esn-full-parity-88469989/).
 No hardware requirement has been verified.
+
+The strict software timing limits remain p99 `<2.5 ms` and maximum `<5 ms`.
+The current full matrix and post-calibration lead sweep are not complete.
+Historical plan and benchmark statements describe their original runs, not
+current acceptance.
 
 ## Implemented software behavior
 
@@ -61,13 +73,27 @@ No hardware requirement has been verified.
   AO producer stops. The core does not create a synthetic source block to flush
   them. Shutdown keeps the recorder open until the DAQ owner and AO producer
   stop.
+- Benchmark progress reporting uses a bounded queue and one serialization/file
+  writer. Interim p99 describes the last at most 2,048 completed Core calls;
+  final metrics and acceptance continue to use every call. Accepted, written,
+  dropped, rejected, and pending progress observations are accounted
+  separately. Unresolved progress-writer or simulated-AO shutdown ownership is
+  an explicit case failure; the CLI stops collection and does not write more
+  rows to a JSONL file whose owner may still be active. If AO ownership times
+  out, dependent resources remain open and any owned temporary recording path
+  is retained until a later cleanup retry confirms the owner stopped.
 
 ## Current test status
 
-The full suite passes with 269 tests and 17 subtests under both supported
-interpreters. The logs and manifest are in
-[`docs/validation/fault-event-recording/`](docs/validation/fault-event-recording/).
-Run `python -m pytest -q` with each interpreter to reproduce these counts.
+The full suite passes with 285 tests and 17 subtests under both supported
+interpreters. The 3.12 run took 40.47 seconds; the 3.14 run took 40.44 seconds.
+The tests ran on an uncommitted candidate based on
+`95603cf056b9c7b09fafc560ab56b32c76c4fa66`; the candidate's original source
+hash manifest and logs are in
+[`docs/validation/progress-reporting/`](docs/validation/progress-reporting/).
+The provenance note maps that tested candidate to the committed isolated and
+main-checkout trees. Run `python -m pytest -q` with each interpreter to
+reproduce the counts.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
 3.12 and 3.14. Its counts are historical and do not describe the current
@@ -121,24 +147,42 @@ The earlier `f6147a59` parity bundle remains historical evidence for the prior
 bridge revision. Neither parity result establishes real-time timing or hardware
 acceptance.
 
-## Prior synthetic tracking evidence
+## Synthetic tracking diagnostic before the progress-reporting fix
 
-The final deterministic 64-second PID case uses `kp=0.2`, `ki=0.06`, `kd=0`,
-and `target_z=1`. Tracking, plant recovery, and pair acceptance passed in the
-software fixture. The separate max-request reference measured a mean reduction
-of `0.003076 mV` over source seconds 22 to 42, against a `0.002616 mV` target
-correction. Its margin was `0.000460 mV`. The regulated PID generated 32 effect
-pulses during the 30-second disturbance, at `1.067 Hz`; this is controller
-usage, not the capacity reference. Tracking settled `14.16 s` after the
-disturbance began. Final moving-mean absolute error was `0.0532 z`, full-window
-raw error SD was `1.9045 z`, and post-settling raw error SD was `1.0168 z`.
-All 4,672 eligible observations were present. Source coverage was complete,
-with no gaps or skipped samples.
+The 64-second `6657c88` pre-progress-fix diagnostic used the Core and recorder
+identified by its recorded source hashes. Its simulated tracking response,
+recovery, and simulation acceptance gates passed, with all 4,673 eligible
+target observations and full source coverage. This evidence applies to that
+tested revision, not the later progress-reporting fix or current full-runtime
+behavior. It is a diagnostic, not real-time acceptance. All three actual-Core
+segments exceeded the strict `<5 ms` maximum: stimulated p99/max were
+1.483109/7.612 ms, the
+no-stimulation control 1.416319/8.4815 ms, and the capacity reference
+1.522206/11.0244 ms. The 64-second run is shorter than the 1,800-second timing
+requirement. A compact report is in
+[`docs/validation/tracking-6657c88/`](docs/validation/tracking-6657c88/).
+This software fixture does not prove physical output, hardware safety, or
+biological efficacy.
 
-This is software-only evidence from a deterministic plant. It does not prove
-physical output, hardware safety, or biological efficacy.
-Rerun the full simulation matrix and tracking pair on the current recorder
-revision before treating these results as current acceptance evidence.
+A separate 32-second diagnostic on committed tree `bb65477` processed and
+recorded 640,000 samples per controller. Rule measured p99/max of
+2.190158/4.2422 ms with zero deadline misses. PID measured 2.439674/5.7394 ms
+with one miss. ESN measured 2.776818/5.401 ms with one miss. These short cases
+do not establish timing acceptance. The current full nine-case matrix is
+running. The post-calibration lead sweep has not been completed. The exact
+short-prefix figures are in
+[`docs/validation/reporting-prefix-bb65477/summary.json`](docs/validation/reporting-prefix-bb65477/summary.json).
+
+## Full-recording reader check
+
+The v5 reader loaded a complete earlier Rule recording and compared it with
+the canonical mV source. It verified 36,000,000 samples from source index zero,
+360,000 block rows, 360,000 controller rows, channel roles and EC region,
+absolute indices, mode data, raw-AI extent, and AO command samples. All recorded
+mismatch counts were zero. The reader and recording hashes stayed unchanged.
+This check validates reader coverage for the earlier recording; it does not
+establish current timing or physical output. See
+[`docs/validation/full-reader-98b6ed/`](docs/validation/full-reader-98b6ed/).
 
 ## HDF5 batching evidence
 
@@ -175,9 +219,16 @@ not timing acceptance for the current bridge. See
 
 The current bridge parity rerun is separate from the matrix: all three
 recordings passed exact event and trigger-index checks and the threshold gate.
-Passing current-source full timing and paced runs (including a new ESN attempt),
-the lead sweep, the full simulation matrix, and a conclusive recorder performance
-comparison remain pending.
+The current-source full nine-case matrix is running. The post-calibration lead
+sweep, all-controller 30-minute paced set, and full simulation matrix remain
+pending. The parked process-recorder prototype did not show a repeatable timing
+benefit and does not isolate GIL contention.
+
+The first current-source matrix case, May 29 Rule, completed all 36,000,000
+source and recorded samples with a complete file and successful AO drain. Its
+p99 was 2.244601 ms, maximum 16.7774 ms, and it reported 47 processing deadline
+misses. It passed the p99 limit and failed the maximum-time limit. The other
+eight cases are not yet complete.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID
 cases had positive requested-rate blocks: 80,123 for May 29, 79,272 for Aug 5,
@@ -197,7 +248,7 @@ complete recording, consume UI packets, and finish AO drain with an empty queue.
 The collection cannot pass if any individual full case fails its coverage or
 runtime checks.
 
-### Paced browser attempts: Rule and PID failed; ESN pending
+### Paced browser attempts: current ESN failed; earlier Rule and PID attempts are historical
 
 The completed Rule and PID attempts each processed 36,000,000 replay samples,
 but a latched AO fault stopped acquisition and further `RecordBlock` submission.
@@ -211,14 +262,27 @@ and is not evidence that the paced timing gate passed.
 | Rule | 16,608,200 | 578 | 1 | 1 | 1.774801 ms | 428.0297 ms |
 | PID | 480,300 | 103 | 1 | 0 | 0.9009 ms | 66.7837 ms |
 
-These are failed pre-fix attempts from the `09ebf1e` run. Their saved reports are in
+These Rule and PID results are failed pre-fix attempts from the `09ebf1e` run. Their saved reports are in
 [`docs/validation/paced-browser-09ebf1e-attempt1/`](docs/validation/paced-browser-09ebf1e-attempt1/)
 and [`docs/validation/paced-pid-09ebf1e/`](docs/validation/paced-pid-09ebf1e/).
-The paced ESN run and a passing current-source paced set remain pending. A full
-paced acceptance requires one 30-minute run per controller with the real browser
+The `6657c88` pre-progress-fix ESN attempt faulted near source second 1,080 and
+stopped recording at 21,606,700 samples. The replay loop continued and later
+processed 36,000,000 source samples. It had 237 processing deadline misses,
+p99 2.1158 ms, and maximum 38.7395 ms. The recorder closed cleanly, but the
+file contains only the committed prefix. These results do not describe current
+full-runtime behavior. The compact report is in
+[`docs/validation/paced-esn-6657c88/`](docs/validation/paced-esn-6657c88/).
+A full paced acceptance requires one 30-minute run per controller with the real browser
 connected and passing source, timing, AO, recorder, UI, and drain gates. Any
 browser disconnect fails that case, even if the page reconnects. Short smoke
 runs and synthetic simulations do not count.
+
+Use 45 seconds per controller and lead for the post-calibration lead sweep.
+Thirty-two seconds is a nominal floor based on an expected 11-second
+calibration and settling period; it does not guarantee 20 seconds of eligible
+data. Verify at least 400,000 eligible post-calibration samples and contiguous
+source coverage in each HDF5 file. A readiness banner or elapsed duration alone
+does not establish post-calibration coverage.
 
 ## Hardware status: ALL UNVERIFIED
 
