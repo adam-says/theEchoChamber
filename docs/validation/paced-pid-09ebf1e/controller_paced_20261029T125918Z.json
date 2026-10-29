@@ -1,0 +1,398 @@
+{
+  "schema": "echo-chamber-controller-benchmark-v1",
+  "created_at_utc": "2026-10-29T12:59:18.743213+00:00",
+  "git_revision": "09ebf1e0fc9adf5776ca805890f7f9072e14811a",
+  "python": "3.14.0",
+  "machine": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 189 Stepping 1, GenuineIntel",
+  "reference": {
+    "sample_rate_hz": 20000,
+    "block_samples": 100,
+    "block_ms": 5.0,
+    "ao_lead_ms": 100.0,
+    "deadline_ms": 5.0,
+    "lead_sweep_ms": [
+      100.0,
+      75.0,
+      50.0,
+      40.0,
+      30.0,
+      20.0
+    ]
+  },
+  "physical_pulse_claims": false,
+  "acceptance": [
+    {
+      "case_id": "20261029_132852_20261029T122852Z_2026_05_29_0001_pid_100ms",
+      "scope": "paced_30min_case",
+      "runtime_checks_passed": false,
+      "runtime_failures": [
+        "runtime fault was latched: simulated AO active deadline missed; refill replaced with zeros",
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline",
+        "AO active-demand deadline miss occurred",
+        "recorded sample count does not match submitted processing blocks"
+      ],
+      "coverage": {
+        "required": {
+          "duration_seconds": 1800.0,
+          "processed_blocks": 360000,
+          "source_samples": 36000000,
+          "sample_rate_hz": 20000.0,
+          "block_samples": 100,
+          "block_ms": 5.0,
+          "deadline_ms": 5.0
+        },
+        "observed": {
+          "duration_seconds": 1800.0,
+          "processed_blocks": 360000,
+          "source_samples": 36000000,
+          "sample_rate_hz": 20000.0,
+          "block_samples": 100,
+          "block_ms": 5.0,
+          "deadline_ms": 5.0
+        },
+        "complete": true,
+        "failures": []
+      },
+      "full_acceptance_status": "FAIL",
+      "full_acceptance_passed": false,
+      "passed": false,
+      "failures": [
+        "runtime fault was latched: simulated AO active deadline missed; refill replaced with zeros",
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline",
+        "AO active-demand deadline miss occurred",
+        "recorded sample count does not match submitted processing blocks"
+      ]
+    }
+  ],
+  "collection_acceptance": {
+    "collection_kind": "paced",
+    "status": "FAIL",
+    "full_acceptance_passed": false,
+    "required": {
+      "case_count": 3,
+      "controller_count": 3,
+      "controllers": [
+        "rule",
+        "pid",
+        "esn"
+      ],
+      "trace_count": null,
+      "unique_source_controller_pairs": 3
+    },
+    "observed": {
+      "completed_case_count": 1,
+      "failed_case_count": 0,
+      "full_scope_case_count": 1,
+      "source_count": 1,
+      "source_names": [
+        "2026_05_29_0001"
+      ],
+      "controller_count": 1,
+      "controllers": [
+        "pid"
+      ],
+      "unique_source_controller_pairs": 1,
+      "full_acceptance_passed_case_count": 0,
+      "failed_full_acceptance_case_ids": [
+        "20261029_132852_20261029T122852Z_2026_05_29_0001_pid_100ms"
+      ]
+    },
+    "failures": [
+      "runtime checks failed for 1 completed case(s)",
+      "full acceptance failed for 1 completed case(s)",
+      "paced collection requires one full 30-minute case for each of 3 controllers"
+    ]
+  },
+  "cases": [
+    {
+      "case_id": "20261029_132852_20261029T122852Z_2026_05_29_0001_pid_100ms",
+      "source_name": "2026_05_29_0001",
+      "controller": "pid",
+      "sample_rate_hz": 20000,
+      "block_samples": 100,
+      "block_ms": 5.0,
+      "ao_lead_ms": 100.0,
+      "deadline_ms": 5.0,
+      "source_samples": 36000000,
+      "skipped_source_samples": 0,
+      "source_index_gap_samples": 0,
+      "source_availability_lag_median_ms": 0.38769980892539024,
+      "source_availability_lag_p95_ms": 0.7423051632940758,
+      "source_availability_lag_max_ms": 232.9357999842614,
+      "source_backlog_blocks_max": 46,
+      "processed_blocks": 360000,
+      "duration_source_s": 1800.0,
+      "process_median_ms": 0.2879,
+      "process_p95_ms": 0.5846,
+      "process_p99_ms": 0.9009,
+      "process_max_ms": 66.7837,
+      "process_thread_cpu_median_ms": 0.0,
+      "process_thread_cpu_p95_ms": 0.0,
+      "process_thread_cpu_max_ms": 15.625,
+      "process_cpu_median_ms": 0.0,
+      "process_cpu_p95_ms": 0.0,
+      "process_cpu_max_ms": 31.25,
+      "process_slow_call_count": 103,
+      "gc_pause_count": 357,
+      "gc_pause_max_ms": 45.7648,
+      "recorder_backpressure_policy": "disabled_for_paced",
+      "recorder_queue_capacity_blocks": 2000,
+      "recorder_backpressure_threshold_blocks": 1600,
+      "recorder_backpressure_wait_count": 0,
+      "recorder_backpressure_wait_ms": 0.0,
+      "recorder_backpressure_max_backlog": 4,
+      "max_requested_rate_hz": 2.0,
+      "actuator_rate_phase_high_water": 0.08306103917381262,
+      "actuator_rate_phase_reset_count": 166,
+      "actuator_rate_phase_final": 0.0,
+      "bounded_rate_request_count": 483,
+      "deadline_exceeded_blocks": 103,
+      "requested_rate_blocks": 483,
+      "requested_pulse_events": 0,
+      "rendered_pulse_events": 0,
+      "rejected_pulse_events": 0,
+      "unclassified_pulse_events": 0,
+      "pulse_commit_samples": 0,
+      "ao_nonzero_generated_samples": 0,
+      "ao_committed_blocks": 360027,
+      "ao_zero_substitutions": 355243,
+      "ao_late_commands": 0,
+      "ao_rejected_stale": 0,
+      "ao_cancelled_blocks": 2,
+      "ao_max_queue_depth": 13,
+      "ao_active_demand_misses": 1,
+      "ao_generated_sample_count": 36004500,
+      "ao_drain_complete": true,
+      "ao_final_queue_depth": 0,
+      "ao_noncommitted_nonzero_blocks": 0,
+      "ao_clock_mode": "independent_monotonic_wall",
+      "ao_clock_max_service_gap_ms": 177.24850005470216,
+      "ao_clock_gaps_over_block_period": 115692,
+      "browser_ui_required": true,
+      "recording_completed": true,
+      "recording_committed_samples": 480300,
+      "component_timings_ms": {
+        "safety_process": {
+          "count": 360000,
+          "median": 0.114,
+          "p95": 0.1957,
+          "p99": 0.2873,
+          "max": 34.7892
+        },
+        "recorder_submit": {
+          "count": 4803,
+          "median": 0.0119,
+          "p95": 0.0248,
+          "p99": 0.0403,
+          "max": 5.603
+        },
+        "ui_submission": {
+          "count": 360000,
+          "median": 0.0646,
+          "p95": 0.1731,
+          "p99": 0.36630100000000093,
+          "max": 37.7183
+        },
+        "feature_pid_envelope": {
+          "count": 4800,
+          "median": 0.1619,
+          "p95": 0.38005000000000017,
+          "p99": 0.6849970000000021,
+          "max": 61.3441
+        },
+        "controller_pid_step": {
+          "count": 4800,
+          "median": 0.21545,
+          "p95": 0.5198850000000003,
+          "p99": 0.9219320000000008,
+          "max": 62.4623
+        },
+        "actuator_process": {
+          "count": 4800,
+          "median": 0.0154,
+          "p95": 0.04820500000000001,
+          "p99": 0.11921500000000032,
+          "max": 3.1377
+        }
+      },
+      "recorder_max_backlog": 4,
+      "ui_packets_submitted": 17497,
+      "ui_packets_consumed": 17497,
+      "ui_transport_kind": "browser_and_websocket_client",
+      "browser_connected": true,
+      "browser_disconnect_count": 0,
+      "browser_disconnected_duration_ms": 0.0,
+      "browser_connected_at_finish": true,
+      "browser_disconnect_open_at_finish": false,
+      "injected_stall_count": 0,
+      "injected_stall_ms_total": 0.0,
+      "runtime_fault": "simulated AO active deadline missed; refill replaced with zeros",
+      "generated_ao_blocks": 360045,
+      "pulse_request_ids": [],
+      "pulse_rejected_ids": [],
+      "pulse_commit_ids": [],
+      "last_controller_ready": false,
+      "last_controller_calibrated": false,
+      "last_controller_z_score": null,
+      "last_controller_reason": "",
+      "recording_active": true,
+      "physical_pulse_claims": false,
+      "simulation": false,
+      "notes": []
+    }
+  ],
+  "environments": [
+    {
+      "python": "3.14.0",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "processor": "Intel64 Family 6 Model 189 Stepping 1, GenuineIntel",
+      "git_revision": "09ebf1e0fc9adf5776ca805890f7f9072e14811a",
+      "source_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\tmp\\ca3_import_validation\\2026_05_29_0001.h5",
+      "source_sha256": "282827974028af3f22375fba78cc3d969e228e39e5de23458b0a9ddccb44422b",
+      "config": {
+        "device": "Dev1",
+        "ai_channels": [
+          "ai0",
+          "ai1"
+        ],
+        "ao_channel": "ao0",
+        "electrode_labels": [
+          "CA3",
+          "EC"
+        ],
+        "source_channel_regions": null,
+        "amplifier_gain": [
+          10.0,
+          10.0
+        ],
+        "ao_command_gain_v_per_esn_unit": 1.0,
+        "ctx_index": 1,
+        "sample_rate": 20000,
+        "processing_block_ms": 5.0,
+        "ao_target_lead_ms": 100.0,
+        "stimulation_recovery_ms": 0.0,
+        "passthrough_dc_block_hz": 0.5,
+        "pulse_threshold_std": 3.0,
+        "pulse_window_sec": 10.0,
+        "pulse_polarity": "absolute",
+        "esn_backend": "auto",
+        "model_artifact": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\artifacts\\esn_corrected_v1.npz",
+        "controller": "pid",
+        "controller_config": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\controller_configs\\pid_synthetic_demo.json",
+        "controller_settings": {
+          "rule": {
+            "upper_z": 3.0,
+            "lower_z": 1.5,
+            "band_hz": [
+              100.0,
+              250.0
+            ]
+          },
+          "pid": {
+            "kp": 0.4,
+            "ki": 0.1,
+            "kd": 0.02,
+            "target_z": 1.0,
+            "direction": 1,
+            "max_rate_hz": 2.0,
+            "update_ms": 5.0,
+            "derivative_tau_s": 0.02,
+            "band_hz": [
+              100.0,
+              250.0
+            ]
+          }
+        },
+        "hardware_profile": null,
+        "ai_min_v": -10.0,
+        "ai_max_v": 10.0,
+        "terminal_config": "RSE",
+        "visual_downsample": 2,
+        "ui_interval_s": 0.1,
+        "ws_host": "127.0.0.1",
+        "ws_port": 8765,
+        "record_dir": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-09ebf1e\\paced-pid-30min\\recordings",
+        "logger_queue_blocks": 2000,
+        "recorder_batch_s": 0.25,
+        "recorder_flush_s": 1.0,
+        "ui_queue_packets": 1,
+        "watchdog_timeout_s": 0.25,
+        "mock_replay": null,
+        "actual_stim_monitor_channel": null,
+        "start_paused": false,
+        "open_browser": false,
+        "safety": {
+          "max_command_v": 5.0,
+          "max_slew_v_per_s": 2000.0,
+          "max_abs_area_v_s": 0.01,
+          "area_window_s": 1.0,
+          "max_active_fraction": 0.1,
+          "active_threshold_v": 3.5,
+          "max_consecutive_active_s": 0.05,
+          "isolator_command_v_per_output_unit": null,
+          "allow_sustained_output_for_dry_test": false
+        },
+        "chunk_size": 100,
+        "ao_lead_samples": 2000,
+        "ao_deadline_samples": 1000
+      },
+      "recording_file": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-09ebf1e\\paced-pid-30min\\recordings\\20261029_132852_20261029T122852Z_2026_05_29_0001_pid_100ms.h5",
+      "recording_file_retained": true,
+      "ao_scheduler": {
+        "submitted_blocks": 360000,
+        "committed_blocks": 360027,
+        "zero_substitutions": 355243,
+        "late_commands": 0,
+        "rejected_stale": 0,
+        "cancelled_blocks": 2,
+        "rejected_fault": 355198,
+        "active_demand_misses": 1,
+        "pulse_tail_misses": 0,
+        "max_queue_depth": 13,
+        "pulse_requests": 0,
+        "pulse_committed_samples": 0,
+        "reconciled_blocks": 0,
+        "queue_depth": 0,
+        "generated_sample_count": 36004500,
+        "barrier_generation": null,
+        "barrier_end_sample": 0
+      },
+      "core_telemetry": {
+        "blocks": 360000,
+        "sample_index": 36000000,
+        "ai_read_ms": 0.0,
+        "esn_ms": 0.0,
+        "ao_write_ms": 0.0,
+        "block_ms": 0.2808,
+        "max_block_ms": 66.7837,
+        "late_blocks": 103,
+        "safety_trips": 0,
+        "logger_backlog": 0,
+        "logger_high_water": 4,
+        "last_heartbeat_ns": 1333051434541400
+      },
+      "ui_transport": {
+        "kind": "browser_and_websocket_client",
+        "browser_connected": true,
+        "browser_disconnect_count": 0,
+        "browser_disconnected_duration_ms": 0.0,
+        "browser_connected_at_finish": true,
+        "packets_submitted": 17497,
+        "packets_consumed": 17497,
+        "browser_rendering_verified": false
+      },
+      "ui_channel_mapping": {
+        "channels": [
+          "CA3",
+          "EC"
+        ],
+        "cortex_ai": "ai1"
+      },
+      "physical_pulse_claims": false
+    }
+  ],
+  "case_failures": []
+}

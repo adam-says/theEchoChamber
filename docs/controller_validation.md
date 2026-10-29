@@ -241,13 +241,20 @@ the unchanged `max(2e-12, 4 ULP)` gate. The model recurrence and artifact were
 unchanged. The older bundle remains historical evidence. Neither parity result
 establishes real-time timing or hardware acceptance.
 
-The full current Python test suite passes with 252 tests and 17 subtests on both
-Python 3.12.14 and Python 3.14.0. The 3.12 run took 52.34 seconds; the 3.14 run
-took 48.96 seconds. It includes controller readiness transactions, AO range
-attribution, unresolved-write retention, shutdown outcome flushing, the
-moment-only ESN rebase, and HDF5 batching and failure cases. Run
-`python -m pytest -q` with each interpreter to reproduce these counts. These
-tests do not establish full replay timing or hardware acceptance.
+The full Python test suite on published revision `09ebf1e` passed with 252 tests
+and 17 subtests on Python 3.12.14 and Python 3.14.0. Those results are historical
+for that revision. The full suite on the current isolated candidate, based on
+`c32d151` with uncommitted changes, passed with 269 tests and 17 subtests on
+both interpreters. The 3.12 run took 38.79 seconds. The 3.14 run took 36.84
+seconds. Input hashes stayed unchanged through both runs. See the [test
+manifest](validation/fault-event-recording/unit-test-manifest.json), [Python
+3.12 log](validation/fault-event-recording/unit-tests-python312.txt), and
+[Python 3.14 log](validation/fault-event-recording/unit-tests-python314.txt).
+Coverage includes v1-v3 legacy recordings, actual-core fault and EOF
+classification, controller readiness, AO range attribution, unresolved-write
+retention, shutdown flushing, ESN rebase, and HDF5 batching and failure handling.
+Run `python -m pytest -q` with each interpreter to reproduce the full-suite
+counts. These tests do not establish replay timing or hardware acceptance.
 
 The HDF5 v5 writer prepares block metadata in source order and appends each
 populated metadata dataset once per existing batch. It keeps absolute sample
@@ -268,6 +275,24 @@ batch, and a sample gap at the batch boundary. The [fixture proof](validation/re
 records the comparison. Failure tests include a second-batch
 metadata error after the first 300 samples commit; the incomplete file retains
 that boundary.
+
+The recorder also bounds fault-zero event storage. It merges confirmed
+pulse-free zero AO writes only when their half-open sample ranges touch and
+their generation, controller, and reason match. The AO writer reports an extent
+only after it confirms the whole zero refill. Partial or unknown writes cannot
+become full ranges. Pulse outcomes and other action stages remain individual
+rows in insertion order.
+
+The recorder services event-only data on a timed queue wait, even after source
+acquisition stops. One open range, queued rows, and rows in an active HDF5
+append share a 4,096-row limit. Overflow latches the first error, stops
+admission, and leaves the file incomplete. A writer-side overflow aborts the
+current batch before it advances `committed_samples`. The writer checks for a
+latched error immediately before that boundary decision. It releases the error
+lock before writing the HDF5 attribute. An AO error after that decision applies
+to later batches. These changes bound event memory and preserve the committed
+source boundary. They do not explain or fix the paced AO deadline misses below,
+and they have no measured latency benefit yet.
 
 An earlier 60-second `f999` diagnostic measured p99 at 2.823 ms with the writer
 active and 1.937 ms when metadata-batch processing and HDF5 writes were
@@ -309,8 +334,52 @@ This matrix predates the reviewed moment-only ESN rebase. It is not timing or
 parity evidence for the current bridge. All three current-bridge full-recording
 parity cases passed; see
 [`validation/esn-full-parity-88469989/`](validation/esn-full-parity-88469989/).
-Full replay timing, three paced 30-minute runs, the lead sweep, the full
-simulation matrix, and the recorder performance comparison remain pending. The historical
+The full replay matrix for the current isolated recorder revision, the lead
+sweep, the full simulation matrix, and a performance comparison for the fault
+event change remain pending. A paced Rule run and a separate paced PID run on
+`09ebf1e` processed all 36,000,000 source samples, but both failed. The Rule
+recording contains only 16,608,200 samples. Its fault stopped acquisition and
+`RecordBlock` submission near source second 830.41. It had 578 processing
+deadline misses, one AO active-demand miss, one browser disconnect, a 1.774801
+ms all-call p99, and a 428.0297 ms maximum. The PID recording contains only
+480,300 samples. It had 103 deadline misses, one AO active-demand miss, no
+browser disconnect, a 0.9009 ms all-call p99, and a 66.7837 ms maximum.
+
+Both files closed cleanly with `complete=1`, but each is only the prefix recorded
+before the fault. `complete=1` means the writer closed that file cleanly. It
+does not mean the file contains all 36,000,000 samples. The fault stops
+acquisition, and `ProcessingCore` stops submitting `RecordBlock` values while
+the finite replay loop continues through its remaining source data. The all-call
+p99 values include inactive calls after acquisition stopped. They do not show
+active controller timing after the fault.
+
+The original combined PID and ESN startup attempts timed out after 120 seconds
+while waiting for browser connections, before producing case metrics. They are
+not completed runs. The separate PID attempt completed and failed. A separate
+30-minute paced ESN run remains pending. The [Rule attempt evidence](validation/paced-browser-09ebf1e-attempt1/summary.json)
+and [PID attempt evidence](validation/paced-pid-09ebf1e/controller_paced_20261029T125918Z.json)
+retain the reports. The fault event recorder change described above was made
+after these attempts. These results do not test that change.
+
+The benchmark keeps a bounded history of the 32 most recent Core calls for
+fault diagnostics. Each row separates call start from completion. The snapshot
+reports the latest completed source index separately from the latest-started
+and active source indices. The AO-clock observer captures the history after it
+sees a fault. This observation is not the fault onset. History capture occurs
+outside the measured Core interval, though it adds harness work that may affect
+later scheduling. These diagnostics do not change the strict p99 `<2.5 ms` or
+maximum `<5 ms` limits.
+
+The benchmark stores a bounded history of the 32 most recent Core calls for
+fault diagnostics. Each row records call start and completion. The snapshot
+reports the latest completed source index separately from the latest-started
+and active source indices. The AO-clock observer captures that history after it
+sees a fault. This observation is not the fault onset. Copying the history
+happens outside the measured Core interval, but adds harness work that may
+affect later scheduling. These diagnostics do not change the strict p99
+`<2.5 ms` or maximum `<5 ms` limits.
+
+The historical
 `6cc4035` matrix is available in
 [`validation/baseline-6cc4035/`](validation/baseline-6cc4035/); its maxima were
 7.095 to 34.104 ms, and its ESN p99 values were 4.745 to 4.830 ms. See

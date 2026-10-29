@@ -1,0 +1,21 @@
+{
+  "schema": "echo-chamber-paced-attempt-v1",
+  "source_commit": "09ebf1e0fc9adf5776ca805890f7f9072e14811a",
+  "rule": {
+    "full_source_processed_samples": 36000000,
+    "committed_recording_samples": 16608200,
+    "recording_prefix_seconds": 830.41,
+    "p99_all_calls_ms": 1.774801000000001,
+    "max_all_calls_ms": 428.0297,
+    "deadline_misses": 578,
+    "runtime_fault": "simulated AO active deadline missed; refill replaced with zeros",
+    "ao_active_demand_misses": 1,
+    "browser_disconnect_count": 1,
+    "ao_clock_service_gap_max_ms": 2796049.7475999873,
+    "source_availability_lag_max_ms": 2823573.658700334,
+    "status": "FAIL",
+    "latency_scope": "All calls, including inactive post-fault calls. Control/acquisition stopped around830.4source seconds; recording is a prefix, not1800seconds."
+  },
+  "pid_esn_start_attempts": "Both browser connection waits timed out before producing metrics. Root missed the handoffs. Separate one-controller jobs will collect actual attempts; originals retained.",
+  "clock_gap_causality": "The long service gap and browser disconnect are observations, not proof of the earlier fault cause. First20slow-call records do not cover the fault location."
+}

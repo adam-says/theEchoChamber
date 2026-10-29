@@ -951,12 +951,15 @@ class SafetyAdmittedPulsePlan:
 class H5Recorder:
     """Asynchronous, batched HDF5 recorder owned by one writer thread."""
 
+    MAX_PENDING_ACTION_ROWS = 4096
+
     def __init__(self, config: AppConfig, metadata: dict[str, Any]) -> None:
         self.config = config
         self.metadata = metadata
         self.items: queue.Queue[Optional[RecordBlock]] = queue.Queue(maxsize=config.logger_queue_blocks)
         self._lock = threading.RLock()
         self._admission_lock = threading.Lock()
+        self._error_lock = threading.Lock()
         self._close_lock = threading.Lock()
         self._shutdown_sentinel_sent = False
         self._recording_open = False
@@ -982,6 +985,8 @@ class H5Recorder:
         self._last_mode: Optional[int] = None
         self._action_stage_lock = threading.Lock()
         self._pending_action_stages: list[tuple[int, int, str, str, float, str, str, int, int, int, int]] = []
+        self._open_fault_zero_range: Optional[tuple[int, int, int, str, str]] = None
+        self._action_stage_inflight_count = 0
         self._action_stage_flush_failed = False
         self._last_flush = time.monotonic()
         self._batch_samples = max(
@@ -998,8 +1003,25 @@ class H5Recorder:
 
     @property
     def error(self) -> Optional[str]:
-        with self._lock:
+        with self._error_lock:
             return self._error
+
+    def _latch_error(self, message: str) -> str:
+        """Keep the first recorder failure without waiting for the HDF5 lock."""
+        with self._error_lock:
+            if self._error is None:
+                self._error = message
+            return self._error
+
+    def _batch_commit_allowed(self) -> bool:
+        """Linearize batch admission against asynchronous recorder errors.
+
+        An error already latched rejects this batch. An error arriving after
+        this short decision applies to later work; the lock is released before
+        any HDF5 attribute write, so AO admission never waits on file I/O.
+        """
+        with self._error_lock:
+            return self._error is None
 
     @staticmethod
     def safe_custom_name(value: Optional[str]) -> str:
@@ -1155,13 +1177,16 @@ class H5Recorder:
             # uint8 remains readable across older and newer HDF5/h5py versions.
             self._file.attrs["complete"] = np.uint8(0)
             self._file.flush()
-            self._error = None
+            with self._error_lock:
+                self._error = None
             self._committed_samples = 0
             self._last_source_end = None
             self._last_mode = None
             self._last_flush = time.monotonic()
             with self._action_stage_lock:
                 self._pending_action_stages.clear()
+                self._open_fault_zero_range = None
+                self._action_stage_inflight_count = 0
             self._action_stage_flush_failed = False
             with self._admission_lock:
                 self._recording_open = True
@@ -1217,45 +1242,110 @@ class H5Recorder:
             return
         if stage == "zero_substituted" and not request_id and reason == "no current-generation command":
             return
+        self._append_action_stage(sample_index=sample_index, generation=generation,
+            stage=stage, controller=controller, requested_rate_hz=requested_rate_hz,
+            reason=reason, request_id=request_id, source_sample_index=source_sample_index,
+            latest_sample_index=latest_sample_index, target_sample_index=target_sample_index,
+            range_end_sample_index=range_end_sample_index, require_accepting=True)
+
+    def record_confirmed_fault_zero(self, *, sample_index: int, sample_count: int,
+                                    generation: int, controller: str, reason: str) -> None:
+        """Record a confirmed, pulse-free zero write as a bounded AO interval."""
+        if sample_count <= 0:
+            raise ValueError("confirmed fault-zero extent must be positive")
+        start = int(sample_index)
+        end = start + int(sample_count)
         with self._admission_lock:
             if not self._accepting:
                 return
-            self._append_action_stage(sample_index=sample_index, generation=generation,
-                stage=stage, controller=controller, requested_rate_hz=requested_rate_hz,
-                reason=reason, request_id=request_id, source_sample_index=source_sample_index,
-                latest_sample_index=latest_sample_index, target_sample_index=target_sample_index,
-                range_end_sample_index=range_end_sample_index)
+            with self._action_stage_lock:
+                current = self._open_fault_zero_range
+                if current is not None:
+                    old_start, old_end, old_generation, old_controller, old_reason = current
+                    if (old_end == start and old_generation == int(generation)
+                            and old_controller == controller and old_reason == reason):
+                        self._open_fault_zero_range = (
+                            old_start, end, old_generation, old_controller, old_reason)
+                        return
+                    self._seal_fault_zero_locked()
+                if self._pending_action_count_locked() >= self.MAX_PENDING_ACTION_ROWS:
+                    self._latch_action_overflow_locked()
+                    return
+                self._open_fault_zero_range = (
+                    start, end, int(generation), str(controller), str(reason))
 
     def _append_action_stage(self, *, sample_index: int, generation: int, stage: str,
                              controller: str, requested_rate_hz: float = 0.0, reason: str = "",
                              request_id: str = "", source_sample_index: Optional[int] = None,
                              latest_sample_index: Optional[int] = None,
                              target_sample_index: Optional[int] = None,
-                             range_end_sample_index: Optional[int] = None) -> None:
-        """Append an event derived from an already-admitted recorder block."""
-        with self._action_stage_lock:
-            self._pending_action_stages.append((sample_index, generation, stage, controller,
-                requested_rate_hz, reason, request_id,
-                sample_index if source_sample_index is None else source_sample_index,
-                sample_index if latest_sample_index is None else latest_sample_index,
-                sample_index if target_sample_index is None else target_sample_index,
-                -1 if range_end_sample_index is None else int(range_end_sample_index)))
+                             range_end_sample_index: Optional[int] = None,
+                             require_accepting: bool = False,
+                             raise_on_overflow: bool = False) -> None:
+        """Append in admission order; queued RecordBlocks may append after stop begins."""
+        with self._admission_lock:
+            if require_accepting and not self._accepting:
+                return
+            with self._action_stage_lock:
+                self._seal_fault_zero_locked()
+                if self._pending_action_count_locked() >= self.MAX_PENDING_ACTION_ROWS:
+                    self._latch_action_overflow_locked()
+                    if raise_on_overflow:
+                        raise RuntimeError(self.error or "recording action-stage limit exceeded")
+                    return
+                self._pending_action_stages.append((sample_index, generation, stage, controller,
+                    requested_rate_hz, reason, request_id,
+                    sample_index if source_sample_index is None else source_sample_index,
+                    sample_index if latest_sample_index is None else latest_sample_index,
+                    sample_index if target_sample_index is None else target_sample_index,
+                    -1 if range_end_sample_index is None else int(range_end_sample_index)))
+
+    def _pending_action_count_locked(self) -> int:
+        return (len(self._pending_action_stages) + int(self._open_fault_zero_range is not None)
+                + self._action_stage_inflight_count)
+
+    def _seal_fault_zero_locked(self) -> None:
+        """Move the open interval into insertion order; action-stage lock held."""
+        current = self._open_fault_zero_range
+        if current is None:
+            return
+        start, end, generation, controller, reason = current
+        self._pending_action_stages.append((
+            start, generation, "zero_substituted", controller, 0.0, reason, "",
+            start, start, start, end,
+        ))
+        self._open_fault_zero_range = None
+
+    def _latch_action_overflow_locked(self) -> None:
+        self._accepting = False
+        self._latch_error(
+            f"recording writer failed: pending action-stage limit "
+            f"({self.MAX_PENDING_ACTION_ROWS}) exceeded")
 
     def _flush_action_stages(self) -> None:
         if self._file is None:
             return
-        with self._action_stage_lock:
-            rows, self._pending_action_stages = self._pending_action_stages, []
+        # The producer lock orders admission with range sealing. HDF5 I/O is
+        # performed only after both short metadata locks have been released.
+        with self._admission_lock:
+            with self._action_stage_lock:
+                self._seal_fault_zero_locked()
+                rows, self._pending_action_stages = self._pending_action_stages, []
+                self._action_stage_inflight_count += len(rows)
         if rows:
-            dataset = self._file["events/action_stages"]
-            start = dataset.shape[0]
-            dataset.resize(start + len(rows), axis=0)
-            dataset[start:] = np.asarray([
-                (request_id.encode()[:32], generation, source, latest, target, sample, range_end,
-                 stage.encode()[:24], controller.encode()[:16], rate, reason.encode()[:96])
-                for sample, generation, stage, controller, rate, reason, request_id, source, latest, target,
-                    range_end in rows
-            ], dtype=dataset.dtype)
+            try:
+                dataset = self._file["events/action_stages"]
+                start = dataset.shape[0]
+                dataset.resize(start + len(rows), axis=0)
+                dataset[start:] = np.asarray([
+                    (request_id.encode()[:32], generation, source, latest, target, sample, range_end,
+                     stage.encode()[:24], controller.encode()[:16], rate, reason.encode()[:96])
+                    for sample, generation, stage, controller, rate, reason, request_id, source, latest, target,
+                        range_end in rows
+                ], dtype=dataset.dtype)
+            finally:
+                with self._action_stage_lock:
+                    self._action_stage_inflight_count -= len(rows)
 
     def stop_recording(self, timeout: float = 10.0) -> None:
         with self._admission_lock:
@@ -1266,7 +1356,7 @@ class H5Recorder:
         deadline = time.monotonic() + timeout
         while self.items.unfinished_tasks:
             if not self._thread.is_alive():
-                raise RuntimeError(self._error or "recording writer stopped before its queue drained")
+                raise RuntimeError(self.error or "recording writer stopped before its queue drained")
             if time.monotonic() >= deadline:
                 raise TimeoutError(
                     f"recording queue did not drain within {timeout:.1f}s "
@@ -1281,10 +1371,9 @@ class H5Recorder:
                         self._flush_action_stages()
                     except Exception as exc:
                         self._action_stage_flush_failed = True
-                        if self._error is None:
-                            self._error = f"recording writer failed: {type(exc).__name__}: {exc}"
+                        self._latch_error(f"recording writer failed: {type(exc).__name__}: {exc}")
                 self._file.attrs["completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-                self._file.attrs.modify("complete", np.uint8(self._error is None))
+                self._file.attrs.modify("complete", np.uint8(self.error is None))
                 self._file.flush()
                 with contextlib.suppress(Exception):
                     os.fsync(self._file.id.get_vfd_handle())
@@ -1296,8 +1385,8 @@ class H5Recorder:
                 self._pulse_dataset = self._gap_dataset = None
         with self._admission_lock:
             self._recording_open = False
-        if self._error:
-            raise RuntimeError(self._error)
+        if self.error:
+            raise RuntimeError(self.error)
 
     def close(self) -> None:
         with self._close_lock:
@@ -1329,8 +1418,7 @@ class H5Recorder:
             if not self._thread.is_alive() and self._file is not None:
                 if stop_error is not None:
                     with self._lock:
-                        if self._error is None:
-                            self._error = f"recording close failed: {type(stop_error).__name__}: {stop_error}"
+                        self._latch_error(f"recording close failed: {type(stop_error).__name__}: {stop_error}")
                 try:
                     self.stop_recording()
                 except BaseException as exc:
@@ -1354,12 +1442,30 @@ class H5Recorder:
 
     def _writer_loop(self) -> None:
         while True:
-            first = self.items.get()
+            try:
+                first = self.items.get(timeout=max(0.001, self.config.recorder_batch_s))
+            except queue.Empty:
+                # Fault zero intervals can arrive without any further source
+                # blocks after acquisition stops. Service them on the recorder
+                # owner thread, never from the AO producer.
+                try:
+                    with self._lock:
+                        if self._file is not None and not self._action_stage_flush_failed:
+                            self._flush_action_stages()
+                            if time.monotonic() - self._last_flush >= self.config.recorder_flush_s:
+                                self._file.flush()
+                                self._last_flush = time.monotonic()
+                except Exception as exc:
+                    self._action_stage_flush_failed = True
+                    self._latch_error(f"recording writer failed: {type(exc).__name__}: {exc}")
+                    with self._admission_lock:
+                        self._accepting = False
+                    LOG.exception("Recording event-only flush failed")
+                continue
             if first is None:
                 self.items.task_done()
                 return
-            with self._lock:
-                failed = self._error is not None
+            failed = self.error is not None
             if failed:
                 self.items.task_done()
                 continue
@@ -1413,6 +1519,8 @@ class H5Recorder:
                     except Exception:
                         self._action_stage_flush_failed = True
                         raise
+                    if not self._batch_commit_allowed():
+                        raise RuntimeError(self.error or "recording failed before batch commit")
                     self._file.attrs.modify("committed_samples", stop)
                     self._committed_samples = stop
                     if time.monotonic() - self._last_flush >= self.config.recorder_flush_s:
@@ -1420,16 +1528,17 @@ class H5Recorder:
                         self._last_flush = time.monotonic()
             except Exception as exc:
                 with self._lock:
-                    self._error = f"recording writer failed: {type(exc).__name__}: {exc}"
+                    message = f"recording writer failed: {type(exc).__name__}: {exc}"
                     if not self._action_stage_flush_failed:
                         try:
                             self._flush_action_stages()
                         except Exception as flush_exc:
                             self._action_stage_flush_failed = True
-                            self._error += (
+                            message += (
                                 f"; action-stage flush also failed: "
                                 f"{type(flush_exc).__name__}: {flush_exc}"
                             )
+                    self._latch_error(message)
                 with self._admission_lock:
                     self._accepting = False
                 LOG.exception("Recording writer failed")
@@ -1522,6 +1631,7 @@ class H5Recorder:
                 latest_sample_index=int(diag.get("latest_sample_index", item.sample_index)),
                 target_sample_index=int(event.get("target_onset_sample_index", item.ao_target_sample_index)),
                 reason="controller and actuator proposal; AO scheduler outcome follows",
+                raise_on_overflow=True,
             )
 
         if np.any(item.pulse_fired > 0.5):
@@ -1562,11 +1672,16 @@ class H5Recorder:
 def record_sparse_ao_outcome(recorder: Optional[H5Recorder], *, sample_index: int,
                              generation: int, stage: str, controller: str,
                              waveform: Optional[np.ndarray] = None,
-                             events: tuple[Any, ...] = (), reason: str = "") -> None:
+                             events: tuple[Any, ...] = (), reason: str = "",
+                             confirmed_zero_sample_count: int = 0) -> None:
     """Persist pulse-ID outcomes and exceptional/nonzero analog outcomes only."""
     if recorder is None:
         return
     pulse_events = tuple(events)
+    fault_zero_reasons = {
+        "faulted AO refill committed as safe zero",
+        "faulted refill was written as safe zero",
+    }
     if pulse_events:
         for event in pulse_events:
             recorder.record_action_stage(
@@ -1585,6 +1700,25 @@ def record_sparse_ao_outcome(recorder: Optional[H5Recorder], *, sample_index: in
             stage="analog_accepted" if accepted else "analog_rejected",
             controller=controller, reason=reason,
         )
+    elif (stage == "zero_substituted" and not pulse_events
+          and reason in fault_zero_reasons and confirmed_zero_sample_count > 0):
+        # The caller may pass an extent only after a successful full write of
+        # known-zero samples. A missing waveform or a short/unknown NI write is
+        # not sufficient evidence to manufacture a committed AO range.
+        record_range = getattr(recorder, "record_confirmed_fault_zero", None)
+        if callable(record_range):
+            record_range(
+                sample_index=sample_index, sample_count=confirmed_zero_sample_count,
+                generation=generation, controller=controller, reason=reason,
+            )
+        else:
+            # Lightweight recorder adapters retain the same explicit range
+            # evidence; only H5Recorder coalesces adjacent rows in memory.
+            recorder.record_action_stage(
+                sample_index=sample_index, generation=generation, stage=stage,
+                controller=controller, reason=reason,
+                range_end_sample_index=sample_index + confirmed_zero_sample_count,
+            )
     elif stage == "zero_substituted":
         recorder.record_action_stage(
             sample_index=sample_index, generation=generation, stage=stage,
@@ -3488,7 +3622,8 @@ class SimulatedAoScheduler:
                 record_sparse_ao_outcome(self.recorder, sample_index=block * chunk,
                     generation=generation, stage=terminal_stage, controller=snapshot.controller,
                     waveform=original_waveform, events=original_events,
-                    reason="faulted AO refill committed as safe zero")
+                    reason="faulted AO refill committed as safe zero",
+                    confirmed_zero_sample_count=(chunk if terminal_stage == "zero_substituted" else 0))
                 if original_pending is not None:
                     self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
                         block, original_pending, chunk, "cancelled", "AO block replaced with safe zero"))
@@ -3968,6 +4103,8 @@ class ScheduledAo:
                             if written_count < 0 or written_count > total_samples:
                                 written_count = 0
                             if written_count != total_samples:
+                                # Partial/ambiguous write results never report
+                                # a full-block zero extent to the sparse recorder.
                                 self._settle_reserved_write(
                                     reserved, first_target, chunk, written_count,
                                     unknown_reason="NI writer returned a short sample count; remainder state unknown",
@@ -4004,6 +4141,10 @@ class ScheduledAo:
                                             controller=snapshot.controller, waveform=command, events=events,
                                             reason="NI writer accepted AO samples")
                                     elif active_miss or fault_before_write:
+                                        # This branch is reached only after the
+                                        # full concatenated refill was accepted;
+                                        # the source above replaced every block
+                                        # with exact zero arrays before writing.
                                         rejected = (zeroed_reserved[offset]
                                                     if offset < len(zeroed_reserved) else None)
                                         # Reserved pulse IDs were already
@@ -4017,7 +4158,8 @@ class ScheduledAo:
                                             generation=rejected[2] if rejected is not None else snapshot.generation,
                                             stage="zero_substituted", controller=snapshot.controller,
                                             waveform=command, events=events,
-                                            reason="faulted refill was written as safe zero")
+                                            reason="faulted refill was written as safe zero",
+                                            confirmed_zero_sample_count=chunk)
                             if self.ao_outcome is not None:
                                 for offset in range(len(refill)):
                                     submitted = not active_miss and not fault_before_write and offset < len(reserved)

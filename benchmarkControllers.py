@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+from collections import deque
 import gc
 import hashlib
 import json
@@ -46,6 +47,7 @@ REFERENCE_COVERAGE = {
     "deadline_ms": 5.0,
 }
 EXPECTED_CONTROLLERS = ("rule", "pid", "esn")
+AO_FAULT_CORE_HISTORY_CAPACITY = 32
 
 
 def file_sha256(path: Path) -> str:
@@ -176,6 +178,34 @@ class RunMetrics:
     physical_pulse_claims: bool = False
     simulation: bool = False
     notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _CoreTimingContext:
+    """Immutable, bounded context captured outside the measured Core call."""
+
+    source_sample_index: int
+    start_perf_counter_ns: int
+    end_perf_counter_ns: int
+    wall_ms: float
+    thread_cpu_ms: float
+    process_cpu_ms: float
+    gc_overlap: bool
+    source_availability_lag_ms: float | None
+    source_availability_lag_sample_index: int | None
+    mode: str
+    acquiring: bool
+    armed: bool
+    transition_pending: bool
+    generation: int
+    core_processed_generation: int | None
+    state_observation: str
+    controller: str
+    controller_ready: bool
+    controller_calibrated: bool
+    fault: str | None
+    controller_reason: str
+    pulse_events: tuple[Any, ...]
 
 
 def _json_default(value: Any) -> Any:
@@ -640,6 +670,15 @@ class _Harness:
         self._ao_clock_gap_count = 0
         self.source_availability_lags_s: list[float] = []
         self._last_source_availability_lag_ms = 0.0
+        self._active_core_source_index: int | None = None
+        self._last_core_call_started_source_index: int | None = None
+        self._latest_source_sample_index_seen: int | None = None
+        self._active_core_source_lag_ms: float | None = None
+        self._active_core_source_lag_index: int | None = None
+        self._recent_core_rows: deque[_CoreTimingContext] = deque(
+            maxlen=AO_FAULT_CORE_HISTORY_CAPACITY)
+        self._recent_core_lock = threading.Lock()
+        self._gc_event_cursor = 0
         self._generated_lock = threading.Lock()
         self.recorder = app.H5Recorder(config, metadata)
         self.recording_path = self.recorder.start(_run_id(source_name, config.controller, config.ao_target_lead_ms))
@@ -702,6 +741,9 @@ class _Harness:
         self._gc_starts: dict[tuple[int, int], int] = {}
         self._gc_pauses_ns: list[int] = []
         self._gc_events: list[tuple[int, int, int]] = []
+        # GC callbacks can run reentrantly while a same-thread snapshot is
+        # allocating; RLock avoids deadlocking the diagnostic path.
+        self._gc_lock = threading.RLock()
         self._slow_process_calls = 0
         self._gc_callback = self._collect_gc_timing
         gc.callbacks.append(self._gc_callback)
@@ -717,9 +759,71 @@ class _Harness:
         self.pacing_epoch: float | None = None
         self.last_source_index: int | None = None
 
+    def _mark_core_call_started(self, source_index: int,
+                                source_lag_ms: float | None) -> None:
+        with self._recent_core_lock:
+            self._active_core_source_index = int(source_index)
+            self._last_core_call_started_source_index = int(source_index)
+            self._active_core_source_lag_ms = source_lag_ms
+            self._active_core_source_lag_index = int(source_index) if source_lag_ms is not None else None
+
+    def _remember_completed_core_call(self, source_index: int, start_ns: int, end_ns: int,
+                                     thread_cpu_ns: int, process_cpu_ns: int,
+                                     source_lag_ms: float | None) -> _CoreTimingContext:
+        """Capture immutable context after the timed Core interval has ended.
+
+        The state and controller observations are sampled after Core and are
+        not asserted to be the exact state consumed by that call.
+        """
+        with self._gc_lock:
+            new_gc_events = tuple(self._gc_events[self._gc_event_cursor:])
+            self._gc_event_cursor = len(self._gc_events)
+            active_gc_starts = tuple(self._gc_starts.values())
+        gc_overlap = any(
+            gc_end - pause < end_ns and gc_end > start_ns
+            for gc_end, pause, _generation in new_gc_events
+        ) or any(gc_start < end_ns for gc_start in active_gc_starts)
+        state_after_core = self.state.snapshot()
+        diagnostics_after_core = dict(getattr(self.core, "_last_diagnostics", {}))
+        pulse_events = tuple(getattr(self.core, "last_pulse_events", ()))
+        row = _CoreTimingContext(
+            source_sample_index=int(source_index),
+            start_perf_counter_ns=int(start_ns), end_perf_counter_ns=int(end_ns),
+            wall_ms=float((end_ns - start_ns) / 1e6),
+            thread_cpu_ms=float(thread_cpu_ns / 1e6),
+            process_cpu_ms=float(process_cpu_ns / 1e6), gc_overlap=bool(gc_overlap),
+            source_availability_lag_ms=source_lag_ms,
+            source_availability_lag_sample_index=(
+                int(source_index) if source_lag_ms is not None else None),
+            mode=str(state_after_core.mode), acquiring=bool(state_after_core.acquiring),
+            armed=bool(state_after_core.armed),
+            transition_pending=bool(state_after_core.transition_pending),
+            generation=int(state_after_core.generation),
+            core_processed_generation=(
+                int(self.core.last_processed_generation)
+                if getattr(self.core, "last_processed_generation", None) is not None else None
+            ),
+            state_observation="after_core_call",
+            controller=str(state_after_core.controller),
+            controller_ready=bool(state_after_core.controller_ready),
+            controller_calibrated=bool(state_after_core.controller_calibrated),
+            fault=state_after_core.fault,
+            controller_reason=str(diagnostics_after_core.get("reason", "")),
+            pulse_events=pulse_events,
+        )
+        # The history append and active marker clear are after end_ns. They
+        # never change the established Core timing boundary.
+        with self._recent_core_lock:
+            self._recent_core_rows.append(row)
+            self._active_core_source_index = None
+            self._active_core_source_lag_ms = None
+            self._active_core_source_lag_index = None
+        return row
+
     def process(self, source_index: int, values_mv: np.ndarray, roles: tuple[str, str],
                 labels: tuple[str, str], ctx_index: int, *, arm_after_drain: bool = True,
                 stim_enabled: bool = True) -> app.GeneratedAoBlock:
+        source_availability_lag_ms: float | None = None
         if self.base_sample_index is None:
             self.base_sample_index = source_index
             if self.stall_at_source_index is not None:
@@ -733,16 +837,23 @@ class _Harness:
             lag_s = self._await_paced_source(source_index)
             self.source_availability_lags_s.append(lag_s)
             self._last_source_availability_lag_ms = lag_s * 1000.0
+            source_availability_lag_ms = lag_s * 1000.0
         if self.last_source_index is not None and source_index <= self.last_source_index:
             raise ValueError("replay source sample indices must increase monotonically")
         if self.last_source_index is not None:
             gap = source_index - self.last_source_index - self.config.chunk_size
             if gap > 0:
                 self.metrics.source_index_gap_samples += gap
-        self.last_source_index = source_index
+        with self._recent_core_lock:
+            self.last_source_index = source_index
+            self._latest_source_sample_index_seen = source_index
         if values_mv.shape != (2, self.config.chunk_size):
             raise ValueError(f"processing input shape must be (2, {self.config.chunk_size})")
         self._wait_for_unpaced_recorder_capacity(source_index)
+        # This start marker is published before the measured Core interval.
+        # If it remains set in a fault snapshot, completion history has not yet
+        # been published; it does not prove Core is still executing.
+        self._mark_core_call_started(source_index, source_availability_lag_ms)
         start = time.perf_counter_ns()
         thread_cpu_start = time.thread_time_ns()
         process_cpu_start = time.process_time_ns()
@@ -760,6 +871,10 @@ class _Harness:
             self.thread_cpu_ns.append(thread_cpu_elapsed)
             self.process_cpu_ns.append(process_cpu_elapsed)
             elapsed_ms = (end - start) / 1e6
+            self._remember_completed_core_call(
+                source_index, start, end, thread_cpu_elapsed, process_cpu_elapsed,
+                source_availability_lag_ms,
+            )
             if elapsed_ms >= self.metrics.deadline_ms:
                 self._slow_process_calls += 1
                 if self._slow_process_calls <= 20:
@@ -972,14 +1087,15 @@ class _Harness:
         generation = int(info.get("generation", -1))
         key = (threading.get_ident(), generation)
         now = time.perf_counter_ns()
-        if phase == "start":
-            self._gc_starts[key] = now
-        elif phase == "stop":
-            started = self._gc_starts.pop(key, None)
-            if started is not None:
-                pause = max(0, now - started)
-                self._gc_pauses_ns.append(pause)
-                self._gc_events.append((now, pause, generation))
+        with self._gc_lock:
+            if phase == "start":
+                self._gc_starts[key] = now
+            elif phase == "stop":
+                started = self._gc_starts.pop(key, None)
+                if started is not None:
+                    pause = max(0, now - started)
+                    self._gc_pauses_ns.append(pause)
+                    self._gc_events.append((now, pause, generation))
 
     def _await_paced_source(self, source_index: int) -> float:
         """Wait until this finite-source block has acquired its original samples.
@@ -1049,6 +1165,35 @@ class _Harness:
         self._ao_clock_thread = threading.Thread(target=self._ao_clock_loop, name="benchmark-simulated-ao-clock", daemon=True)
         self._ao_clock_thread.start()
 
+    def _snapshot_recent_core_context(self) -> dict[str, Any]:
+        """Copy bounded immutable history and in-flight source markers."""
+        with self._recent_core_lock:
+            rows = tuple(self._recent_core_rows)
+            active_source = self._active_core_source_index
+            last_started_source = self._last_core_call_started_source_index
+            latest_source_seen = self._latest_source_sample_index_seen
+            active_lag_ms = self._active_core_source_lag_ms
+            active_lag_index = self._active_core_source_lag_index
+        latest = rows[-1] if rows else None
+        lag_ms = active_lag_ms if active_lag_index is not None else (
+            latest.source_availability_lag_ms if latest is not None else None)
+        lag_index = active_lag_index if active_lag_index is not None else (
+            latest.source_availability_lag_sample_index if latest is not None else None)
+        return {
+            "latest_source_sample_index_seen": latest_source_seen,
+            "latest_core_call_started_source_sample_index": last_started_source,
+            "core_call_started_not_yet_published_source_sample_index": active_source,
+            "latest_completed_core_source_sample_index": (
+                latest.source_sample_index if latest is not None else None),
+            "source_availability_lag_ms": lag_ms,
+            "source_availability_lag_sample_index": lag_index,
+            "recent_core_history_capacity": AO_FAULT_CORE_HISTORY_CAPACITY,
+            "recent_core_history": [asdict(row) for row in rows],
+            "latest_completed_pulse_events": (
+                [asdict(event) for event in latest.pulse_events]
+                if latest is not None else []),
+        }
+
     def _ao_clock_loop(self) -> None:
         last = time.perf_counter()
         while not self._ao_clock_stop.is_set():
@@ -1060,18 +1205,51 @@ class _Harness:
                 self._ao_clock_gap_count += 1
             try:
                 self._advance_virtual(elapsed)
-                state_fault = self.state.snapshot().fault
+                state_snapshot = self.state.snapshot()
+                state_fault = state_snapshot.fault
                 if state_fault and state_fault != self._observed_ao_fault:
                     self._observed_ao_fault = state_fault
                     stats = self.scheduler.stats_snapshot()
+                    observed_ns = time.perf_counter_ns()
+                    recent_context = self._snapshot_recent_core_context()
                     write_progress(self.progress_path, {
                         "type": "ao_clock_fault", "fault": state_fault,
-                        "source_sample_index": self.last_source_index,
-                        "pulse_events": [asdict(event) for event in self.core.last_pulse_events],
+                        "source_sample_index": recent_context["latest_source_sample_index_seen"],
+                        "latest_completed_pulse_events": recent_context.pop(
+                            "latest_completed_pulse_events"),
                         "generated_sample_count": stats.get("generated_sample_count"),
                         "next_write_block": getattr(self.scheduler, "_next_write_block", None),
                         "pacing_epoch_monotonic": self.pacing_epoch,
-                        "observed_monotonic": time.perf_counter(), "ao": stats,
+                        "observed_monotonic": observed_ns / 1e9,
+                        "observation_time_monotonic_ns": observed_ns,
+                        "observation_is_fault_onset": False,
+                        "history_overhead_note": (
+                            "Recent-row capture runs after each measured Core call; it is outside the recorded Core interval "
+                            "but adds harness work that may affect later scheduling."
+                        ),
+                        "snapshot_semantics_note": (
+                            "Service gap is the AO host's observed interval, not a proven fault onset or cause. "
+                            "AO, runtime state, and recent Core rows are sampled sequentially, not atomically. "
+                            "A started-but-unpublished Core index is not proof that Core is still executing."
+                        ),
+                        "ao_service_gap_ms": elapsed * 1000.0,
+                        "ao_service_gap_over_block_period": (
+                            elapsed > self.config.chunk_size / self.config.sample_rate),
+                        "ao_max_service_gap_ms_at_observation": self._ao_clock_max_gap_s * 1000.0,
+                        "ao_service_gaps_over_block_period_at_observation": self._ao_clock_gap_count,
+                        "state_observed_after_ao_advance": {
+                            "mode": state_snapshot.mode,
+                            "acquiring": state_snapshot.acquiring,
+                            "armed": state_snapshot.armed,
+                            "transition_pending": state_snapshot.transition_pending,
+                            "generation": state_snapshot.generation,
+                            "controller": state_snapshot.controller,
+                            "controller_ready": state_snapshot.controller_ready,
+                            "controller_calibrated": state_snapshot.controller_calibrated,
+                            "fault": state_snapshot.fault,
+                        },
+                        "ao": stats,
+                        **recent_context,
                     })
             except BaseException as exc:
                 self._ao_clock_error = exc
