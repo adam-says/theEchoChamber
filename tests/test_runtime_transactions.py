@@ -15,6 +15,7 @@ from unittest import mock
 
 import numpy as np
 import pytest
+from controllers import ControllerAction, PulseActuator
 
 import echoChamber as app
 
@@ -29,6 +30,96 @@ def make_state(controller: str = "rule") -> app.RuntimeState:
 
 def make_config() -> app.AppConfig:
     return app.AppConfig(processing_block_ms=5.0, ao_target_lead_ms=100.0)
+
+
+def test_actuator_exposes_phase_high_water_and_real_reset_count_without_changing_mapping():
+    actuator = PulseActuator()
+    actuator.arm()
+    valid = np.ones(100, dtype=bool)
+    first = actuator.process(
+        ControllerAction(kind="pulse_rate", requested_rate_hz=1.0),
+        first_sample_index=0, sample_count=100, sample_rate_hz=1_000.0,
+        armed=True, validity_mask=valid, amplitude_v=0.5, generation=1,
+    )
+    assert first.rendered_count == 0
+    assert actuator.rate_phase == pytest.approx(0.1)
+    assert actuator.rate_phase_high_water == pytest.approx(0.1)
+    assert actuator.rate_phase_reset_count == 0
+
+    actuator.process(
+        ControllerAction(kind="none"), first_sample_index=100, sample_count=100,
+        sample_rate_hz=1_000.0, armed=True, validity_mask=valid,
+        amplitude_v=0.5, generation=1,
+    )
+    assert actuator.rate_phase == 0.0
+    assert actuator.rate_phase_reset_count == 1
+    assert actuator.rate_phase_high_water == pytest.approx(0.1)
+
+
+def test_ao_ownership_retires_only_after_generated_and_cumulative_local_ack():
+    lifecycle = app.AoCommandLifecycle()
+    waveform = np.sin(np.arange(100, dtype=np.float64) / 10.0)
+    waveform.setflags(write=False)
+    plan = app.SafetyAdmittedPulsePlan("g2-p1", 2, 880, 2_880, 899, waveform)
+    lifecycle.submit(28, np.zeros(100), 2, chunk_size=100, pulse_plans=(plan,))
+    event28 = app.PulseEvent("g2-p1", 880, 880, 2_880, "rendered_for_ao", 2, 20, 899)
+    event29 = app.PulseEvent("g2-p1", 880, 880, 2_880, "rendered_for_ao", 2, 80, 899)
+    lifecycle.pulse_outcomes(28, lifecycle.commands[28], 100, "committed")
+    lifecycle.pulse_outcomes(29, lifecycle.commands[29], 100, "committed")
+    lifecycle.committed((event28,), 20_000)
+    lifecycle.committed((event29,), 20_000)
+    lifecycle.record_owned(28, np.zeros(100), 2, (event28,))
+    lifecycle.record_owned(29, np.zeros(100), 2, (event29,))
+
+    lifecycle.acknowledge_local("g2-p1", 900)
+    lifecycle.retire_generated(3_000, 100)
+    assert set(lifecycle.owned_blocks) == {28, 29}
+
+    # The later cumulative watermark arrives first; an older/reordered ack
+    # cannot reduce it or cause a second retirement decision.
+    lifecycle.acknowledge_local("g2-p1", 980)
+    lifecycle.acknowledge_local("g2-p1", 900)
+    lifecycle.retire_generated(3_000, 100)
+    assert not lifecycle.owned_blocks
+
+    partial = app.AoCommandLifecycle()
+    partial.submit(28, np.zeros(100), 2, chunk_size=100, pulse_plans=(plan,))
+    partial.pulse_outcomes(28, partial.commands[28], 100, "committed")
+    partial.pulse_outcomes(29, partial.commands[29], 100, "cancelled")
+    partial.committed((event28,), 20_000)
+    partial.record_owned(28, np.zeros(100), 2, (event28,))
+    partial.acknowledge_local("g2-p1", 900, finalized_end=900)
+    # A successful write already in flight when the fault arrived extends the
+    # finalized local boundary from the 20-sample prefix to the full plan.
+    partial.committed((event29,), 20_000)
+    assert partial.pulse_local_required_end["g2-p1"] == 980
+    partial.retire_generated(3_000, 100)
+    assert set(partial.owned_blocks) == {28}
+
+
+def test_unresolved_ao_outcome_keeps_pulse_origin_after_local_ack_and_block_removal():
+    lifecycle = app.AoCommandLifecycle()
+    waveform = np.linspace(0.0, 0.5, 100, dtype=np.float64)
+    plan = app.SafetyAdmittedPulsePlan("g2-unknown", 2, 880, 2_880, 899, waveform)
+    lifecycle.submit(28, np.zeros(100), 2, chunk_size=100, pulse_plans=(plan,))
+    entry28, entry29 = lifecycle.commands[28], lifecycle.commands[29]
+    lifecycle.pulse_outcomes(28, entry28, 100, "write_unknown", "in-flight write unresolved")
+    lifecycle.pulse_outcomes(29, entry29, 100, "write_unknown", "in-flight write unresolved")
+    lifecycle.acknowledge_local("g2-unknown", 980)
+
+    # A failed writer may leave no queued or reserved block while the result
+    # remains unknown. Absence of containers is not an authoritative cancel.
+    lifecycle.commands.clear()
+    lifecycle.retire_generated(3_000, 100)
+    assert lifecycle.pulse_waveform_size["g2-unknown"] == 100
+    assert lifecycle.pulse_target_onset["g2-unknown"] == 2_880
+
+    # A later successful writer confirmation resolves the unknown ranges as
+    # committed; the prior unknown was never silently downgraded to canceled.
+    lifecycle.pulse_outcomes(28, entry28, 100, "committed", "late write confirmation")
+    lifecycle.pulse_outcomes(29, entry29, 100, "committed", "late write confirmation")
+    lifecycle.retire_generated(3_000, 100)
+    assert "g2-unknown" not in lifecycle.pulse_waveform_size
 
 
 def test_ui_diagnostics_serialize_as_strict_json_during_calibration():
@@ -132,7 +223,9 @@ class FakeNiWriter:
                 raise TimeoutError("fake NI writer was not released")
         if self.calls == 2 and self.fail:
             raise OSError("injected fake NI write failure")
-        self.writes.append(np.asarray(values, dtype=np.float64).copy())
+        written = np.asarray(values, dtype=np.float64).copy()
+        self.writes.append(written)
+        return written.size
 
 
 def test_reserved_refill_is_not_removed_until_successful_writer_commit():
@@ -242,6 +335,200 @@ def _make_baseline_handoff_core(*, band_rule=(100.0, 250.0), band_pid=(100.0, 25
     esn = SimpleNamespace(ready=False, streamer=None, reset=lambda: None)
     core = Core(config, state, esn, object(), object(), None, app.Telemetry())
     return core, state
+
+
+def _make_armed_discontinuity_core():
+    class Core(app.ProcessingCore):
+        def _publish_ui(self, *args, **kwargs):
+            pass
+
+    settings = {
+        "rule": app.controller_settings_for("rule"),
+        "pid": app.controller_settings_for("pid"),
+    }
+    config = app.dataclasses.replace(make_config(), controller="rule", controller_settings=settings)
+    state = app.RuntimeState(
+        esn_ready=False, start_paused=False, electrode_labels=("CA3", "EC"), ctx_index=1,
+        pulse_threshold_std=3.0, pulse_window_sec=10.0, controller="rule",
+        controller_ready={"esn": False, "rule": True, "pid": True}, controller_settings=settings,
+    )
+    state.set_stim("threshold_pulse", 0.5)
+    state.set_mode("closed-loop")
+    state.acknowledge_drain(state.snapshot().generation)
+    state.update_controller_calibration("rule", True)
+    state.set_armed(True)
+    core = Core(config, state, SimpleNamespace(ready=False, streamer=None, reset=lambda: None),
+                object(), object(), None, app.Telemetry())
+    return core, state
+
+
+@pytest.mark.parametrize("discontinuity", ["gap", "masked_nan", "source_change"])
+def test_acquired_discontinuity_disarms_coalesces_and_suppresses_controller(discontinuity):
+    core, state = _make_armed_discontinuity_core()
+    config = core.config
+    block = np.zeros((2, config.chunk_size), dtype=np.float64)
+    controller = core.controllers["rule"]
+    original_step = controller.step
+    steps = []
+
+    def counted_step(inp):
+        steps.append(inp.first_sample_index)
+        return original_step(inp)
+
+    controller.step = counted_step
+    initial_generation = state.snapshot().generation
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    assert state.snapshot().generation == initial_generation  # first source binding is not a change
+    assert not state.snapshot().transition_pending
+    assert len(steps) == 1
+    controller.envelope.baseline = (0.25, 0.05)
+    core.controllers["pid"].envelope.baseline = (0.5, 0.1)
+    state.update_controller_calibration("rule", True)
+    assert state.snapshot().armed
+    core.actuator.arm()
+    staged = core.actuator.process(
+        ControllerAction(kind="pulse_events", pulse_sample_indices=(10,)),
+        first_sample_index=0, sample_count=config.chunk_size,
+        sample_rate_hz=config.sample_rate, armed=True,
+        validity_mask=np.ones(config.chunk_size, dtype=bool), amplitude_v=0.5,
+        generation=state.snapshot().generation, scheduler_lead_samples=config.ao_lead_samples,
+    )
+    assert staged.pulse_events
+    committed_pulse_id = staged.pulse_events[0].pulse_id
+    core.actuator.commit(committed_pulse_id, 20)
+    assert committed_pulse_id in core.actuator.committed_pulse_ids()
+
+    if discontinuity == "gap":
+        event_index = 3 * config.chunk_size
+        event_block = block.copy()
+        kwargs = {"input_is_electrode_mV": True}
+    elif discontinuity == "masked_nan":
+        event_index = config.chunk_size
+        event_block = block.copy()
+        event_block[0, 25] = np.nan
+        core._stimulated_intervals = [(event_index, event_index + config.chunk_size)]
+        kwargs = {"input_is_electrode_mV": True}
+    else:
+        event_index = config.chunk_size
+        event_block = block.copy()
+        kwargs = {
+            "input_is_electrode_mV": True,
+            "input_labels": ("Cortex", "CA3"),
+            "input_roles": ("Cortex", "CA3"),
+            "input_ctx_index": 0,
+        }
+
+    before_generation = state.snapshot().generation
+    core.process(event_block, sample_index=event_index, **kwargs)
+    snapshot = state.snapshot()
+    assert snapshot.generation == before_generation + 1
+    assert snapshot.transition_pending
+    assert not snapshot.armed
+    assert not snapshot.controller_calibrated
+    assert controller.envelope.baseline is None
+    assert core.controllers["pid"].envelope.baseline is None
+    assert len(steps) == 1  # current source-discontinuity block did not update the controller
+    assert core.last_processed_generation == snapshot.generation
+    assert committed_pulse_id in core.actuator.committed_pulse_ids()
+
+    repeat_block = block.copy()
+    repeat_index = event_index + config.chunk_size
+    repeat_kwargs = kwargs
+    if discontinuity == "masked_nan":
+        repeat_block[0, 25] = np.nan
+        core._stimulated_intervals = [(repeat_index, repeat_index + config.chunk_size)]
+    core.process(repeat_block, sample_index=repeat_index, **repeat_kwargs)
+    assert state.snapshot().generation == snapshot.generation
+    assert state.snapshot().transition_pending
+    assert not state.snapshot().armed
+    assert len(steps) == 1
+
+
+def test_simulated_source_gap_waits_for_generated_zero_then_requires_fresh_calibration_and_rearm():
+    core, state = _make_armed_discontinuity_core()
+    scheduler = app.SimulatedAoScheduler(core.config, state)
+    block = np.zeros((2, core.config.chunk_size), dtype=np.float64)
+    controller = core.controllers["rule"]
+    original_step = controller.step
+    steps = []
+
+    def counted_step(inp):
+        steps.append(inp.first_sample_index)
+        return original_step(inp)
+
+    controller.step = counted_step
+    core.process(block, sample_index=0, input_is_electrode_mV=True)
+    controller.envelope.baseline = (0.25, 0.05)
+    state.update_controller_calibration("rule", True)
+    assert state.snapshot().armed
+
+    core.process(block, sample_index=3 * core.config.chunk_size, input_is_electrode_mV=True)
+    generation = state.snapshot().generation
+    assert state.snapshot().transition_pending
+    assert not state.snapshot().armed
+    assert not state.snapshot().controller_calibrated
+    assert len(steps) == 1
+
+    scheduler.advance()
+    assert scheduler.generated_sample_count == core.config.chunk_size
+    assert state.snapshot().transition_pending  # the post-output zero has not advanced yet
+    core.process(block, sample_index=4 * core.config.chunk_size, input_is_electrode_mV=True)
+    assert state.snapshot().generation == generation
+    assert len(steps) == 1  # no calibration/controller update before drain acknowledgement
+
+    scheduler.advance()
+    assert scheduler.generated_sample_count == 2 * core.config.chunk_size
+    assert not state.snapshot().transition_pending
+    assert not state.snapshot().armed
+    assert not state.snapshot().controller_calibrated
+
+    core.process(block, sample_index=5 * core.config.chunk_size, input_is_electrode_mV=True)
+    assert len(steps) == 2  # controller may begin fresh calibration only after the zero barrier
+    assert not state.snapshot().armed  # acknowledgement never rearms stimulation
+
+
+def test_fake_ni_source_gap_barrier_does_not_ack_before_generated_zero():
+    config, writer = make_config(), FakeNiWriter(pause=True)
+    core, state = _make_armed_discontinuity_core()
+    committed = []
+    scheduler, task_patch, writer_patch = _start_fake_ni_scheduler(writer, state, config, committed)
+    zeros = np.zeros(config.chunk_size, dtype=np.float64)
+    for target in range(config.ao_lead_chunks, config.ao_lead_chunks + 40):
+        assert scheduler.submit(target, zeros, state.snapshot().generation)
+    with task_patch, writer_patch:
+        scheduler.start()
+        scheduler.notify_clock_started()
+        try:
+            assert writer.reserved.wait(3.0)
+            block = np.zeros((2, core.config.chunk_size), dtype=np.float64)
+            core.process(block, sample_index=0, input_is_electrode_mV=True)
+            controller = core.controllers["rule"]
+            controller.envelope.baseline = (0.25, 0.05)
+            core.controllers["pid"].envelope.baseline = (0.5, 0.1)
+            state.update_controller_calibration("rule", True)
+            assert state.snapshot().armed
+            generation = state.snapshot().generation
+            core.process(block, sample_index=3 * core.config.chunk_size, input_is_electrode_mV=True)
+            assert state.snapshot().generation == generation + 1
+            assert state.snapshot().transition_pending
+            assert not state.snapshot().armed
+            assert not state.snapshot().controller_calibrated
+            assert controller.envelope.baseline is None
+            assert core.controllers["pid"].envelope.baseline is None
+            assert core.last_processed_generation == generation + 1
+
+            writer.release.set()
+            deadline = time.monotonic() + 5.0
+            while state.snapshot().transition_pending and time.monotonic() < deadline:
+                time.sleep(0.005)
+            assert scheduler.error is None
+            assert not state.snapshot().transition_pending
+            assert not state.snapshot().armed
+            assert not state.snapshot().controller_calibrated
+            assert all(not np.any(values) for values in writer.writes)
+        finally:
+            writer.release.set()
+            scheduler.stop()
 
 
 def test_rule_to_pid_reuses_frozen_baseline_for_same_feature_and_starts_filter_guard():

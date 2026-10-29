@@ -54,7 +54,7 @@ import numpy as np
 import websockets
 from websockets.exceptions import ConnectionClosed
 from controllers import (
-    ActuatorFeedback, ControllerAction, ControllerInput, EsnController, PulseEvent, PulsePlan,
+    ActuatorFeedback, ControllerAction, ControllerInput, EsnController, PulseAoOutcome, PulseEvent, PulsePlan,
     PIDController, PulseActuator, RuleController,
 )
 from replay import load_replay
@@ -374,6 +374,9 @@ class RuntimeState:
         self._controller_settings = {name: dict(value) for name, value in (controller_settings or {}).items()}
         self._input_mapping_locked = bool(input_mapping_locked)
         self._prepared_controllers: dict[str, Any] = {}
+        self._settings_revisions: dict[str, int] = {name: 0 for name in self._controller_settings}
+        self._installed_settings_revisions: dict[str, int] = dict(self._settings_revisions)
+        self._prepared_settings_revisions: dict[str, int] = {}
         self._electrode_labels = electrode_labels
         self._ctx_index = ctx_index
 
@@ -485,6 +488,10 @@ class RuntimeState:
                     raise ValueError(f"cannot arm stimulation while {self._controller} is unavailable")
                 if self._transition_pending:
                     raise ValueError("wait for output drain to complete before arming")
+                settings_revision = self._settings_revisions.get(self._controller, 0)
+                installed_revision = self._installed_settings_revisions.get(self._controller, 0)
+                if installed_revision < settings_revision:
+                    raise ValueError("wait for the selected controller settings to be applied before arming")
                 if self._controller in {"rule", "pid"} and not self._controller_calibrated.get(self._controller, False):
                     raise ValueError(f"cannot arm until {self._controller} baseline calibration is complete")
                 if (self._stim_mode == "threshold_pulse" or self._controller in {"rule", "pid"}) \
@@ -518,6 +525,9 @@ class RuntimeState:
             old = self._controller_settings.get(controller, {})
             self._controller_settings[controller] = dict(settings)
             self._prepared_controllers[controller] = prepared
+            revision = self._settings_revisions.get(controller, 0) + 1
+            self._settings_revisions[controller] = revision
+            self._prepared_settings_revisions[controller] = revision
             if old.get("band_hz") != settings.get("band_hz"):
                 self._calibration_epoch += 1
                 self._controller_calibrated[controller] = False
@@ -525,14 +535,42 @@ class RuntimeState:
             self._transition_pending = True
             self._armed = False
 
-    def take_prepared_controller(self, controller: str) -> Any:
+    def take_prepared_controller(self, controller: str, *, generation: Optional[int] = None
+                                 ) -> tuple[Any, Optional[int]]:
         with self._lock:
-            return self._prepared_controllers.pop(controller, None)
+            if generation is not None and (
+                    generation != self._generation or self._transition_pending):
+                return None, None
+            prepared = self._prepared_controllers.pop(controller, None)
+            revision = self._prepared_settings_revisions.pop(controller, None)
+            return prepared, revision
+
+    def mark_controller_settings_applied(self, controller: str, revision: Optional[int]) -> bool:
+        """Record owner-thread installation of one immutable per-controller revision."""
+        with self._lock:
+            if revision is None:
+                return False
+            current = self._installed_settings_revisions.get(controller, 0)
+            self._installed_settings_revisions[controller] = max(current, int(revision))
+            return True
 
     def acknowledge_drain(self, generation: int) -> None:
         with self._lock:
             if generation == self._generation:
                 self._transition_pending = False
+
+    def begin_recoverable_drain(self) -> int:
+        """Disarm and coalesce a source-discontinuity barrier into the current transaction."""
+        with self._lock:
+            if self._fault is not None:
+                return self._generation
+            self._armed = False
+            if not self._transition_pending:
+                self._generation += 1
+                self._transition_pending = True
+                self._calibration_epoch += 1
+            self._controller_calibrated.update({"rule": False, "pid": False})
+            return self._generation
 
     def set_pulse_threshold_std(self, value: float) -> None:
         if not math.isfinite(value) or not 0 < value <= 20:
@@ -585,10 +623,20 @@ class RuntimeState:
             self._controller_calibrated.update({"rule": False, "pid": False})
             return self._electrode_labels
 
-    def update_controller_calibration(self, controller: str, calibrated: bool) -> None:
+    def update_controller_calibration(self, controller: str, calibrated: bool, *,
+                                      generation: Optional[int] = None,
+                                      calibration_epoch: Optional[int] = None) -> bool:
         with self._lock:
             if controller in {"rule", "pid"}:
+                if generation is not None and generation != self._generation:
+                    return False
+                if calibration_epoch is not None and calibration_epoch != self._calibration_epoch:
+                    return False
+                if generation is not None and controller != self._controller:
+                    return False
                 self._controller_calibrated[controller] = bool(calibrated)
+                return True
+            return False
 
     def invalidate_controller_calibration(self) -> None:
         """Clear cached controller readiness after a true source discontinuity."""
@@ -931,7 +979,7 @@ class H5Recorder:
         self._last_source_end: Optional[int] = None
         self._last_mode: Optional[int] = None
         self._action_stage_lock = threading.Lock()
-        self._pending_action_stages: list[tuple[int, int, str, str, float, str, str, int, int, int]] = []
+        self._pending_action_stages: list[tuple[int, int, str, str, float, str, str, int, int, int, int]] = []
         self._last_flush = time.monotonic()
         self._batch_samples = max(
             config.chunk_size,
@@ -1073,6 +1121,7 @@ class H5Recorder:
                                   dtype=np.dtype([("request_id", "S32"), ("generation", "<u8"),
                                                   ("source_sample_index", "<u8"), ("latest_sample_index", "<u8"),
                                                   ("target_sample_index", "<u8"), ("sample_index", "<u8"),
+                                                  ("range_end_sample_index", "<i8"),
                                                   ("stage", "S24"), ("controller", "S16"),
                                                   ("requested_rate_Hz", "<f4"), ("reason", "S96")]), **compression)
             self._mode_dataset = events.create_dataset(
@@ -1151,7 +1200,8 @@ class H5Recorder:
                             controller: str, requested_rate_hz: float = 0.0, reason: str = "",
                             request_id: str = "", source_sample_index: Optional[int] = None,
                             latest_sample_index: Optional[int] = None,
-                            target_sample_index: Optional[int] = None) -> None:
+                            target_sample_index: Optional[int] = None,
+                            range_end_sample_index: Optional[int] = None) -> None:
         # Per-block signals and compact diagnostics are the normal timeline.
         # The event table is reserved for pulse lifecycle IDs, exceptional AO
         # outcomes, drain acknowledgements, and explicitly nonzero analog
@@ -1169,20 +1219,23 @@ class H5Recorder:
             self._append_action_stage(sample_index=sample_index, generation=generation,
                 stage=stage, controller=controller, requested_rate_hz=requested_rate_hz,
                 reason=reason, request_id=request_id, source_sample_index=source_sample_index,
-                latest_sample_index=latest_sample_index, target_sample_index=target_sample_index)
+                latest_sample_index=latest_sample_index, target_sample_index=target_sample_index,
+                range_end_sample_index=range_end_sample_index)
 
     def _append_action_stage(self, *, sample_index: int, generation: int, stage: str,
                              controller: str, requested_rate_hz: float = 0.0, reason: str = "",
                              request_id: str = "", source_sample_index: Optional[int] = None,
                              latest_sample_index: Optional[int] = None,
-                             target_sample_index: Optional[int] = None) -> None:
+                             target_sample_index: Optional[int] = None,
+                             range_end_sample_index: Optional[int] = None) -> None:
         """Append an event derived from an already-admitted recorder block."""
         with self._action_stage_lock:
             self._pending_action_stages.append((sample_index, generation, stage, controller,
                 requested_rate_hz, reason, request_id,
                 sample_index if source_sample_index is None else source_sample_index,
                 sample_index if latest_sample_index is None else latest_sample_index,
-                sample_index if target_sample_index is None else target_sample_index))
+                sample_index if target_sample_index is None else target_sample_index,
+                -1 if range_end_sample_index is None else int(range_end_sample_index)))
 
     def _flush_action_stages(self) -> None:
         if self._file is None:
@@ -1194,9 +1247,10 @@ class H5Recorder:
             start = dataset.shape[0]
             dataset.resize(start + len(rows), axis=0)
             dataset[start:] = np.asarray([
-                (request_id.encode()[:32], generation, source, latest, target, sample,
+                (request_id.encode()[:32], generation, source, latest, target, sample, range_end,
                  stage.encode()[:24], controller.encode()[:16], rate, reason.encode()[:96])
-                for sample, generation, stage, controller, rate, reason, request_id, source, latest, target in rows
+                for sample, generation, stage, controller, rate, reason, request_id, source, latest, target,
+                    range_end in rows
             ], dtype=dataset.dtype)
 
     def stop_recording(self, timeout: float = 10.0) -> None:
@@ -1692,11 +1746,16 @@ class ProcessingCore:
         self._stimulated_intervals: list[tuple[int, int]] = []
         self._active_controller = initial_state.controller
         self._feature_signature: Optional[tuple[Any, ...]] = None
+        self._source_interpretation_signature: Optional[tuple[Any, ...]] = None
+        self._observed_calibration_epoch: Optional[int] = None
+        self._nonfinite_input_active = False
         self._actuator_lock = threading.RLock()
         self._last_pulse_events: tuple[Any, ...] = ()
         self._last_admitted_pulse_plans: tuple[SafetyAdmittedPulsePlan, ...] = ()
         self._actuator_commits: queue.SimpleQueue[tuple[str, int]] = queue.SimpleQueue()
+        self._pulse_ao_outcomes: queue.Queue[PulseAoOutcome] = queue.Queue(maxsize=512)
         self._ao_feedback: queue.SimpleQueue[tuple[int, bool, str]] = queue.SimpleQueue()
+        self._local_account_sink: Any = None
         self.last_processed_generation = state.snapshot().generation
 
     @property
@@ -1722,11 +1781,125 @@ class ProcessingCore:
                 controller.reset(keep_calibration=False)
         self.state.invalidate_controller_calibration()
 
+    def _age_safety_zeros(self, sample_count: int) -> None:
+        """Age a long source gap with only the finite safety-memory horizon."""
+        if sample_count <= 0:
+            return
+        step = self.safety.config.max_slew_v_per_s / self.config.sample_rate
+        slew_samples = (int(math.ceil(abs(self.safety.previous_v) / step)) if step > 0 else 0)
+        horizon = max(self.safety.area_history.maxlen, slew_samples, 1)
+        bounded = min(int(sample_count), horizon)
+        self.safety.process(np.zeros(bounded, dtype=np.float64))
+
+    def _settle_source_gap(self, first_sample_index: int, end_sample_index: int) -> None:
+        """Account committed plan overlap once, with bounded zero aging around it."""
+        if end_sample_index <= first_sample_index:
+            return
+        with self._actuator_lock:
+            finalized = self.actuator.limit_accounting_to_committed()
+            pieces = self.actuator.account_source_interval(
+                first_sample_index, end_sample_index - first_sample_index, committed_only=True)
+        cursor = first_sample_index
+        accounted: dict[str, int] = {}
+        for position, waveform, _pulse_id in pieces:
+            if position > cursor:
+                self._age_safety_zeros(position - cursor)
+            _, reason = self.safety.process(waveform)
+            if reason:
+                self.state.fault(f"stimulation safety trip while settling source gap: {reason}")
+            accounted[_pulse_id] = position + waveform.size
+            cursor = position + waveform.size
+        if cursor < end_sample_index:
+            self._age_safety_zeros(end_sample_index - cursor)
+        finalized_by_id = {pulse_id: (watermark, final_end)
+                           for pulse_id, watermark, final_end in finalized}
+        for pulse_id, watermark in accounted.items():
+            self._publish_local_account(
+                pulse_id, watermark, finalized_by_id.get(pulse_id, (watermark, None))[1])
+        for pulse_id, (watermark, final_end) in finalized_by_id.items():
+            self._publish_local_account(pulse_id, accounted.get(pulse_id, watermark), final_end)
+        with self._actuator_lock:
+            self.actuator.retire_accounted()
+
     def commit_actuator_event(self, pulse_id: str, samples: int) -> None:
         self._actuator_commits.put((pulse_id, samples))
 
+    def enqueue_ao_outcome(self, outcome: PulseAoOutcome) -> None:
+        """Queue scheduler facts for processing-thread application; never waits on AO I/O."""
+        try:
+            self._pulse_ao_outcomes.put_nowait(outcome)
+        except queue.Full:
+            self.state.fault("AO pulse-outcome queue overflow")
+
+    def _drain_ao_notifications(self, snapshot: StateSnapshot) -> int:
+        """Apply queued AO facts on the core owner without advancing source time."""
+        drained = 0
+        while True:
+            try:
+                outcome = self._pulse_ao_outcomes.get_nowait()
+            except queue.Empty:
+                break
+            with self._actuator_lock:
+                self.actuator.apply_ao_outcome(outcome)
+            self._record_pulse_outcome(outcome)
+            drained += 1
+        while True:
+            try:
+                self._actuator_commits.get_nowait()
+            except queue.Empty:
+                break
+            # Legacy commit callbacks are observational only. Typed AO range
+            # outcomes remain the sole commitment authority.
+        while True:
+            try:
+                feedback_generation, accepted, reason = self._ao_feedback.get_nowait()
+            except queue.Empty:
+                break
+            if feedback_generation == snapshot.generation:
+                self._feedback = ActuatorFeedback(accepted, reason, applied_rate_hz=None,
+                                                  armed=snapshot.armed)
+                drained += 1
+        return drained
+
+    def drain_ao_notifications(self) -> int:
+        """Flush queued scheduler facts without making a synthetic source block.
+
+        Call from the processing/core owner after the AO scheduler has stopped
+        producing notifications and before closing the recorder. This applies
+        actuator outcomes and writes their sparse audit rows only; it does not
+        run a controller, update safety history, or advance the source index.
+        """
+        return self._drain_ao_notifications(self.state.snapshot())
+
     def record_ao_outcome(self, generation: int, accepted: bool, reason: str) -> None:
         self._ao_feedback.put((generation, accepted, reason))
+
+    def set_local_account_sink(self, sink: Any) -> None:
+        """Bind a scheduler enqueue function for cumulative source watermarks."""
+        self._local_account_sink = sink
+
+    def _publish_local_account(self, pulse_id: str, accounted_until: int,
+                               finalized_end: int | None = None) -> None:
+        sink = self._local_account_sink
+        if sink is not None:
+            sink(pulse_id, int(accounted_until),
+                 None if finalized_end is None else int(finalized_end))
+
+    def _record_pulse_outcome(self, outcome: PulseAoOutcome) -> None:
+        if self.recorder is None:
+            return
+        stage = {"reserved": "ao_reserved", "committed": "ao_commit",
+                 "cancelled": "ao_cancelled", "write_unknown": "ao_write_unknown"}[outcome.status]
+        self.recorder.record_action_stage(
+            sample_index=outcome.start_sample_index, generation=outcome.generation,
+            stage=stage, controller=outcome.controller_id or "unknown",
+            request_id=outcome.pulse_id,
+            source_sample_index=outcome.source_onset_sample_index,
+            latest_sample_index=outcome.latest_sample_index,
+            target_sample_index=outcome.target_onset_sample_index,
+            range_end_sample_index=outcome.end_sample_index,
+            reason=outcome.reason or f"AO range [{outcome.start_sample_index}, {outcome.end_sample_index})",
+        )
 
     def process(
         self,
@@ -1750,22 +1923,7 @@ class ProcessingCore:
         self._last_pulse_events = ()
         self._last_admitted_pulse_plans = ()
         actuator_plans: tuple[PulsePlan, ...] = ()
-        while True:
-            try:
-                pulse_id, committed_samples = self._actuator_commits.get_nowait()
-            except queue.Empty:
-                break
-            with self._actuator_lock:
-                with contextlib.suppress(KeyError):
-                    self.actuator.commit(pulse_id, committed_samples)
-        while True:
-            try:
-                feedback_generation, accepted, reason = self._ao_feedback.get_nowait()
-            except queue.Empty:
-                break
-            if feedback_generation == snapshot.generation:
-                self._feedback = ActuatorFeedback(accepted, reason, applied_rate_hz=None,
-                                                  armed=snapshot.armed)
+        self._drain_ao_notifications(snapshot)
         source_sample_index = self.sample_index if sample_index is None else int(sample_index)
         self.sample_index = source_sample_index
         command_target_index = (
@@ -1777,31 +1935,59 @@ class ProcessingCore:
             "CA3" if "ca3" in label.casefold() else "Cortex" if i == input_ctx else "unknown"
             for i, label in enumerate(labels)
         ))
-        feature_signature = (
+        source_interpretation_signature = (
             float(self.config.sample_rate), input_ctx, labels, roles,
             "electrode_mV" if input_is_electrode_mV else "ni_ai_raw_V",
             () if input_is_electrode_mV else tuple(float(gain) for gain in self.config.amplifier_gain),
-            int(snapshot.calibration_epoch),
         )
         lfp = np.asarray(all_ai[:2], dtype=np.float64)
         electrode_lfp_mv = lfp.copy() if input_is_electrode_mV else lfp * (
             1_000.0 / np.asarray(self.config.amplifier_gain, dtype=np.float64)
         ).reshape(2, 1)
         block_end = source_sample_index + electrode_lfp_mv.shape[1]
+        if (snapshot.acquiring and self._last_source_end is not None
+                and source_sample_index < self._last_source_end):
+            raise ValueError("out-of-order source block would rewind safety history")
         self._stimulated_intervals = [(a, b) for a, b in self._stimulated_intervals if b > source_sample_index]
         stimulated = np.zeros(electrode_lfp_mv.shape[1], dtype=bool)
         for start, stop in self._stimulated_intervals:
             lo, hi = max(start, source_sample_index), min(stop, block_end)
             if lo < hi:
                 stimulated[lo-source_sample_index:hi-source_sample_index] = True
-        source_context_changed = self._feature_signature is not None and feature_signature != self._feature_signature
+        source_context_changed = bool(
+            snapshot.acquiring and self._source_interpretation_signature is not None
+            and source_interpretation_signature != self._source_interpretation_signature
+        )
         source_gap = (snapshot.acquiring and self._last_source_end is not None
                       and source_sample_index != self._last_source_end)
         invalid_source_sample = (snapshot.acquiring and np.any(
             ~np.isfinite(electrode_lfp_mv).all(axis=0)
         ))
-        if source_context_changed or source_gap or invalid_source_sample:
+        invalid_source_edge = bool(invalid_source_sample and not self._nonfinite_input_active)
+        if snapshot.acquiring:
+            self._nonfinite_input_active = bool(invalid_source_sample)
+        calibration_epoch_changed = bool(
+            snapshot.acquiring and self._observed_calibration_epoch is not None
+            and snapshot.calibration_epoch != self._observed_calibration_epoch
+        )
+        discontinuity = bool(source_context_changed or source_gap or invalid_source_edge
+                             or calibration_epoch_changed)
+        if discontinuity:
+            self.state.begin_recoverable_drain()
             self._invalidate_cached_controller_calibration()
+            self.esn.reset()
+            self._last_esn_config = None
+            with self._actuator_lock:
+                self.actuator.disarm()
+            if source_gap:
+                self._settle_source_gap(self._last_source_end, source_sample_index)
+            # The current block belongs to the new generation and observes the
+            # recoverable drain. It must not calibrate against the discontinuity.
+            snapshot = self.state.snapshot()
+            self.last_processed_generation = snapshot.generation
+        feature_signature = (
+            *source_interpretation_signature, int(snapshot.calibration_epoch),
+        )
         recording_ai = np.asarray(raw_ai_V, dtype=np.float64) if raw_ai_V is not None else (
             lfp if not input_is_electrode_mV else np.full_like(lfp, np.nan)
         )
@@ -1826,11 +2012,13 @@ class ProcessingCore:
                 if name == snapshot.controller:
                     continue
                 controller.drain()
-            prepared = self.state.take_prepared_controller(snapshot.controller)
+            prepared, prepared_revision = self.state.take_prepared_controller(
+                snapshot.controller, generation=snapshot.generation)
             previous = self.controllers.get(snapshot.controller)
             if prepared is not None:
                 self.controllers[snapshot.controller] = prepared
                 self.controller_config = dict(snapshot.controller_settings)
+                self.state.mark_controller_settings_applied(snapshot.controller, prepared_revision)
             active = self.controllers.get(snapshot.controller)
             if active is not None:
                 active_envelope = getattr(active, "envelope", None)
@@ -1852,7 +2040,11 @@ class ProcessingCore:
                 )
                 active.reset(keep_calibration=keep_calibration)
                 if snapshot.controller in {"rule", "pid"}:
-                    self.state.update_controller_calibration(snapshot.controller, keep_calibration)
+                    self.state.update_controller_calibration(
+                        snapshot.controller, keep_calibration,
+                        generation=snapshot.generation,
+                        calibration_epoch=snapshot.calibration_epoch,
+                    )
             self._active_controller = snapshot.controller
             self.actuator.disarm()
             self.actuator.cancel_uncommitted()
@@ -1861,7 +2053,11 @@ class ProcessingCore:
 
         diagnostics: dict[str, Any] = {}
         command = np.zeros((1, self.config.chunk_size), dtype=np.float64)
-        if not snapshot.transition_pending and snapshot.acquiring and snapshot.mode == "closed-loop":
+        accounting_command = np.zeros(self.config.chunk_size, dtype=np.float64)
+        possible_accounted: list[tuple[str, int, int, dict[str, int | str | None]]] = []
+        fault_finalized_accounts: tuple[tuple[str, int, int], ...] = ()
+        if (not snapshot.transition_pending and snapshot.acquiring and snapshot.mode == "closed-loop"
+                and snapshot.fault is None):
             controller = self.controllers.get(snapshot.controller)
             if controller is None:
                 self.state.fault(f"selected controller {snapshot.controller} is unavailable")
@@ -1893,7 +2089,11 @@ class ProcessingCore:
             )
             started = time.perf_counter_ns()
             result = controller.step(inp)
-            self.state.update_controller_calibration(snapshot.controller, result.diagnostics.calibrated)
+            self.state.update_controller_calibration(
+                snapshot.controller, result.diagnostics.calibrated,
+                generation=snapshot.generation,
+                calibration_epoch=snapshot.calibration_epoch,
+            )
             esn_ms = (time.perf_counter_ns() - started) / 1e6
             diagnostics = dataclasses.asdict(result.diagnostics)
             diagnostics["source_sample_index"] = source_sample_index
@@ -1919,6 +2119,7 @@ class ProcessingCore:
                     amplitude_v=snapshot.stim_gain, generation=snapshot.generation,
                     scheduler_lead_samples=self.config.ao_lead_samples,
                     latest_sample_index=source_sample_index + self.config.chunk_size - 1,
+                    controller_id=snapshot.controller,
                 )
                 self._last_pulse_events = act.pulse_events
                 actuator_plans = act.pulse_plans
@@ -1943,7 +2144,28 @@ class ProcessingCore:
                     rejected_events[0].status if rejected_events else "disarmed",
                     applied_rate_hz=None, armed=snapshot.armed)
         else:
-            command = np.zeros_like(raw)
+            # Account scheduler-reserved/committed/unknown ranges on the local
+            # source timeline without rendering or authorizing any AO output.
+            with self._actuator_lock:
+                self.actuator.disarm()
+                if snapshot.fault is not None:
+                    fault_finalized_accounts = self.actuator.limit_accounting_to_committed()
+                pieces = self.actuator.account_source_interval(
+                    source_sample_index, self.config.chunk_size, possible_only=True)
+                for position, waveform, pulse_id in pieces:
+                    offset = position - source_sample_index
+                    accounting_command[offset:offset + waveform.size] += waveform
+                    origin = self.actuator.pulse_origin(pulse_id)
+                    if origin is not None:
+                        possible_accounted.append((pulse_id, position, position + waveform.size, origin))
+                    self._publish_local_account(pulse_id, position + waveform.size)
+                canceled_accounts = self.actuator.advance_cancelled_accounting(
+                    source_sample_index, self.config.chunk_size)
+                for pulse_id, watermark in canceled_accounts:
+                    self._publish_local_account(pulse_id, watermark)
+            raw = np.zeros((1, self.config.chunk_size), dtype=np.float64)
+            command.fill(0.0)
+            self._last_pulse_events = ()
             self._feedback = ActuatorFeedback(False, "controller inactive", 0.0, armed=False)
         if safety_reason:
             if self._last_pulse_events:
@@ -1961,11 +2183,71 @@ class ProcessingCore:
             self.state.fault(f"stimulation safety trip: {safety_reason}")
         output_permitted = (snapshot.mode == "closed-loop" and snapshot.armed
                             and not snapshot.transition_pending and snapshot.fault is None)
+        account_tail = any(event.status == "committed_tail_rendered" for event in self._last_pulse_events)
         if output_permitted:
             safe, safety_reason = self.safety.process(command)
+        elif possible_accounted:
+            # Conservative possible output advances safety history only. It is
+            # never returned as a new AO command and remains provenance-tagged.
+            _, safety_reason = self.safety.process(accounting_command)
+            safe = np.zeros_like(command)
+            for pulse_id, source_start, source_end, origin in possible_accounted:
+                ao_start = int(origin["target_onset_sample_index"]) + (
+                    source_start - int(origin["source_onset_sample_index"]))
+                ao_end = ao_start + (source_end - source_start)
+                self.recorder.record_action_stage(
+                    sample_index=ao_start, generation=int(origin["generation"]),
+                    stage="possible_accounted",
+                    controller=str(origin["controller_id"] or "unknown"),
+                    request_id=pulse_id,
+                    source_sample_index=int(origin["source_onset_sample_index"]),
+                    latest_sample_index=origin["latest_sample_index"],
+                    target_sample_index=int(origin["target_onset_sample_index"]),
+                    range_end_sample_index=ao_end,
+                    reason=f"source-accounted range [{source_start}, {source_end})",
+                )
+        elif account_tail and snapshot.fault is None:
+            safe, safety_reason = self.safety.process(command)
+            if not output_permitted:
+                # The actuator's local source-time accounting is useful for
+                # safety history, but this disarmed/draining block is not a new
+                # AO command. Preserve its origin and AO coordinates in the
+                # separate accounting-only audit stage.
+                for event in self._last_pulse_events:
+                    if event.status != "committed_tail_rendered" or not event.rendered_sample_count:
+                        continue
+                    origin = self.actuator.pulse_origin(event.pulse_id)
+                    if origin is None or event.rendered_source_sample_index is None:
+                        continue
+                    source_start = int(event.rendered_source_sample_index)
+                    source_end = source_start + int(event.rendered_sample_count)
+                    ao_start = int(origin["target_onset_sample_index"]) + (
+                        source_start - int(origin["source_onset_sample_index"]))
+                    self.recorder.record_action_stage(
+                        sample_index=ao_start, generation=int(origin["generation"]),
+                        stage="possible_accounted",
+                        controller=str(origin["controller_id"] or "unknown"),
+                        request_id=event.pulse_id,
+                        source_sample_index=int(origin["source_onset_sample_index"]),
+                        latest_sample_index=origin["latest_sample_index"],
+                        target_sample_index=int(origin["target_onset_sample_index"]),
+                        range_end_sample_index=ao_start + (source_end - source_start),
+                        reason=f"source-accounted range [{source_start}, {source_end})",
+                    )
         else:
             safe, safety_reason = self.safety.process(np.zeros_like(command))
+        if not output_permitted:
             safe.fill(0.0)
+        if not safety_reason:
+            with self._actuator_lock:
+                account_updates = self.actuator.mark_source_accounted(
+                    source_sample_index, self.config.chunk_size,
+                    committed_only=snapshot.fault is not None)
+            if snapshot.fault is not None:
+                accounted_by_id = dict(account_updates)
+                for pulse_id, old_watermark, final_end in fault_finalized_accounts:
+                    self._publish_local_account(
+                        pulse_id, accounted_by_id.get(pulse_id, old_watermark), final_end)
         if output_permitted and not safety_reason and actuator_plans:
             events_by_id = {event.pulse_id: event for event in self._last_pulse_events}
             admitted: list[SafetyAdmittedPulsePlan] = []
@@ -1997,6 +2279,8 @@ class ProcessingCore:
                     plan.pulse_id, plan.generation, plan.source_onset_sample_index,
                     plan.target_onset_sample_index, plan.latest_sample_index, safe_waveform,
                 ))
+                with self._actuator_lock:
+                    self.actuator.admit_safe_plan(plan.pulse_id, safe_waveform)
             if not safety_reason:
                 self._last_admitted_pulse_plans = tuple(admitted)
         if safety_reason:
@@ -2032,7 +2316,10 @@ class ProcessingCore:
                 electrode_lfp_mv.copy(), snapshot.controller, snapshot.generation, diagnostics,
             ))
         self._last_diagnostics = diagnostics
-        self._feature_signature = feature_signature
+        if snapshot.acquiring:
+            self._feature_signature = feature_signature
+            self._source_interpretation_signature = source_interpretation_signature
+            self._observed_calibration_epoch = snapshot.calibration_epoch
 
         # Display-only pulse context: centre the model output for legibility,
         # then show its adaptive threshold relative to that same baseline.
@@ -2288,8 +2575,10 @@ class AoScheduleStats:
     late_commands: int = 0
     active_demand_misses: int = 0
     pulse_tail_misses: int = 0
+    pulse_committed_samples: int = 0
     fault_rejections: int = 0
     cancelled_blocks: int = 0
+    reconciled_blocks: int = 0
     min_queued_samples: Optional[int] = None
     max_write_ms: float = 0.0
     max_loop_pause_ms: float = 0.0
@@ -2323,8 +2612,10 @@ class AoScheduleStats:
                 "late_commands": self.late_commands,
                 "active_demand_misses": self.active_demand_misses,
                 "pulse_tail_misses": self.pulse_tail_misses,
+                "pulse_committed_samples": self.pulse_committed_samples,
                 "fault_rejections": self.fault_rejections,
                 "cancelled_blocks": self.cancelled_blocks,
+                "reconciled_blocks": self.reconciled_blocks,
                 "min_queued_samples": self.min_queued_samples,
                 "max_write_ms": self.max_write_ms,
                 "max_loop_pause_ms": self.max_loop_pause_ms,
@@ -2351,6 +2642,18 @@ class AoDrainBarrier:
                                             first_sample + offset * chunk_size + int(nonzero[-1]) + 1)
         if all_zero:
             self.last_zero_commit_end = end
+
+    def committed_samples(self, first_sample: int, samples: np.ndarray) -> None:
+        values = np.asarray(samples, dtype=np.float64).reshape(-1)
+        if values.size == 0:
+            return
+        nonzero = np.flatnonzero(values != 0.0)
+        if nonzero.size:
+            self.last_nonzero_end = max(self.last_nonzero_end,
+                                        int(first_sample) + int(nonzero[-1]) + 1)
+        else:
+            self.last_zero_commit_end = max(self.last_zero_commit_end,
+                                            int(first_sample) + values.size)
 
     def begin(self, generation: int, generated_sample_count: int) -> None:
         self.pending_generation = generation
@@ -2380,6 +2683,221 @@ class AoCommandLifecycle:
         self.commands: dict[int, tuple[np.ndarray, int, tuple[Any, ...]]] = {}
         self.committed_pulse_samples: dict[str, int] = {}
         self.pulse_exclusive_ends: dict[str, int] = {}
+        # Successfully written AO blocks remain recognizable until the sample
+        # clock consumes them. This bounded ledger makes a later source-timeline
+        # tail submission idempotent without writing or acknowledging it twice.
+        self.owned_blocks: dict[int, tuple[np.ndarray, int, tuple[Any, ...]]] = {}
+        self.max_owned_blocks = 512
+        self.pulse_local_required_end: dict[str, int] = {}
+        self.pulse_plan_end: dict[str, int] = {}
+        self.pulse_local_accounted_until: dict[str, int] = {}
+        self.pulse_source_onset: dict[str, int] = {}
+        self.pulse_target_onset: dict[str, int] = {}
+        self.pulse_waveform_size: dict[str, int] = {}
+        self.pulse_ao_status: dict[str, np.ndarray] = {}
+        self.pulse_local_finalized: set[str] = set()
+        self.reserved_blocks: dict[int, tuple[np.ndarray, int, tuple[Any, ...]]] = {}
+
+    @staticmethod
+    def _ownership_signature(events: tuple[Any, ...]) -> tuple[tuple[Any, ...], ...]:
+        return tuple(sorted((
+            event.pulse_id, int(event.generation), int(event.source_onset_sample_index),
+            int(event.target_onset_sample_index), int(event.rendered_sample_count),
+        ) for event in events if getattr(event, "pulse_id", None)))
+
+    def reconcile_owned(self, target: int, waveform: np.ndarray,
+                        events: tuple[Any, ...]) -> bool | None:
+        """Return True for an exact idempotent resend, False for conflict, else None."""
+        owned = self.owned_blocks.get(int(target))
+        if owned is None:
+            return None
+        incoming = np.asarray(waveform, dtype=np.float64).reshape(-1)
+        same_waveform = incoming.shape == owned[0].shape and np.array_equal(incoming, owned[0])
+        incoming_owner = self._ownership_signature(tuple(events))
+        owned_owner = self._ownership_signature(owned[2])
+        if same_waveform and incoming_owner and incoming_owner == owned_owner:
+            return True
+        return False
+
+    def record_owned(self, target: int, waveform: np.ndarray, generation: int,
+                     events: tuple[Any, ...]) -> None:
+        if len(self.owned_blocks) >= self.max_owned_blocks and target not in self.owned_blocks:
+            raise RuntimeError("AO ownership ledger reached its bounded capacity")
+        self.owned_blocks[int(target)] = (
+            np.asarray(waveform, dtype=np.float64).reshape(-1).copy(), int(generation), tuple(events))
+
+    def pulse_outcomes(self, target: int, entry: tuple[np.ndarray, int, tuple[Any, ...]],
+                       chunk_size: int, status: str, reason: str = "", *,
+                       sample_start: int | None = None,
+                       sample_end: int | None = None) -> tuple[PulseAoOutcome, ...]:
+        block_start = int(target) * int(chunk_size)
+        block_end = block_start + int(chunk_size)
+        if sample_start is not None:
+            block_start = max(block_start, int(sample_start))
+        if sample_end is not None:
+            block_end = min(block_end, int(sample_end))
+        outcomes: list[PulseAoOutcome] = []
+        seen: set[str] = set()
+        for event in entry[2]:
+            pulse_id = getattr(event, "pulse_id", None)
+            if not pulse_id or pulse_id in seen:
+                continue
+            seen.add(pulse_id)
+            start = self.pulse_target_onset.get(pulse_id, int(event.target_onset_sample_index))
+            end = start + self.pulse_waveform_size.get(pulse_id, int(event.rendered_sample_count))
+            lo, hi = max(start, block_start), min(end, block_end)
+            if lo < hi:
+                status_code = {"reserved": 1, "committed": 2,
+                               "cancelled": 3, "write_unknown": 4}[status]
+                ao_status = self.pulse_ao_status.get(pulse_id)
+                if ao_status is not None:
+                    rel_lo, rel_hi = lo - start, hi - start
+                    target_status = ao_status[rel_lo:rel_hi]
+                    if status_code == 1:
+                        target_status[target_status == 0] = 1
+                    elif status_code == 2:
+                        target_status[:] = 2
+                    elif status_code == 3:
+                        target_status[(target_status != 2) & (target_status != 4)] = 3
+                    else:
+                        target_status[(target_status != 2) & (target_status != 3)] = 4
+                    if np.all((ao_status == 2) | (ao_status == 3)):
+                        resolved_prefix = int(np.flatnonzero(ao_status == 3)[0]) \
+                            if np.any(ao_status == 3) else ao_status.size
+                        source_onset = self.pulse_source_onset[pulse_id]
+                        self.pulse_local_required_end[pulse_id] = min(
+                            self.pulse_plan_end[pulse_id], source_onset + resolved_prefix)
+                outcomes.append(PulseAoOutcome(
+                    pulse_id, int(entry[1]), lo, hi, status, reason,
+                    int(event.source_onset_sample_index), int(start),
+                    event.latest_sample_index, getattr(event, "controller_id", None)))
+        return tuple(outcomes)
+
+    def plan_outcomes(self, plans: tuple[SafetyAdmittedPulsePlan, ...],
+                      events: tuple[Any, ...], status: str, reason: str) -> tuple[PulseAoOutcome, ...]:
+        event_by_id = {getattr(event, "pulse_id", None): event for event in events}
+        outcomes: list[PulseAoOutcome] = []
+        for plan in plans:
+            event = event_by_id.get(plan.pulse_id)
+            size = int(plan.waveform_v.size)
+            if plan.pulse_id not in self.pulse_ao_status:
+                if len(self.pulse_ao_status) >= self.max_owned_blocks:
+                    raise RuntimeError("AO pulse outcome ledger reached its bounded capacity")
+                self.pulse_source_onset[plan.pulse_id] = int(plan.source_onset_sample_index)
+                self.pulse_target_onset[plan.pulse_id] = int(plan.target_onset_sample_index)
+                self.pulse_waveform_size[plan.pulse_id] = size
+                self.pulse_plan_end[plan.pulse_id] = int(plan.source_onset_sample_index) + size
+                self.pulse_local_required_end[plan.pulse_id] = int(plan.source_onset_sample_index) + size
+                self.pulse_local_accounted_until[plan.pulse_id] = int(plan.source_onset_sample_index)
+                self.pulse_ao_status[plan.pulse_id] = np.zeros(size, dtype=np.uint8)
+            if status == "cancelled":
+                self.pulse_ao_status[plan.pulse_id][:] = 3
+                self.pulse_local_required_end[plan.pulse_id] = int(plan.source_onset_sample_index)
+            outcomes.append(PulseAoOutcome(
+                plan.pulse_id, int(plan.generation), int(plan.target_onset_sample_index),
+                int(plan.target_onset_sample_index + size), status, reason,
+                int(plan.source_onset_sample_index), int(plan.target_onset_sample_index),
+                getattr(event, "latest_sample_index", plan.latest_sample_index),
+                getattr(event, "controller_id", None),
+            ))
+        return tuple(outcomes)
+
+    def mark_reserved(self, target: int, entry: tuple[np.ndarray, int, tuple[Any, ...]],
+                      chunk_size: int) -> tuple[PulseAoOutcome, ...]:
+        self.reserved_blocks[int(target)] = entry
+        return self.pulse_outcomes(target, entry, chunk_size, "reserved", "NI write reserved before I/O")
+
+    def mark_terminal(self, target: int, entry: tuple[np.ndarray, int, tuple[Any, ...]],
+                      chunk_size: int, status: str, reason: str = "") -> tuple[PulseAoOutcome, ...]:
+        if status != "committed":
+            self.reserved_blocks.pop(int(target), None)
+        return self.pulse_outcomes(target, entry, chunk_size, status, reason)
+
+    def release_reservation(self, target: int) -> None:
+        self.reserved_blocks.pop(int(target), None)
+
+    def acknowledge_local(self, pulse_id: str, accounted_until: int,
+                          finalized_end: int | None = None) -> None:
+        """Merge an idempotent cumulative source-accounting watermark."""
+        pulse_id = str(pulse_id)
+        if (pulse_id not in self.pulse_local_required_end
+                and len(self.pulse_local_required_end) >= self.max_owned_blocks):
+            raise RuntimeError("AO local-accounting ledger reached its bounded capacity")
+        if finalized_end is not None:
+            end = int(finalized_end)
+            self.pulse_local_finalized.add(pulse_id)
+            full_end = self.pulse_plan_end.get(
+                pulse_id, self.pulse_local_required_end.get(pulse_id, end))
+            self.pulse_local_required_end[pulse_id] = min(full_end, end)
+        acknowledged = max(self.pulse_local_accounted_until.get(pulse_id, -1), int(accounted_until))
+        required = self.pulse_local_required_end.get(pulse_id)
+        if required is not None:
+            acknowledged = min(acknowledged, required)
+        self.pulse_local_accounted_until[pulse_id] = acknowledged
+
+    def acknowledge_events(self, events: tuple[Any, ...]) -> None:
+        """Acknowledge source slices represented by an already-safety-processed submit."""
+        for event in events:
+            if not getattr(event, "pulse_id", None) or not event.rendered_sample_count:
+                continue
+            # ProcessingCore supplies the block's latest used index. This is a
+            # cumulative watermark; the admitted plan end caps it exactly.
+            through = (int(event.latest_sample_index) + 1 if event.latest_sample_index is not None
+                      else int(event.source_onset_sample_index) + int(event.rendered_sample_count))
+            required = self.pulse_local_required_end.get(event.pulse_id)
+            if required is not None:
+                through = min(through, required)
+            self.acknowledge_local(event.pulse_id, through)
+
+    def cancel_uncommitted_events(self, events: tuple[Any, ...]) -> None:
+        for event in events:
+            pulse_id = getattr(event, "pulse_id", None)
+            if not pulse_id or self.committed_pulse_samples.get(pulse_id, 0) > 0:
+                continue
+            if any(any(owned.pulse_id == pulse_id for owned in entry[2])
+                   for entry in self.reserved_blocks.values()):
+                continue
+            if any(any(owned.pulse_id == pulse_id for owned in entry[2])
+                   for entry in self.owned_blocks.values()):
+                continue
+            # Keep plan coordinates until generated output and source-local
+            # accounting both retire the pulse; cancellation alone is not a
+            # lifetime boundary for a multi-block admitted plan.
+
+    def retire_generated(self, generated_sample_count: int, chunk_size: int) -> None:
+        consumed_before = int(generated_sample_count) // int(chunk_size)
+        for target in tuple(self.owned_blocks):
+            owned_events = self.owned_blocks[target][2]
+            locally_complete = all(
+                event.pulse_id in self.pulse_local_required_end
+                and self.pulse_local_accounted_until.get(event.pulse_id, -1)
+                >= self.pulse_local_required_end[event.pulse_id]
+                for event in owned_events if getattr(event, "pulse_id", None)
+            )
+            if target < consumed_before and locally_complete:
+                self.owned_blocks.pop(target, None)
+        active_ids = {event.pulse_id for _, _, events in self.owned_blocks.values()
+                      for event in events if getattr(event, "pulse_id", None)}
+        active_ids.update(event.pulse_id for _, _, events in self.commands.values()
+                          for event in events if getattr(event, "pulse_id", None))
+        active_ids.update(event.pulse_id for _, _, events in self.reserved_blocks.values()
+                          for event in events if getattr(event, "pulse_id", None))
+        active_ids.update(pulse_id for pulse_id, required in self.pulse_local_required_end.items()
+                          if self.pulse_local_accounted_until.get(pulse_id, -1) < required)
+        active_ids.update(
+            pulse_id for pulse_id, status in self.pulse_ao_status.items()
+            if np.any((status == 0) | (status == 1) | (status == 4))
+        )
+        for pulse_id in tuple(self.pulse_local_required_end):
+            if pulse_id not in active_ids:
+                self.pulse_local_required_end.pop(pulse_id, None)
+                self.pulse_plan_end.pop(pulse_id, None)
+                self.pulse_local_accounted_until.pop(pulse_id, None)
+                self.pulse_source_onset.pop(pulse_id, None)
+                self.pulse_target_onset.pop(pulse_id, None)
+                self.pulse_waveform_size.pop(pulse_id, None)
+                self.pulse_ao_status.pop(pulse_id, None)
+                self.pulse_local_finalized.discard(pulse_id)
 
     def submit(self, target: int, waveform: np.ndarray, generation: int,
                events: tuple[Any, ...] = (), *, chunk_size: int | None = None,
@@ -2388,9 +2906,11 @@ class AoCommandLifecycle:
         events = tuple(event for event in events
                        if event.status in {"rendered_for_ao", "committed_tail_rendered"}
                        and event.rendered_sample_count > 0)
+        origin_event_by_id = {event.pulse_id: event for event in events}
         existing = self.commands.get(target)
-        if existing is not None and existing[1] != generation and any(
-                self.committed_pulse_samples.get(event.pulse_id, 0) > 0 for event in existing[2]):
+        if existing is not None and existing[1] != generation and (
+                target in self.reserved_blocks or any(
+                    self.committed_pulse_samples.get(event.pulse_id, 0) > 0 for event in existing[2])):
             # Never replace a staged old-generation tail after its pulse has
             # started. Its complete safe plan owns these original AO samples.
             return
@@ -2398,6 +2918,17 @@ class AoCommandLifecycle:
         if pulse_plans and (chunk_size is None or chunk_size <= 0):
             raise ValueError("chunk_size is required to stage complete pulse plans")
         for plan in pulse_plans:
+            if (plan.pulse_id not in self.pulse_local_required_end
+                    and len(self.pulse_local_required_end) >= self.max_owned_blocks):
+                raise RuntimeError("AO local-accounting ledger reached its bounded capacity")
+            self.pulse_local_required_end[plan.pulse_id] = (
+                int(plan.source_onset_sample_index) + int(plan.waveform_v.size))
+            self.pulse_plan_end[plan.pulse_id] = self.pulse_local_required_end[plan.pulse_id]
+            self.pulse_source_onset[plan.pulse_id] = int(plan.source_onset_sample_index)
+            self.pulse_target_onset[plan.pulse_id] = int(plan.target_onset_sample_index)
+            self.pulse_waveform_size[plan.pulse_id] = int(plan.waveform_v.size)
+            if plan.pulse_id not in self.pulse_ao_status:
+                self.pulse_ao_status[plan.pulse_id] = np.zeros(plan.waveform_v.size, dtype=np.uint8)
             cursor = 0
             while cursor < plan.waveform_v.size:
                 absolute = plan.target_onset_sample_index + cursor
@@ -2420,6 +2951,7 @@ class AoCommandLifecycle:
                     plan.pulse_id, plan.source_onset_sample_index,
                     plan.source_onset_sample_index, plan.target_onset_sample_index,
                     "rendered_for_ao", plan.generation, count_samples, plan.latest_sample_index,
+                    getattr(origin_event_by_id.get(plan.pulse_id), "controller_id", None),
                 ),)
                 self.commands[block] = (block_value, plan.generation, block_events)
                 cursor += count_samples
@@ -2433,6 +2965,9 @@ class AoCommandLifecycle:
             if entry[1] > old_generation:
                 continue
             waveform, generation, events = entry
+            if target in self.reserved_blocks:
+                preserved.append((target, entry))
+                continue
             keep_events = tuple(event for event in events
                                 if self.committed_pulse_samples.get(event.pulse_id, 0) > 0)
             if keep_events:
@@ -2469,13 +3004,37 @@ class AoCommandLifecycle:
                                   - generated_samples)
         return queued_after_available <= deadline_samples
 
-    def committed(self, events: tuple[Any, ...], sample_rate: int) -> None:
+    def committed(self, events: tuple[Any, ...], sample_rate: int, *,
+                  target_block: int | None = None, chunk_size: int | None = None,
+                  committed_samples: int | None = None) -> None:
         for event in events:
             if event.rendered_sample_count:
+                count_samples = int(event.rendered_sample_count)
+                if target_block is not None and chunk_size is not None and committed_samples is not None:
+                    block_start = int(target_block) * int(chunk_size)
+                    block_end = block_start + min(int(chunk_size), max(0, int(committed_samples)))
+                    pulse_start = self.pulse_target_onset.get(
+                        event.pulse_id, int(event.target_onset_sample_index))
+                    pulse_end = pulse_start + self.pulse_waveform_size.get(
+                        event.pulse_id, count_samples)
+                    count_samples = max(0, min(block_end, pulse_end)
+                                        - max(block_start, pulse_start))
+                if count_samples <= 0:
+                    continue
+                self.pulse_source_onset.setdefault(
+                    event.pulse_id, int(event.source_onset_sample_index))
                 self.committed_pulse_samples[event.pulse_id] = (
-                    self.committed_pulse_samples.get(event.pulse_id, 0) + event.rendered_sample_count)
+                    self.committed_pulse_samples.get(event.pulse_id, 0) + count_samples)
                 self.pulse_exclusive_ends[event.pulse_id] = (
-                    event.target_onset_sample_index + round(5.0 * sample_rate / 1000.0))
+                    max(self.pulse_exclusive_ends.get(event.pulse_id, 0),
+                        event.target_onset_sample_index + self.pulse_waveform_size.get(
+                            event.pulse_id, round(5.0 * sample_rate / 1000.0))))
+                if event.pulse_id in self.pulse_local_finalized:
+                    onset = self.pulse_source_onset[event.pulse_id]
+                    full_end = self.pulse_plan_end.get(
+                        event.pulse_id, self.pulse_local_required_end.get(event.pulse_id, onset))
+                    committed_end = onset + self.committed_pulse_samples[event.pulse_id]
+                    self.pulse_local_required_end[event.pulse_id] = min(full_end, committed_end)
 
 
 @dataclass(frozen=True)
@@ -2491,12 +3050,14 @@ class SimulatedAoScheduler:
 
     def __init__(self, config: AppConfig, state: RuntimeState,
                  recorder: Optional[H5Recorder] = None, commit_event: Any = None,
-                 ao_outcome: Any = None) -> None:
+                 ao_outcome: Any = None, pulse_outcome: Any = None) -> None:
         self.config, self.state, self.recorder, self.commit_event = config, state, recorder, commit_event
         self.ao_outcome = ao_outcome
+        self.pulse_outcome = pulse_outcome
         self.lifecycle = AoCommandLifecycle()
         self.commands = self.lifecycle.commands
         self.lock = threading.RLock()
+        self._local_account_queue: queue.Queue[tuple[str, int, int | None]] = queue.Queue(maxsize=512)
         self.generated_sample_count = 0
         self._elapsed_samples = 0.0
         self._next_write_block = config.ao_lead_chunks
@@ -2511,7 +3072,8 @@ class SimulatedAoScheduler:
                       "rejected_fault": 0,
                       "active_demand_misses": 0,
                       "pulse_tail_misses": 0,
-                      "max_queue_depth": 0, "pulse_requests": 0, "pulse_committed_samples": 0}
+                      "max_queue_depth": 0, "pulse_requests": 0, "pulse_committed_samples": 0,
+                      "reconciled_blocks": 0}
 
     def submit(self, target_block: int, command: np.ndarray, generation: Optional[int] = None,
                pulse_events: tuple[Any, ...] = (),
@@ -2523,8 +3085,36 @@ class SimulatedAoScheduler:
         generation = current.generation if generation is None else int(generation)
         with self.lock:
             self.stats["submitted_blocks"] += 1
+            self._drain_local_accounts_locked()
+            reserved_entry = self.lifecycle.reserved_blocks.get(int(target_block))
+            if reserved_entry is not None:
+                # A block reserved before NI I/O is immutable until its write
+                # resolves. A newer zero is acknowledged without replacing it.
+                if not np.any(value):
+                    return bool(generation != reserved_entry[1] or not current.armed
+                                or current.transition_pending or current.fault is not None)
+                return bool(np.array_equal(value, reserved_entry[0])
+                            and int(generation) == reserved_entry[1])
+            if not np.any(value) and int(target_block) in self.lifecycle.owned_blocks:
+                # A source-thread zero cannot rewrite an already committed
+                # pulse block; acknowledge it as a non-authorizing no-op.
+                owned_generation = self.lifecycle.owned_blocks[int(target_block)][1]
+                if (generation != owned_generation or not current.armed
+                        or current.transition_pending or current.fault is not None):
+                    return True
+            reconciled = self.lifecycle.reconcile_owned(target_block, value, pulse_events)
+            if reconciled is True:
+                self.stats["reconciled_blocks"] += 1
+                self.lifecycle.acknowledge_events(pulse_events)
+                self.lifecycle.retire_generated(self.generated_sample_count, self.config.chunk_size)
+                return True
+            if reconciled is False:
+                self.stats["late_commands"] += int(target_block < self._next_write_block)
+                return False
             if current.fault is not None:
                 self.stats["rejected_fault"] += 1
+                self._cancel_submission(target_block, value, generation, pulse_events,
+                                        "fault rejected before AO reservation", pulse_plans)
                 record_sparse_ao_outcome(self.recorder, sample_index=target_block * self.config.chunk_size,
                     generation=generation, stage="rejected", controller=current.controller,
                     waveform=value, events=pulse_events, reason="latched fault rejected AO command")
@@ -2533,18 +3123,26 @@ class SimulatedAoScheduler:
                 return False
             if generation != current.generation:
                 self.stats["rejected_stale"] += 1
+                self._cancel_submission(target_block, value, generation, pulse_events,
+                                        "stale generation rejected before AO reservation", pulse_plans)
                 record_sparse_ao_outcome(self.recorder, sample_index=target_block * self.config.chunk_size,
                     generation=generation, stage="rejected", controller=current.controller,
                     waveform=value, events=pulse_events, reason="stale generation rejected AO command")
                 return False
             if target_block < self._next_write_block:
+                if (not np.any(value) and (not current.armed or current.transition_pending
+                                          or current.fault is not None)):
+                    return True
                 self.stats["late_commands"] += 1
+                self._cancel_submission(target_block, value, generation, pulse_events,
+                                        "target elapsed before AO reservation", pulse_plans)
                 record_sparse_ao_outcome(self.recorder, sample_index=target_block * self.config.chunk_size,
                     generation=generation, stage="late", controller=current.controller,
                     waveform=value, events=pulse_events, reason="target block already passed")
                 return False
             self.lifecycle.submit(target_block, value, generation, pulse_events,
                                   chunk_size=self.config.chunk_size, pulse_plans=pulse_plans)
+            self.lifecycle.acknowledge_events(pulse_events)
             self.stats["pulse_requests"] += sum(event.status == "rendered_for_ao" for event in pulse_events)
             self.stats["max_queue_depth"] = max(self.stats["max_queue_depth"], len(self.commands))
             return True
@@ -2552,6 +3150,7 @@ class SimulatedAoScheduler:
     def advance(self, *, service_refill: bool = True) -> GeneratedAoBlock:
         """Commit and generate exactly one AO block, returning hardware-indexed output."""
         with self.lock:
+            self._drain_local_accounts_locked()
             chunk = self.config.chunk_size
             sample = self.generated_sample_count
             target = sample // chunk
@@ -2570,6 +3169,7 @@ class SimulatedAoScheduler:
                 output, generation, events, stage = committed
                 generated_generation = generation
             self.generated_sample_count += chunk
+            self.lifecycle.retire_generated(self.generated_sample_count, chunk)
             if service_refill:
                 self._service_refill_locked()
             if service_refill and self.drain_barrier.drained(snapshot.generation, self.generated_sample_count):
@@ -2580,8 +3180,40 @@ class SimulatedAoScheduler:
                 self.drain_barrier.acknowledge()
             return GeneratedAoBlock(sample, output.copy(), generated_generation, stage)
 
+    def enqueue_local_account(self, pulse_id: str, accounted_until: int,
+                              finalized_end: int | None = None) -> None:
+        try:
+            self._local_account_queue.put_nowait((str(pulse_id), int(accounted_until),
+                                                  None if finalized_end is None else int(finalized_end)))
+        except queue.Full:
+            self.state.fault("AO local-accounting acknowledgement queue overflow")
+
+    def _publish_pulse_outcomes(self, outcomes: tuple[PulseAoOutcome, ...]) -> None:
+        if self.pulse_outcome is not None:
+            for outcome in outcomes:
+                self.pulse_outcome(outcome)
+
+    def _cancel_submission(self, target: int, value: np.ndarray, generation: int,
+                           events: tuple[Any, ...], reason: str,
+                           plans: tuple[SafetyAdmittedPulsePlan, ...] = ()) -> None:
+        self._publish_pulse_outcomes(self.lifecycle.plan_outcomes(
+            plans, events, "cancelled", reason))
+        self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+            target, (value, int(generation), tuple(events)), self.config.chunk_size,
+            "cancelled", reason))
+
+    def _drain_local_accounts_locked(self) -> None:
+        while True:
+            try:
+                pulse_id, accounted_until, finalized_end = self._local_account_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.lifecycle.acknowledge_local(pulse_id, accounted_until, finalized_end)
+        self.lifecycle.retire_generated(self.generated_sample_count, self.config.chunk_size)
+
     def _service_refill_locked(self) -> None:
         """Perform one host-side refill after AO time has advanced."""
+        self._drain_local_accounts_locked()
         chunk = self.config.chunk_size
         snapshot = self.state.snapshot()
         generated = self.generated_sample_count
@@ -2604,6 +3236,9 @@ class SimulatedAoScheduler:
                             generation=old, stage=stage, controller=snapshot.controller,
                             waveform=waveform, events=events,
                             reason="generation changed before AO write")
+            for block, entry in cancelled:
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    block, entry, chunk, "cancelled", "generation changed before AO reservation"))
         if snapshot.fault is not None and self.commands:
             pending_fault_commands = tuple(self.commands.items())
             self.commands.clear()
@@ -2629,6 +3264,8 @@ class SimulatedAoScheduler:
                     generation=entry[1], stage="cancelled", controller=snapshot.controller,
                     waveform=entry[0], events=entry[2],
                     reason="latched fault cancelled pending AO command")
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    block, entry, chunk, "cancelled", "latched fault before AO reservation"))
         frontier = math.ceil(generated / chunk)
         if self._next_write_block < frontier:
             # A starved host cannot retroactively fill target blocks already
@@ -2729,12 +3366,18 @@ class SimulatedAoScheduler:
             self._next_write_block += 1
             self.stats["committed_blocks"] += 1
             if action_stage != "zero_substituted":
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    block, original_pending, chunk, "reserved", "simulated AO reservation"))
                 self.lifecycle.committed(events, self.config.sample_rate)
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    block, original_pending, chunk, "committed", "simulated AO block committed"))
+                if any(getattr(event, "pulse_id", None) for event in events):
+                    self.lifecycle.record_owned(block, command, generation, events)
             for event in events if action_stage != "zero_substituted" else ():
                 if event.rendered_sample_count:
                     self.stats["pulse_committed_samples"] += event.rendered_sample_count
                     self.drain_barrier.preserve_until(self._pulse_exclusive_ends[event.pulse_id])
-                    if self.commit_event is not None:
+                    if self.commit_event is not None and self.pulse_outcome is None:
                         self.commit_event(event.pulse_id, event.rendered_sample_count)
             if self.ao_outcome is not None:
                 self.ao_outcome(generation, action_stage in {"ao_committed", "tail_preserved"}, action_stage)
@@ -2751,6 +3394,9 @@ class SimulatedAoScheduler:
                     generation=generation, stage=terminal_stage, controller=snapshot.controller,
                     waveform=original_waveform, events=original_events,
                     reason="faulted AO refill committed as safe zero")
+                if original_pending is not None:
+                    self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                        block, original_pending, chunk, "cancelled", "AO block replaced with safe zero"))
         if self.drain_barrier.drained(snapshot.generation, generated):
             record_drain_ack(self.recorder, sample_index=generated,
                 generation=snapshot.generation, controller=snapshot.controller,
@@ -2787,16 +3433,18 @@ class ScheduledAo:
 
     def __init__(self, config: AppConfig, state: RuntimeState, trigger_terminal: str,
                  recorder: Optional[H5Recorder] = None, commit_event: Any = None,
-                 ao_outcome: Any = None) -> None:
+                 ao_outcome: Any = None, pulse_outcome: Any = None) -> None:
         self.config = config
         self.state = state
         self.trigger_terminal = trigger_terminal
         self.recorder = recorder
         self.commit_event = commit_event
         self.ao_outcome = ao_outcome
+        self.pulse_outcome = pulse_outcome
         self.lifecycle = AoCommandLifecycle()
         self.commands = self.lifecycle.commands
         self.command_lock = threading.Lock()
+        self._local_account_queue: queue.Queue[tuple[str, int, int | None]] = queue.Queue(maxsize=512)
         self.ready = threading.Event()
         self.clock_started = threading.Event()
         self.stop_requested = threading.Event()
@@ -2804,6 +3452,7 @@ class ScheduledAo:
         self.error: Optional[Exception] = None
         self.stats = AoScheduleStats()
         self._next_block = 0
+        self._last_generated_sample_count = 0
         self._observed_generation = 0
         self.drain_barrier = AoDrainBarrier()
         self._committed_pulse_samples = self.lifecycle.committed_pulse_samples
@@ -2829,10 +3478,44 @@ class ScheduledAo:
         with self.command_lock:
             generation = self.state.snapshot().generation if generation is None else int(generation)
             late = target_block < self._next_block
-            self.stats.submitted(late)
             snapshot = self.state.snapshot()
+            self._drain_local_accounts_locked()
+            reserved_entry = self.lifecycle.reserved_blocks.get(int(target_block))
+            if reserved_entry is not None:
+                if not np.any(value):
+                    return bool(generation != reserved_entry[1] or not snapshot.armed
+                                or snapshot.transition_pending or snapshot.fault is not None)
+                return bool(np.array_equal(value, reserved_entry[0])
+                            and int(generation) == reserved_entry[1])
+            if not np.any(value) and int(target_block) in self.lifecycle.owned_blocks:
+                owned_generation = self.lifecycle.owned_blocks[int(target_block)][1]
+                if (generation != owned_generation or not snapshot.armed
+                        or snapshot.transition_pending or snapshot.fault is not None):
+                    self.stats.submitted(False)
+                    return True
+            reconciled = self.lifecycle.reconcile_owned(target_block, value, pulse_events)
+            if reconciled is True:
+                self.stats.submitted(False)
+                with self.stats.lock:
+                    self.stats.reconciled_blocks += 1
+                self.lifecycle.acknowledge_events(pulse_events)
+                self.lifecycle.retire_generated(self._last_generated_sample_count, self.config.chunk_size)
+                return True
+            if reconciled is False:
+                self.stats.submitted(late)
+                return False
+            if late and not np.any(value) and (not snapshot.armed or snapshot.transition_pending
+                                              or snapshot.fault is not None):
+                self.stats.submitted(False)
+                return True
+            self.stats.submitted(late)
             if snapshot.fault is not None:
                 self.stats.fault_rejected()
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    target_block, (value, generation, tuple(pulse_events)), self.config.chunk_size,
+                    "cancelled", "fault rejected before AO reservation"))
+                self._publish_pulse_outcomes(self.lifecycle.plan_outcomes(
+                    pulse_plans, pulse_events, "cancelled", "fault rejected before AO reservation"))
                 record_sparse_ao_outcome(self.recorder, sample_index=target_block * self.config.chunk_size,
                     generation=generation, stage="rejected", controller=snapshot.controller,
                     waveform=value, events=pulse_events, reason="latched fault rejected AO command")
@@ -2842,20 +3525,53 @@ class ScheduledAo:
             if not late and not self.force_safe.is_set() and generation == snapshot.generation:
                 self.lifecycle.submit(target_block, value, generation, pulse_events,
                                       chunk_size=self.config.chunk_size, pulse_plans=pulse_plans)
+                self.lifecycle.acknowledge_events(pulse_events)
                 return True
             record_sparse_ao_outcome(self.recorder, sample_index=target_block * self.config.chunk_size,
                 generation=generation, stage="late" if late else "rejected",
                 controller=snapshot.controller, waveform=value, events=pulse_events,
                 reason="AO target elapsed, generation changed, or scheduler is forced safe")
+            self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                target_block, (value, generation, tuple(pulse_events)), self.config.chunk_size,
+                "cancelled", "submission rejected before AO reservation"))
+            self._publish_pulse_outcomes(self.lifecycle.plan_outcomes(
+                pulse_plans, pulse_events, "cancelled", "submission rejected before AO reservation"))
             return False
+
+    def enqueue_local_account(self, pulse_id: str, accounted_until: int,
+                              finalized_end: int | None = None) -> None:
+        try:
+            self._local_account_queue.put_nowait((str(pulse_id), int(accounted_until),
+                                                  None if finalized_end is None else int(finalized_end)))
+        except queue.Full:
+            self.state.fault("AO local-accounting acknowledgement queue overflow")
+
+    def _publish_pulse_outcomes(self, outcomes: tuple[PulseAoOutcome, ...]) -> None:
+        if self.pulse_outcome is not None:
+            for outcome in outcomes:
+                self.pulse_outcome(outcome)
+
+    def _drain_local_accounts_locked(self) -> None:
+        while True:
+            try:
+                pulse_id, accounted_until, finalized_end = self._local_account_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.lifecycle.acknowledge_local(pulse_id, accounted_until, finalized_end)
+        self.lifecycle.retire_generated(self._last_generated_sample_count, self.config.chunk_size)
 
     def request_safe_zero(self) -> None:
         self.force_safe.set()
         with self.command_lock:
-            cancelled = tuple(self.commands.items())
-            self.commands.clear()
+            cancelled = tuple((target, entry) for target, entry in self.commands.items()
+                              if target not in self.lifecycle.reserved_blocks)
+            for target, _ in cancelled:
+                self.commands.pop(target, None)
         for target, entry in cancelled:
             self.stats.cancelled()
+            self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                target, entry, self.config.chunk_size, "cancelled",
+                "safe-zero request cancelled before reservation"))
             record_sparse_ao_outcome(self.recorder, sample_index=target * self.config.chunk_size,
                 generation=entry[1], stage="cancelled", controller=self.state.snapshot().controller,
                 waveform=entry[0], events=entry[2],
@@ -2868,6 +3584,14 @@ class ScheduledAo:
         self.stop_requested.set()
         self.clock_started.set()
         self.thread.join(5.0)
+        if self.thread.is_alive():
+            message = "AO writer did not stop within 5 seconds; waiting before final outcome drain"
+            LOG.critical(message)
+            self.state.fault(message)
+            self.request_safe_zero()
+            # Keep ownership and the recorder with this thread until its last
+            # possible write/outcome has resolved.
+            self.thread.join()
         self._force_zero()
 
     def _take(self, target: int) -> Optional[np.ndarray]:
@@ -2888,6 +3612,10 @@ class ScheduledAo:
                     break
                 if not self.lifecycle.eligible(entry, generation, self.state.snapshot().transition_pending):
                     break
+                self.lifecycle.mark_reserved(target, entry, self.config.chunk_size)
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    target, entry, self.config.chunk_size, "reserved",
+                    "NI write reserved before driver call"))
                 blocks.append((target, entry[0], entry[1], entry[2]))
             return blocks
 
@@ -2897,6 +3625,64 @@ class ScheduledAo:
             stale = [target for target in self.commands if target < self._next_block]
             for target in stale:
                 self.commands.pop(target, None)
+
+    def _settle_reserved_write(self, reserved: list[tuple[int, np.ndarray, int, tuple[Any, ...]]],
+                               first_target: int, chunk: int, written_samples: int,
+                               *, unknown_reason: str | None = None) -> None:
+        """Apply exact scheduler outcomes for the accepted prefix of one NI write."""
+        for target, block, generation, events in reserved:
+            block_start = int(target) * int(chunk)
+            offset = (int(target) - int(first_target)) * int(chunk)
+            committed_in_block = min(int(chunk), max(0, int(written_samples) - offset))
+            entry = self.lifecycle.reserved_blocks.get(target, (block, generation, events))
+            if committed_in_block:
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    target, entry, chunk, "committed", "NI writer accepted this sample prefix",
+                    sample_start=block_start, sample_end=block_start + committed_in_block))
+                self.lifecycle.committed(events, self.config.sample_rate,
+                    target_block=target, chunk_size=chunk, committed_samples=committed_in_block)
+                pulse_count = 0
+                for event in events:
+                    if not getattr(event, "pulse_id", None):
+                        continue
+                    start = self.lifecycle.pulse_target_onset.get(
+                        event.pulse_id, int(event.target_onset_sample_index))
+                    end = start + self.lifecycle.pulse_waveform_size.get(
+                        event.pulse_id, int(event.rendered_sample_count))
+                    pulse_count += max(0, min(block_start + committed_in_block, end)
+                                       - max(block_start, start))
+                with self.stats.lock:
+                    self.stats.pulse_committed_samples += pulse_count
+                if committed_in_block == chunk:
+                    self.lifecycle.record_owned(target, block, generation, events)
+            if committed_in_block < chunk and unknown_reason is not None:
+                self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                    target, entry, chunk, "write_unknown", unknown_reason,
+                    sample_start=block_start + committed_in_block,
+                    sample_end=block_start + chunk))
+            self.lifecycle.release_reservation(target)
+            if self.commit_event is not None and self.pulse_outcome is None and committed_in_block:
+                for event in events:
+                    if getattr(event, "pulse_id", None):
+                        start = self.lifecycle.pulse_target_onset.get(
+                            event.pulse_id, int(event.target_onset_sample_index))
+                        end = start + self.lifecycle.pulse_waveform_size.get(
+                            event.pulse_id, int(event.rendered_sample_count))
+                        count_samples = max(0, min(block_start + committed_in_block, end)
+                                            - max(block_start, start))
+                        if count_samples:
+                            self.commit_event(event.pulse_id, count_samples)
+
+    @staticmethod
+    def _reported_written_count(error: BaseException, submitted: int) -> int | None:
+        value = getattr(error, "samps_per_chan_written", None)
+        if isinstance(value, bool) or value is None:
+            return None
+        try:
+            count_samples = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return count_samples if 0 <= count_samples <= submitted else None
 
     def _run(self) -> None:
         chunk = self.config.chunk_size
@@ -2923,7 +3709,13 @@ class ScheduledAo:
                 task.out_stream.output_buf_size = lead_samples * 2
                 task.triggers.start_trigger.cfg_dig_edge_start_trig(self.trigger_terminal)
                 writer = AnalogSingleChannelWriter(task.out_stream, auto_start=False)
-                writer.write_many_sample(np.zeros(lead_samples, dtype=np.float64), timeout=5.0)
+                initial_written = writer.write_many_sample(
+                    np.zeros(lead_samples, dtype=np.float64), timeout=5.0)
+                if (isinstance(initial_written, (bool, np.bool_))
+                        or not isinstance(initial_written, (int, np.integer))
+                        or int(initial_written) != lead_samples):
+                    raise RuntimeError(
+                        f"NI initial-zero write accepted {initial_written!r} of {lead_samples} samples")
                 self._next_block = self.config.ao_lead_chunks
                 task.start()
                 self.ready.set()
@@ -2934,6 +3726,9 @@ class ScheduledAo:
                     pause_ms = (now_ns - last_loop_ns) / 1e6
                     last_loop_ns = now_ns
                     generated = int(task.out_stream.total_samp_per_chan_generated)
+                    self._last_generated_sample_count = generated
+                    with self.command_lock:
+                        self._drain_local_accounts_locked()
                     snapshot = self.state.snapshot()
                     if snapshot.fault is not None and not self.force_safe.is_set():
                         # A latched fault is stronger than a recoverable mode
@@ -2949,6 +3744,10 @@ class ScheduledAo:
                                 self.drain_barrier.preserve_until(self._pulse_exclusive_ends[pulse_id])
                         with self.command_lock:
                             cancelled, preserved = self.lifecycle.switch(old_generation)
+                        for target_block, entry in cancelled:
+                            self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                                target_block, entry, chunk, "cancelled",
+                                "generation changed before NI reservation"))
                         for _, (_, _, events) in preserved:
                             for event in events:
                                 self.drain_barrier.preserve_until(self._pulse_exclusive_ends[event.pulse_id])
@@ -2982,6 +3781,9 @@ class ScheduledAo:
                                   if missed_partial_tail else "AO host refill stalled past committed output")
                         for target_block, entry in elapsed_targets:
                             _, generation, events = entry
+                            self._publish_pulse_outcomes(self.lifecycle.pulse_outcomes(
+                                target_block, entry, chunk, "cancelled",
+                                "target elapsed before NI reservation"))
                             if self.ao_outcome is not None:
                                 self.ao_outcome(generation, False, reason)
                             record_sparse_ao_outcome(self.recorder,
@@ -3038,24 +3840,65 @@ class ScheduledAo:
                                 refill = [np.zeros_like(block) for block in refill]
                                 zero_count = len(refill)
                                 zeroed_reserved = reserved
+                                for target_block, _, _, _ in zeroed_reserved:
+                                    entry = self.lifecycle.reserved_blocks.get(target_block)
+                                    if entry is not None:
+                                        self._publish_pulse_outcomes(self.lifecycle.mark_terminal(
+                                            target_block, entry, chunk, "cancelled",
+                                            "reserved pulse range replaced with safe zeros"))
                                 reserved = []
                             write_started = time.perf_counter_ns()
-                            writer.write_many_sample(np.concatenate(refill), timeout=0.5)
+                            try:
+                                written_value = writer.write_many_sample(np.concatenate(refill), timeout=0.5)
+                            except Exception as write_error:
+                                total_samples = sum(np.asarray(block).size for block in refill)
+                                reported = self._reported_written_count(write_error, total_samples)
+                                if reported is None:
+                                    reported = 0
+                                self._settle_reserved_write(
+                                    reserved, first_target, chunk, reported,
+                                    unknown_reason=(f"NI write failed; remainder state unknown: "
+                                                    f"{type(write_error).__name__}"),
+                                )
+                                if reported:
+                                    written_prefix = np.concatenate(refill).reshape(-1)[:reported]
+                                    self.drain_barrier.committed_samples(first_target * chunk, written_prefix)
+                                raise
+                            total_samples = sum(np.asarray(block).size for block in refill)
+                            if (isinstance(written_value, (bool, np.bool_))
+                                    or not isinstance(written_value, (int, np.integer))):
+                                written_count = -1
+                            else:
+                                written_count = int(written_value)
+                            if written_count < 0 or written_count > total_samples:
+                                written_count = 0
+                            if written_count != total_samples:
+                                self._settle_reserved_write(
+                                    reserved, first_target, chunk, written_count,
+                                    unknown_reason="NI writer returned a short sample count; remainder state unknown",
+                                )
+                                if written_count:
+                                    written_prefix = np.concatenate(refill).reshape(-1)[:written_count]
+                                    self.drain_barrier.committed_samples(first_target * chunk, written_prefix)
+                                self.state.fault(
+                                    f"NI writer accepted {written_count} of {total_samples} requested samples")
+                                raise RuntimeError(
+                                    f"NI writer accepted {written_count} of {total_samples} requested samples")
                             write_ms = (time.perf_counter_ns() - write_started) / 1e6
-                            self.drain_barrier.committed(self._next_block * chunk, refill, chunk)
+                            self.drain_barrier.committed_samples(
+                                first_target * chunk, np.concatenate(refill).reshape(-1))
+                            self._settle_reserved_write(reserved, first_target, chunk, total_samples)
                             for _, _, _, events in reserved:
-                                self.lifecycle.committed(events, self.config.sample_rate)
                                 for event in events:
                                     if event.rendered_sample_count:
                                         self.drain_barrier.preserve_until(
                                             self._pulse_exclusive_ends[event.pulse_id])
-                                        if self.commit_event is not None:
-                                            self.commit_event(event.pulse_id, event.rendered_sample_count)
                             with self.command_lock:
                                 for target, block, _, _ in reserved:
                                     current = self.commands.get(target)
                                     if current is not None and current[0] is block:
                                         self.commands.pop(target, None)
+                                    self.lifecycle.reserved_blocks.pop(target, None)
                             if self.recorder is not None:
                                 for offset, block in enumerate(refill):
                                     target = first_target + offset
@@ -3194,8 +4037,10 @@ class RealDaq(BaseDaq):
             reader_errors: list[Exception] = []
             scheduler = ScheduledAo(self.config, self.state, read_task.triggers.start_trigger.term,
                                     self.core.recorder, self.core.commit_actuator_event,
-                                    self.core.record_ao_outcome)
+                                    self.core.record_ao_outcome,
+                                    pulse_outcome=self.core.enqueue_ao_outcome)
             self.scheduler = scheduler
+            self.core.set_local_account_sink(scheduler.enqueue_local_account)
             scheduler.start()
             read_task.start()
             scheduler.notify_clock_started()
@@ -3310,8 +4155,9 @@ class MockDaq(BaseDaq):
         self._ao_thread: Optional[threading.Thread] = None
         self.scheduler = SimulatedAoScheduler(
             self.config, self.state, self.core.recorder, self.core.commit_actuator_event,
-            self.core.record_ao_outcome,
+            self.core.record_ao_outcome, pulse_outcome=self.core.enqueue_ao_outcome,
         )
+        self.core.set_local_account_sink(self.scheduler.enqueue_local_account)
         if self.config.mock_replay is None:
             raise ValueError("mock mode requires a replay recording")
         self.replay = (self.config.mock_replay_data if self.config.mock_replay_data is not None else
@@ -3397,6 +4243,11 @@ class MockDaq(BaseDaq):
             self._ao_stop.set()
             if self._ao_thread is not None:
                 self._ao_thread.join(3.0)
+                if self._ao_thread.is_alive():
+                    message = "mock AO clock did not stop within 3 seconds; waiting before final outcome drain"
+                    LOG.critical(message)
+                    self.state.fault(message)
+                    self._ao_thread.join()
             self._ao_thread = None
             self.request_safe_zero()
 
@@ -3541,11 +4392,10 @@ async def websocket_handler(websocket: Any, state: RuntimeState, recorder: H5Rec
                     raise ValueError("faults are latched; safely restart the application after correcting the cause")
                 elif name == "shutdown":
                     # Enter the safe state before asking main() to tear down the
-                    # DAQ tasks, recorder, and WebSocket server.
+                    # DAQ tasks, drain final AO notifications, and close the recorder.
                     state.set_mode("control")
                     state.set_acquiring(False)
                     state.set_recording(False)
-                    await asyncio.to_thread(recorder.stop_recording)
                     shutdown.set()
                 else:
                     raise ValueError(f"unknown command: {name}")
@@ -3900,6 +4750,16 @@ async def main() -> int:
             LOG.error("%s\n%s", message, traceback.format_exc())
             daq.request_safe_zero()
             state.fault(message)
+        finally:
+            # The AO owner has stopped before the core flushes its final typed
+            # notifications. This stays on the DAQ/core owner thread and does
+            # not synthesize a source block or advance safety/controller time.
+            try:
+                core.drain_ao_notifications()
+            except Exception as exc:
+                message = f"AO notification drain failure: {type(exc).__name__}: {exc}"
+                LOG.error("%s\n%s", message, traceback.format_exc())
+                state.fault(message)
 
     daq_thread = threading.Thread(target=daq_worker, name="daq", daemon=True)
     daq_thread.start()
@@ -3929,8 +4789,15 @@ async def main() -> int:
         state.set_recording(False)
         state.stop()
         daq.request_safe_zero()
+        await asyncio.to_thread(daq_thread.join, 8.0)
+        if daq_thread.is_alive():
+            message = "DAQ worker did not stop within 8 seconds; waiting before recorder close"
+            LOG.critical(message)
+            state.fault(message)
+            daq.request_safe_zero()
+            # Do not close H5 or flush Core concurrently with a live DAQ owner.
+            await asyncio.to_thread(daq_thread.join)
         await asyncio.to_thread(recorder.close)
-        daq_thread.join(timeout=3.0)
         core.close_ui()
         server.close()
         await server.wait_closed()

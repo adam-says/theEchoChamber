@@ -7,7 +7,7 @@ import time
 import asyncio
 import gc
 import threading
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 from contextlib import redirect_stdout
 from io import StringIO
@@ -32,6 +32,7 @@ from simulation import (
 )
 import tools.ni_staged_controller_test as ni_stage
 import tools.validate_controllers as validate_cli
+from controllers import ControllerAction, ControllerDiagnostics, StepResult
 
 
 class ResponsivePlantTests(unittest.TestCase):
@@ -325,6 +326,48 @@ class ResponsivePlantTests(unittest.TestCase):
         self.assertEqual(result["plant_effect_pulse_count"], 0)
 
 class ActualCoreBenchmarkTests(unittest.TestCase):
+    def test_benchmark_exports_float64_actuator_phase_high_water_separately_from_current_phase(self) -> None:
+        actuator = app.PulseActuator(refractory_s=0.0)
+        actuator.arm()
+        actuator.process(
+            ControllerAction(kind="pulse_rate", requested_rate_hz=2.0),
+            first_sample_index=0, sample_count=10_000, sample_rate_hz=20_000,
+            armed=True, validity_mask=np.ones(10_000, dtype=bool), amplitude_v=0.25,
+            generation=0,
+        )
+        # A full-cycle crossing wraps the live phase to zero. The diagnostic
+        # must retain the pre-modulo peak from the actual float64 actuator.
+        self.assertEqual(actuator.rate_phase, 0.0)
+        self.assertGreaterEqual(actuator.rate_phase_high_water, 1.0 - 1e-12)
+        actuator.process(
+            ControllerAction(kind="pulse_rate", requested_rate_hz=2.0),
+            first_sample_index=10_000, sample_count=1_000, sample_rate_hz=20_000,
+            armed=True, validity_mask=np.ones(1_000, dtype=bool), amplitude_v=0.25,
+            generation=0,
+        )
+        self.assertAlmostEqual(actuator.rate_phase, 0.1)
+        actuator.process(
+            ControllerAction(kind="pulse_rate", requested_rate_hz=0.0),
+            first_sample_index=11_000, sample_count=100, sample_rate_hz=20_000,
+            armed=True, validity_mask=np.ones(100, dtype=bool), amplitude_v=0.25,
+            generation=0,
+        )
+
+        metrics = RunMetrics(
+            case_id="phase-fixture", source_name="fixture", controller="pid",
+            sample_rate_hz=20_000, block_samples=100, block_ms=5.0,
+            ao_lead_ms=100.0, deadline_ms=5.0,
+        )
+        phase = benchmark._capture_actuator_rate_phase(metrics, actuator)
+        exported = json.loads(json.dumps(benchmark.json_safe(asdict(metrics)), allow_nan=False))
+
+        self.assertGreaterEqual(phase["reset_count"], 1)
+        self.assertGreater(phase["high_water"], phase["final"])
+        self.assertEqual(phase["final"], 0.0)
+        self.assertEqual(exported["actuator_rate_phase_high_water"], phase["high_water"])
+        self.assertEqual(exported["actuator_rate_phase_reset_count"], phase["reset_count"])
+        self.assertEqual(exported["actuator_rate_phase_final"], phase["final"])
+
     def test_canonical_replay_labels_and_roles_survive_into_recording_header(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             trace = Path(directory) / "canonical_ec.h5"
@@ -588,6 +631,155 @@ class BenchmarkGateTests(unittest.TestCase):
 
 
 class RuntimeHealthMetricsTests(unittest.TestCase):
+    def test_harness_routes_typed_pulse_ranges_and_counts_commits_idempotently(self) -> None:
+        class RecorderCapture:
+            def __init__(self):
+                self.blocks = []
+                self.stages = []
+
+            def submit(self, block):
+                self.blocks.append(block)
+
+            def record_action_stage(self, **stage):
+                self.stages.append(stage)
+
+        class QuietCore(app.ProcessingCore):
+            def _publish_ui(self, *args, **kwargs):
+                pass
+
+        class TwoPulseController:
+            def reset(self, keep_calibration: bool = False):
+                pass
+
+            def drain(self):
+                pass
+
+            def step(self, inp):
+                requests = {800: (880,), 10_800: (10_880,)}.get(inp.first_sample_index, ())
+                return StepResult(
+                    ControllerAction(kind="pulse_events", pulse_sample_indices=requests),
+                    ControllerDiagnostics(
+                        "rule", True, True, 0.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0,
+                        "ready", inp.generation,
+                    ),
+                )
+
+        config = app.AppConfig(processing_block_ms=5.0, ao_target_lead_ms=100.0)
+        config.validate()
+        state = app.RuntimeState(
+            esn_ready=False, start_paused=False, electrode_labels=("CA3", "EC"), ctx_index=1,
+            pulse_threshold_std=3.0, pulse_window_sec=10.0, controller="rule",
+            controller_ready={"esn": False, "rule": True, "pid": True},
+        )
+        state.set_stim("threshold_pulse", 0.5)
+        state.set_mode("closed-loop")
+        state.acknowledge_drain(state.snapshot().generation)
+        state.update_controller_calibration("rule", True)
+        state.set_armed(True)
+        state.set_recording(True)
+        recorder = RecorderCapture()
+        core = QuietCore(config, state, app.EsnRuntime(None, config), recorder,
+                         object(), None, app.Telemetry())
+        core.controllers["rule"] = TwoPulseController()
+
+        harness = _Harness.__new__(_Harness)
+        harness.state, harness.recorder, harness.core = state, recorder, core
+        harness.pulse_commit_samples = 0
+        harness._pulse_commit_ids = set()
+        harness._pulse_commit_ranges = benchmark._CommittedAoRangeCounter()
+        harness._pulse_commit_lock = threading.Lock()
+        scheduler = harness._create_scheduler(config)
+        admitted_shapes = []
+
+        def process_source(source_index: int, *, expected_accepted: bool = True):
+            _, safe, _, reason = core.process(
+                np.zeros((2, config.chunk_size), dtype=np.float64), sample_index=source_index,
+                ao_target_sample_index=source_index + config.ao_lead_samples,
+                input_is_electrode_mV=True, input_roles=("CA3", "Cortex"),
+                input_labels=("CA3", "EC"), input_ctx_index=1,
+            )
+            self.assertIsNone(reason)
+            admitted_shapes.extend((source_index, plan.pulse_id, plan.waveform_v.size,
+                                    plan.target_onset_sample_index)
+                                   for plan in core.last_admitted_pulse_plans)
+            target = source_index // config.chunk_size + config.ao_lead_chunks
+            accepted = scheduler.submit(target, safe.reshape(-1), core.last_processed_generation,
+                                        core.last_pulse_events, core.last_admitted_pulse_plans)
+            self.assertEqual(accepted, expected_accepted)
+
+        for source_index in range(0, 10_800, config.chunk_size):
+            process_source(source_index)
+            scheduler.advance()
+
+        # The first pulse has committed at its original target. Source block
+        # 900 has also sent its cumulative local-account ACK through the harness
+        # binding and the scheduler has serviced that queue.
+        self.assertEqual(scheduler.stats_snapshot()["pulse_committed_samples"], 100)
+        self.assertGreater(harness.pulse_commit_samples, 0)
+        self.assertEqual(len(harness._pulse_commit_ids), 1)
+        self.assertTrue(scheduler._local_account_queue.empty())
+
+        process_source(10_800)
+        state.fault("deterministic cancellation after second pulse admission")
+        scheduler.advance()
+        source_index_at_eof = core.sample_index
+        recorder_blocks_at_eof = len(recorder.blocks)
+        self.assertFalse(any(stage.get("stage") == "ao_cancelled"
+                             and stage.get("request_id") == "g2-p2"
+                             for stage in recorder.stages))
+        harness._flush_final_core_notifications()
+        eof_cancel_rows = [stage for stage in recorder.stages
+                           if stage.get("stage") == "ao_cancelled"
+                           and stage.get("request_id") == "g2-p2"]
+        self.assertTrue(eof_cancel_rows)
+        self.assertEqual(core.sample_index, source_index_at_eof)
+        self.assertEqual(len(recorder.blocks), recorder_blocks_at_eof)
+
+        by_pulse = {}
+        for stage in recorder.stages:
+            request_id = stage.get("request_id")
+            if request_id:
+                by_pulse.setdefault(request_id, []).append(stage)
+        self.assertEqual(len(by_pulse), 2)
+        all_stages = [stage for values in by_pulse.values() for stage in values
+                      if "range_end_sample_index" in stage]
+        statuses = {stage["stage"] for stage in all_stages}
+        self.assertIn("ao_reserved", statuses)
+        self.assertIn("ao_commit", statuses)
+        self.assertIn("ao_cancelled", statuses)
+        committed = [stage for stage in all_stages if stage["stage"] == "ao_commit"]
+        self.assertEqual(admitted_shapes, [(800, "g2-p1", 100, 2_880),
+                                           (10_800, "g2-p2", 100, 12_880)])
+        self.assertEqual(sum(stage["range_end_sample_index"] - stage["sample_index"]
+                             for stage in committed), 100,
+                         (committed, admitted_shapes, scheduler.stats_snapshot()))
+        committed_ranges = {(stage["sample_index"], stage["range_end_sample_index"])
+                            for stage in committed}
+        self.assertEqual(committed_ranges, {(2_880, 2_900), (2_900, 2_980)})
+        reserved_ranges = {(stage["sample_index"], stage["range_end_sample_index"])
+                           for stage in all_stages if stage["stage"] == "ao_reserved"}
+        self.assertEqual(reserved_ranges, committed_ranges)
+        cancelled = [stage for stage in all_stages if stage["stage"] == "ao_cancelled"]
+        self.assertEqual({(stage["sample_index"], stage["range_end_sample_index"])
+                          for stage in cancelled}, {(12_880, 12_900), (12_900, 12_980)})
+        self.assertTrue(all(stage["sample_index"] < stage["range_end_sample_index"]
+                            for stage in all_stages))
+        self.assertTrue(all(stage["controller"] == "rule" for stage in all_stages))
+        self.assertEqual(harness.pulse_commit_samples, 100,
+                         (scheduler.stats_snapshot(), recorder.stages, core.last_pulse_events,
+                          admitted_shapes))
+
+    def test_committed_ao_range_counter_is_idempotent_and_bounded(self) -> None:
+        counter = benchmark._CommittedAoRangeCounter()
+        self.assertEqual(counter.add("pulse", 100, 140), 40)
+        self.assertEqual(counter.add("pulse", 100, 140), 0)
+        self.assertEqual(counter.add("pulse", 120, 150), 10)
+        self.assertEqual(counter.add("pulse", 110, 140), 0)
+        for index in range(513):
+            counter.add(f"p{index}", index * 100, index * 100 + 1)
+        self.assertEqual(counter.add("pulse", 100, 140), 0)
+        self.assertEqual(counter._committed_through, 51_201)
+
     def test_proposed_pulses_include_rejections_and_gate_categorizes_all(self) -> None:
         metrics = RunMetrics(
             case_id="pulse-categories", source_name="fixture", controller="pid",

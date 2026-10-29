@@ -5,15 +5,21 @@
 </p>
 
 The Echo Chamber is research software for low-latency, closed-loop LFP
-acquisition and stimulation with an NI USB-6343. It records CA3 and cortical
-signals, runs a stateful Echo State Network (ESN), and can convert the model
-output into either a passthrough command or a threshold-triggered pulse.
+acquisition with an NI USB-6343. The application records CA3 and cortical
+signals and supports interchangeable rule, PID, and Echo State Network (ESN)
+controllers through a shared pulse-output path. The ESN also retains its
+passthrough mode.
 
-> **Research status:** the corrected ESN is now the default and passed the
-> repository's held-out software comparison. Hardware calibration, channel
-> mapping, pulse shape, and safety values are marked **confirmed pending test**.
-> NI runs are allowed with prominent warnings; stimulation still starts off,
-> at gain zero, and requires explicit arming.
+> **Software validation is in progress.** The current full test suite passes
+> with 229 tests and 13 subtests on Python 3.12.14 and Python 3.14.0. The frozen
+> `6cc4035` replay matrix completed all nine cases and failed the strict timing
+> gates. Full replay acceptance on the updated implementation and paced runs
+> remain pending. See [implementation and validation status](IMPLEMENTATION_STATUS.md)
+> for the evidence and remaining software gates.
+>
+> **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
+> working assumptions, not measured calibration. Do not treat software results
+> or the profile as evidence of physical output, safety, or biological effect.
 
 `echoChamber.py` is the supported development application.
 `echoChamber_v4.py` is retained only as the previous NI-tested reference.
@@ -30,6 +36,13 @@ output into either a passthrough command or a threshold-triggered pulse.
   filtered, evaluated by the ESN, and causally returned to 20 kHz.
 - Stimulation starts off, at gain zero, and unarmed. Arming is explicit and is
   cleared by control mode, acquisition stop, stimulation off/zero, or a fault.
+- AO outcomes record immutable pulse origins and absolute sample ranges. The
+  runtime retains unresolved writes until the scheduler confirms commitment or
+  cancellation. Settings revisions, calibration epochs, and drain acknowledgments
+  gate rearming; changes never arm output automatically.
+- Finite-source EOF and application shutdown flush queued AO outcomes after the
+  AO producer stops and before HDF5 closes. The runtime does not create a
+  synthetic source block for that flush.
 - Pulse detection supports absolute, positive, and negative polarity. Absolute
   is the default. The current pulse is an explicit 5 ms, 100 Hz sine half-cycle.
 - Real-hardware startup uses the included confirmed-pending-test profile by
@@ -129,6 +142,9 @@ complete. You must arm explicitly. The hardware PID settings are zero-gain in
 The nonzero values in
 [`controller_configs/pid_synthetic_demo.json`](controller_configs/pid_synthetic_demo.json)
 are for software demonstrations only. They are not hardware tuning values.
+The separate `--tracking-simulation` validation uses the software-only PID
+preset `kp=0.2`, `ki=0.06`, `kd=0`, and `target_z=1`. It does not change the
+hardware PID settings.
 
 On a fault, the scheduler cancels AO commands that have not reached the writer.
 Samples already accepted into the NI output buffer may still play at their
@@ -151,7 +167,9 @@ python tools\validate_controllers.py --matrix --keep-recordings
 
 To keep the real UI and recorder active for a 30-minute software run, start a
 local static server, then run the paced command. Open each `browser_required`
-URL from `work/validation_runs/progress.jsonl` in the browser.
+URL from the progress JSONL. The default path is
+`work/validation_runs/progress.jsonl`. If you pass `--output-dir`, the CLI
+writes the progress file there as `progress.jsonl`.
 
 ```powershell
 python -m http.server 8000 --directory .

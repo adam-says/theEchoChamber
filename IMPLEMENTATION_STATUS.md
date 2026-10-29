@@ -1,98 +1,158 @@
 # Implementation and validation status
 
-Status date: 2026-08-28
+Status date: 2026-10-29
 
-## Completed in software
+Validation code baseline: `6cc4035`
 
-- Safe, checksummed `echo-chamber-esn-inference-v1` artifact format.
-- Stateful NumPy and Numba inference backends with zero-state reset and
-  chunk-invariant output.
-- Exact recurrence comparison with the original ReservoirPy 0.3.11 graph:
-  maximum absolute difference `0.0` over 10,000 random input samples.
-- NumPy/Numba comparison: maximum absolute difference `3.55e-15`, within
-  `1e-10` tolerance.
-- Causal 20 kHz to 2 kHz preprocessing and causal output reconstruction.
-- Corrected paired-recording training path with separate input/target scaling,
-  one-second washout, per-recording state reset, and held-out acceptance gate.
-- Corrected `esn_corrected_v1.npz` trained from 14 paired recordings and
-  evaluated on five held-out pairs. The mean comparison passed, so it is now
-  the application default.
-- Explicit arm/disarm state, latched faults, safe-zero behavior, single AO unit
-  conversion, with explicit warnings for pending-test profiles and overrides.
-- Threshold decisions use prior baseline history, exclude fired blocks, detect
-  actual crossings, and support absolute/positive/negative polarity.
-- Gap-aware HDF5 v4 recording and plotting with AO pipeline-delay alignment.
-- Offline browser assets, backend-authoritative controls, hardware sample-axis
-  plotting, fault visibility, and calibration display.
-- Bundled replay sidecar with checksum and explicit channel mapping.
+The reviewed software paths listed below are implemented. The current full test
+suite passes on Python 3.12.14 and Python 3.14.0. The updated implementation has
+not completed the full replay matrix or paced acceptance set. No hardware
+requirement has been verified.
 
-## Automated checks
+## Implemented software behavior
 
-- 31 tests pass under Python 3.12.
-- 31 tests pass under Python 3.14.
-- Python compilation succeeds under both versions.
-- Mock replay starts, processes the bundled recording, and exits cleanly.
+- The runtime loads the checksummed numeric `echo-chamber-esn-inference-v1`
+  artifact. It does not load pickle files.
+- NumPy and Numba ESN inference reset state between recordings and produce
+  chunk-invariant output. The supplied recurrence matches ReservoirPy 0.3.11
+  exactly over 10,000 random samples.
+- The corrected training path fits separate input and target scalers, uses a
+  one-second washout, and resets state for each recording.
+- The replay path imports ABF recordings offline and writes calibrated
+  electrode values in mV. It preserves channel roles, provenance, finite EOF,
+  and discontinuity metadata. It does not apply amplifier gain a second time.
+- The controller paths share the processing core, pulse actuator, safety
+  adapter, AO scheduler, recorder, and UI packet serializer.
+- AO pulse outcomes carry immutable pulse origins and absolute half-open sample
+  ranges. The runtime retains plan metadata until AO ownership and local safety
+  accounting resolve. Unknown writes remain unresolved rather than becoming
+  cancellations.
+- PID and rule control require baseline calibration and AO drain before arming.
+  Calibration updates are generation and feature-epoch tagged. Prepared
+  controller settings apply at a drained processing boundary, and settings
+  revisions remain independent of unrelated mode or stimulation changes.
+  Faults latch and disarm output.
+- HDF5 v5 stores calibrated AI values, raw AI values when available, AO data,
+  sample indices, calibration metadata, controller diagnostics, and sparse
+  event and gap records.
+- Finite-source EOF and application shutdown flush queued AO outcomes after the
+  AO producer stops. The core does not create a synthetic source block to flush
+  them. Shutdown keeps the recorder open until the DAQ owner and AO producer
+  stop.
 
-Python 3.14, 100-sample/5 ms corrected-artifact synthetic benchmark (two runs
-of 5,000 unpaced blocks and 1,000 paced blocks):
+## Current test status
 
-| Measure | Result |
+The full suite passes with 229 tests and 13 subtests under both supported
+interpreters. Python 3.12.14 completed in 62.86 seconds and emitted one Numba
+performance warning for a non-contiguous `np.dot` input. Python 3.14.0 completed
+in 38.64 seconds without warnings. Run `python -m pytest -q` with each
+interpreter to reproduce these counts.
+
+The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
+3.12 and 3.14. Its counts are historical and do not describe the current
+implementation.
+
+## Previously measured software evidence
+
+The 2026-08-28 benchmarks are short historical measurements. Two synthetic
+runs processed 5,000 unpaced blocks each, and two paced runs processed 1,000
+blocks each.
+
+| Historical synthetic measure | Result |
 |---|---:|
-| Unpaced mean | 0.677-0.754 ms |
-| Unpaced p99 | 2.205-2.312 ms |
-| Unpaced maximum | 3.798-3.800 ms |
-| Blocks over 5 ms | 0 / 5,000 in both runs |
-| Paced mean | 0.882-1.030 ms |
-| Paced p99 | 2.371-2.375 ms |
-| Paced maximum | 2.912-3.881 ms |
-| Simulated AO underruns | 0 in both runs |
-| Simulated queue range | 19-21 blocks |
+| Unpaced mean | 0.677 to 0.754 ms |
+| Unpaced p99 | 2.205 to 2.312 ms |
+| Unpaced maximum | 3.798 to 3.800 ms |
+| Paced mean | 0.882 to 1.030 ms |
+| Paced p99 | 2.371 to 2.375 ms |
+| Paced maximum | 2.912 to 3.881 ms |
+| Paced simulated AO underruns | 0 |
 
-Both runs pass the p99 target below 2.5 ms and maximum target below 5 ms;
-neither paced simulation missed its processing deadline or reported an AO-
-consumer underrun. These results do not prove NI timing behavior.
+Both synthetic runs met the p99 target below 2.5 ms and the maximum target
+below 5 ms. The recorded replay smoke processed about 2,000 unpaced and 1,000
+paced blocks. Its unpaced p99 and maximum were 1.886 and 3.162 ms. Its paced
+p99 and maximum were 2.103 and 4.048 ms. These short runs do not establish
+full-duration replay acceptance or NI timing behavior. The source JSON files
+remain under `docs/benchmark_*_python314_2026-08-28.json`.
 
-The bundled whole-slice replay was also benchmarked with 2,000 unpaced and
-approximately 1,000 paced blocks: unpaced p99/max were 1.886/3.162 ms, paced
-p99/max were 2.103/4.048 ms, and the simulated AO consumer reported zero
-underruns. A separate gain-1 passthrough replay also completed with p99 below
-2.1 ms and zero underruns. The complete machine-readable results are in
-`docs/benchmark_*_python314_2026-08-28.json`.
+The corrected ESN passed its held-out software comparison. Mean Pearson
+correlation was `0.260` versus `-0.260` for the historical readout, and mean
+nRMSE was `1.007` versus `2.062`. One of five corrected held-out recordings had
+weak negative correlation (`-0.034`), so research runs still require
+per-recording review.
 
-## Corrected model result
+The incremental ESN rolling-threshold path also matched the previous NumPy
+reference across all three complete baseline recordings. Trigger indices matched
+exactly, and recorded float32 model means and thresholds reconstructed with no
+mismatches. See the [full-recording ESN parity report](docs/validation/esn-full-parity/README.md).
+This establishes replay algorithm parity, not real-time timing or hardware
+acceptance.
 
-The downloaded MAT data were processed successfully. Validation files omit an
-`fs` field; their 2 kHz rate is taken from `Paper_figures.py` and the pipeline
-audit and recorded in the artifact manifest.
+## Synthetic tracking evidence
 
-| Held-out mean | Corrected | Historical |
-|---|---:|---:|
-| Pearson correlation | 0.260 | -0.260 |
-| nRMSE | 1.007 | 2.062 |
+The final deterministic 64-second PID case uses `kp=0.2`, `ki=0.06`, `kd=0`,
+and `target_z=1`. Tracking, plant recovery, and pair acceptance passed in the
+software fixture. The separate max-request reference measured a mean reduction
+of `0.003076 mV` over source seconds 22 to 42, against a `0.002616 mV` target
+correction. Its margin was `0.000460 mV`. The regulated PID generated 32 effect
+pulses during the 30-second disturbance, at `1.067 Hz`; this is controller
+usage, not the capacity reference. Tracking settled `14.16 s` after the
+disturbance began. Final moving-mean absolute error was `0.0532 z`, full-window
+raw error SD was `1.9045 z`, and post-settling raw error SD was `1.0168 z`.
+All 4,672 eligible observations were present. Source coverage was complete,
+with no gaps or skipped samples.
 
-The software acceptance rule passed. The fifth held-out recording has weak
-negative corrected correlation (`-0.034`), so per-recording performance should
-still be inspected during research testing rather than relying only on the mean.
+This is software-only evidence from a deterministic plant. It does not prove
+physical output, hardware safety, or biological efficacy.
 
-## Confirmed pending test
+## Frozen replay matrix: failed timing gates
 
-For now, NI runs are allowed before bench confirmation. The working profile and
-the relevant code comments mark each assumption as `confirmed_pending_test`.
-The application prints a clear warning but does not prevent the run.
+The frozen `6cc4035` baseline completed all nine 30-minute matrix cases: each
+processed 360,000 blocks and all 36,000,000 samples. All nine recordings
+completed and drained with an empty queue. Every case reported zero source gaps
+or skipped samples, AO late or stale commands, and active-demand misses. These
+continuity and scheduler results do not offset the timing failures.
 
-The following must be performed on the actual Windows/NI rig with a scope or
-dummy load before any biological preparation:
+All nine cases exceeded the strict maximum process-time limit of `<5 ms>`; the
+observed maxima ranged from 7.095 to 34.104 ms. All three ESN cases also failed
+the p99 limit of `<2.5 ms>`, with p99 values from 4.745 to 4.830 ms. Rule and PID
+p99 values were below 2.5 ms, but their maxima still failed. The baseline matrix
+therefore failed overall. The summary and per-case results are in
+[`docs/validation/baseline-6cc4035/`](docs/validation/baseline-6cc4035/).
 
-1. AO-only continuous, non-regenerating zeros.
-2. AO-only precomputed changing waveform.
-3. Synchronized AI plus zero AO, without UI, recorder, or ESN.
-4. Add processing queue and recorder.
-5. Add ESN bridge.
-6. Add WebSocket UI.
-7. Confirm channel identity, amplifier gain, AO-to-isolator conversion, polarity,
-   pulse amplitude/duration, AO monitoring, and every safety trip.
-8. Run the complete configuration for at least four hours; require zero NI AO
+Run the complete matrix on the updated implementation before claiming replay
+acceptance. Each case must meet both timing limits, process all source samples
+without gaps or skips, report no late or stale AO commands, active-demand
+misses, or noncommitted nonzero AO blocks, complete recording, consume UI
+packets, and finish AO drain with an empty queue.
+
+The separate paced acceptance set remains pending: it requires one 30-minute
+run per controller with the real browser page connected. Any browser disconnect
+fails the case, even if the page reconnects. The run must meet the same source,
+timing, AO, recorder, UI, and drain requirements. The short smoke and synthetic
+simulations do not count toward either full-duration set.
+
+## Hardware status: ALL UNVERIFIED
+
+No NI bench run is recorded. The working hardware profile contains assumptions
+marked `confirmed_pending_test`; that label does not mean that anyone measured
+or confirmed the values. Keep all hardware evidence `UNVERIFIED` until a lab
+operator records and reviews it.
+
+Before connecting AO to an isolator or biological preparation, verify the
+following stages with a scope or rated dummy load:
+
+1. Confirm continuous AO zero output.
+2. Measure the programmed waveform and its return to zero.
+3. Calibrate AI gain and channel mapping.
+4. Run synchronized AI with zero AO.
+5. Add processing and recording.
+6. Add the ESN bridge.
+7. Add the WebSocket UI and verify every safety trip.
+8. Run the complete configuration for at least four hours. Require zero NI AO
    underruns, no unexplained sample gaps, and retained AO headroom.
 
-After testing, replace the working profile values with measurements and record
-the reviewer, instrument identifiers, date, and scope/dummy-load evidence.
+Record the DAQ, amplifier, and isolator identifiers, calibration values,
+operator, date, scope or dummy-load evidence, and application revision. A
+software scheduler commit is not evidence of voltage, current, charge, or
+delivered stimulation. Follow [the NI staged controller protocol](docs/ni_controller_protocol.md).

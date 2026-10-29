@@ -85,6 +85,19 @@ class EchoChamberEsnBridge:
         self.stim_clip_v = tuple(getattr(streamer, "stim_clip_v", (-10.0, 10.0)))
 
         self._recent: deque[float] = deque()
+        self._recent_count = 0
+        self._recent_origin = 0.0
+        self._recent_mean_delta = 0.0
+        self._recent_m2 = 0.0
+        # Live absolute-value peak and since-rebuild high-water support a
+        # bounded conditioning check even when the fixed statistical origin
+        # belongs to a departed startup transient.
+        self._recent_peak_abs_values: deque[tuple[int, float]] = deque()
+        self._recent_sequence = 0
+        self._recent_scale_highwater = 0.0
+        self._recent_scale_contraction_factor = 0.25
+        self._threshold_exact_fallbacks = 0
+        self._rolling_stat_rebuilds = 0
         self._samples_since_pulse = 10**9
         self._dc_previous_input: Optional[float] = None
         self._dc_previous_output = 0.0
@@ -156,6 +169,7 @@ class EchoChamberEsnBridge:
             self.pulse_window_sec = float(pulse_window_sec)
             maxlen = max(1, int(self.pulse_window_sec * self.model_rate))
             self._recent = deque(self._recent, maxlen=maxlen)
+            self._rebuild_recent_statistics()
         if pulse_polarity is not None:
             if pulse_polarity not in {"absolute", "positive", "negative"}:
                 raise ValueError(f"invalid pulse polarity: {pulse_polarity}")
@@ -164,6 +178,8 @@ class EchoChamberEsnBridge:
     def reset(self) -> None:
         self.streamer.reset()
         self._recent.clear()
+        self._reset_recent_statistics()
+        self._threshold_exact_fallbacks = 0
         self._samples_since_pulse = 10**9
         self._dc_previous_input = None
         self._dc_previous_output = 0.0
@@ -233,20 +249,35 @@ class EchoChamberEsnBridge:
             metric = np.abs(values)
         peak = float(np.max(metric))
         warmup = max(5, int(min(1.0, self.pulse_window_sec) * self.model_rate))
+        self._maybe_rebuild_after_scale_contraction(warmup)
         threshold = float("nan")
         fired = False
         trigger_index: Optional[int] = None
         self._samples_since_pulse += values.size
-        if len(self._recent) >= warmup:
-            history = np.fromiter(self._recent, dtype=np.float64)
-            threshold = float(np.mean(history) + self.pulse_threshold_std * (np.std(history) + 1e-12))
-            interval = int(self.pulse_min_interval_sec * self.model_rate)
+        interval = int(self.pulse_min_interval_sec * self.model_rate)
+        interval_ready = self._samples_since_pulse >= interval
+        if self._recent_count >= warmup:
+            mean = self._recent_origin + self._recent_mean_delta
+            std = float(np.sqrt(max(0.0, self._recent_m2 / self._recent_count)))
+            threshold = float(mean + self.pulse_threshold_std * (std + 1e-12))
             previous = self._previous_pulse_metric
+            ambiguous_crossing = (
+                interval_ready
+                and self._ambiguous_crossing_needs_exact_threshold(metric, previous, threshold)
+            )
+            # At extreme absolute offsets, the centered running moments and the
+            # original full-scale NumPy calculation can differ by more than the
+            # threshold diagnostic's four-ULP budget. Use the exact legacy
+            # statistic only when the estimated floating-point uncertainty is
+            # already a material fraction of that budget.
+            if ambiguous_crossing or self._threshold_uncertainty_needs_exact_statistic(metric, threshold):
+                threshold = self._exact_recent_threshold()
+                self._threshold_exact_fallbacks += 1
             crossings = np.flatnonzero(
                 (metric > threshold)
                 & np.r_[previous is None or previous <= threshold, metric[:-1] <= threshold]
             )
-            if crossings.size and self._samples_since_pulse >= interval:
+            if crossings.size and interval_ready:
                 fired = True
                 trigger_index = int(crossings[0])
                 self._samples_since_pulse = 0
@@ -254,9 +285,176 @@ class EchoChamberEsnBridge:
         # Detected-event blocks are excluded so the event cannot inflate its
         # own adaptive threshold and suppress subsequent genuine events.
         if not fired:
-            self._recent.extend(float(value) for value in metric)
+            for value in metric:
+                self._append_recent(float(value))
         trigger_sample = trigger_index * self.decim_q if trigger_index is not None else None
         return threshold, peak, fired, trigger_sample
+
+    def _reset_recent_statistics(self) -> None:
+        self._recent_count = 0
+        self._recent_origin = 0.0
+        self._recent_mean_delta = 0.0
+        self._recent_m2 = 0.0
+        self._recent_peak_abs_values.clear()
+        self._recent_sequence = 0
+        self._recent_scale_highwater = 0.0
+
+    def _rebuild_recent_statistics(self) -> None:
+        """Rebase rolling moments and peak scale with a centered two-pass sum."""
+        self._rolling_stat_rebuilds += 1
+        self._reset_recent_statistics()
+        if not self._recent:
+            return
+        values = np.fromiter(self._recent, dtype=np.float64, count=len(self._recent))
+        self._recent_origin = float(values[0])
+        centered = values - self._recent_origin
+        self._recent_mean_delta = float(np.mean(centered))
+        deviations = centered - self._recent_mean_delta
+        self._recent_m2 = float(np.sum(deviations * deviations, dtype=np.float64))
+        self._recent_count = int(values.size)
+        self._recent_sequence = int(values.size)
+        for sequence, value in enumerate(values):
+            magnitude = abs(float(value))
+            self._recent_scale_highwater = max(self._recent_scale_highwater, magnitude)
+            while (self._recent_peak_abs_values
+                   and self._recent_peak_abs_values[-1][1] <= magnitude):
+                self._recent_peak_abs_values.pop()
+            self._recent_peak_abs_values.append((sequence, magnitude))
+
+    def _add_recent(self, value: float) -> None:
+        if self._recent_count == 0:
+            self._recent_origin = value
+            self._recent_mean_delta = 0.0
+            self._recent_m2 = 0.0
+            self._recent_count = 1
+            return
+        centered = value - self._recent_origin
+        count = self._recent_count + 1
+        delta = centered - self._recent_mean_delta
+        mean = self._recent_mean_delta + delta / count
+        self._recent_m2 += delta * (centered - mean)
+        self._recent_mean_delta = mean
+        self._recent_count = count
+
+    def _remove_recent(self, value: float) -> None:
+        if self._recent_count <= 1:
+            self._reset_recent_statistics()
+            return
+        centered = value - self._recent_origin
+        count = self._recent_count
+        mean = self._recent_mean_delta + (self._recent_mean_delta - centered) / (count - 1)
+        self._recent_m2 -= (centered - self._recent_mean_delta) * (centered - mean)
+        self._recent_count = count - 1
+        self._recent_mean_delta = mean
+        # Welford removal can leave a tiny negative roundoff residue for a flat
+        # window. It represents zero variance, never negative variance.
+        if self._recent_m2 < 0.0:
+            self._recent_m2 = 0.0
+
+    def _append_recent(self, value: float) -> None:
+        maxlen = self._recent.maxlen
+        if maxlen is not None and len(self._recent) == maxlen:
+            expired = self._recent.popleft()
+            self._remove_recent(expired)
+            expired_sequence = self._recent_sequence - len(self._recent) - 1
+            if (self._recent_peak_abs_values
+                    and self._recent_peak_abs_values[0][0] == expired_sequence):
+                self._recent_peak_abs_values.popleft()
+        self._recent.append(value)
+        if self._recent_count == 0:
+            self._recent_origin = value
+        self._add_recent(value)
+        magnitude = abs(float(value))
+        self._recent_scale_highwater = max(self._recent_scale_highwater, magnitude)
+        while (self._recent_peak_abs_values
+               and self._recent_peak_abs_values[-1][1] <= magnitude):
+            self._recent_peak_abs_values.pop()
+        self._recent_peak_abs_values.append((self._recent_sequence, magnitude))
+        self._recent_sequence += 1
+        # If the original center is far outside the current signal's variation
+        # (for example after a large level shift has fully crossed the window),
+        # rebase once. This path is unusual and keeps Welford deltas well-scaled.
+        std = float(np.sqrt(max(0.0, self._recent_m2 / max(1, self._recent_count))))
+        if abs(self._recent_mean_delta) > 1e6 * max(std, 1e-12):
+            self._rebuild_recent_statistics()
+
+    def _maybe_rebuild_after_scale_contraction(self, warmup: int) -> bool:
+        """Empirically rebase once when the live scale contracts materially."""
+        if self._recent_count < warmup or not self._recent_peak_abs_values:
+            return False
+        live_peak = self._recent_peak_abs_values[0][1]
+        highwater = self._recent_scale_highwater
+        if highwater <= 0.0:
+            return False
+        if live_peak == 0.0 or live_peak <= self._recent_scale_contraction_factor * highwater:
+            self._rebuild_recent_statistics()
+            return True
+        return False
+
+    @property
+    def rolling_stat_rebuild_count(self) -> int:
+        """Number of O(window) initialization, resize, or numerical rebase passes."""
+        return self._rolling_stat_rebuilds
+
+    @property
+    def exact_threshold_fallback_count(self) -> int:
+        """Count exact NumPy fallbacks for ambiguous crossings or roundoff budget."""
+        return self._threshold_exact_fallbacks
+
+    def _exact_recent_threshold(self) -> float:
+        history = np.fromiter(self._recent, dtype=np.float64)
+        return float(np.mean(history) + self.pulse_threshold_std * (np.std(history) + 1e-12))
+
+    def _threshold_uncertainty_needs_exact_statistic(
+        self, metric: np.ndarray, threshold: float
+    ) -> bool:
+        """Fall back if estimated roundoff consumes half the four-ULP budget."""
+        if not metric.size:
+            return False
+        std = float(np.sqrt(max(0.0, self._recent_m2 / max(1, self._recent_count))))
+        centered_peak = max(
+            float(np.max(np.abs(metric - self._recent_origin))),
+            self._recent_scale_highwater,
+        )
+        uncertainty = (
+            16.0 * np.finfo(np.float64).eps
+            * max(1.0, abs(self._recent_mean_delta), std, centered_peak)
+            + 2.0 * abs(float(np.spacing(threshold)))
+        )
+        threshold_budget = max(
+            2e-12, 4.0 * abs(float(np.spacing(threshold)))
+        )
+        return uncertainty >= 0.5 * threshold_budget
+
+    def _ambiguous_crossing_needs_exact_threshold(
+        self, metric: np.ndarray, previous: Optional[float], threshold: float
+    ) -> bool:
+        """Use the old NumPy calculation only when rounding could alter a pulse decision."""
+        if not metric.size:
+            return False
+        # Centered Welford keeps statistical error tied to signal variation;
+        # this check narrows the legacy NumPy calculation to possible crossings.
+        mean_delta = self._recent_mean_delta
+        std = float(np.sqrt(max(0.0, self._recent_m2 / max(1, self._recent_count))))
+        centered_peak = float(np.max(np.abs(metric - self._recent_origin)))
+        roundoff = 16.0 * np.finfo(np.float64).eps * max(1.0, abs(mean_delta), std, centered_peak)
+        roundoff += 2.0 * abs(float(np.spacing(threshold)))
+        # Constant windows have an exactly known variance of zero; avoid
+        # repeatedly scanning a high-offset flat window whose threshold rounds
+        # back to its common value.
+        if self._recent_m2 == 0.0 and np.all(metric == self._recent_origin):
+            return False
+        current = np.asarray(metric, dtype=np.float64)
+        prior = np.empty(current.size, dtype=np.float64)
+        if previous is None:
+            prior[0] = -np.inf
+        else:
+            prior[0] = previous
+        if current.size > 1:
+            prior[1:] = current[:-1]
+        possible = (current > threshold - roundoff) & (prior <= threshold + roundoff)
+        robust = (current > threshold + roundoff) & (prior <= threshold - roundoff)
+        return bool(np.any(possible & ~robust))
 
     def _condition_model_output(self, model_output: np.ndarray) -> np.ndarray:
         source = model_output.reshape(-1)

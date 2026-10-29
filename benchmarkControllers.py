@@ -112,6 +112,9 @@ class RunMetrics:
     recorder_backpressure_wait_ms: float = 0.0
     recorder_backpressure_max_backlog: int = 0
     max_requested_rate_hz: float = 0.0
+    actuator_rate_phase_high_water: float = 0.0
+    actuator_rate_phase_reset_count: int = 0
+    actuator_rate_phase_final: float = 0.0
     bounded_rate_request_count: int = 0
     deadline_exceeded_blocks: int = 0
     requested_rate_blocks: int = 0
@@ -190,6 +193,18 @@ def json_safe(value: Any) -> Any:
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     return value
+
+
+def _capture_actuator_rate_phase(metrics: RunMetrics, actuator: Any) -> dict[str, float | int]:
+    """Record float64 actuator phase diagnostics separately from rounded H5 traces."""
+    metrics.actuator_rate_phase_high_water = float(actuator.rate_phase_high_water)
+    metrics.actuator_rate_phase_reset_count = int(actuator.rate_phase_reset_count)
+    metrics.actuator_rate_phase_final = float(actuator.rate_phase)
+    return {
+        "high_water": metrics.actuator_rate_phase_high_water,
+        "reset_count": metrics.actuator_rate_phase_reset_count,
+        "final": metrics.actuator_rate_phase_final,
+    }
 
 
 def write_progress(path: Path | None, value: dict[str, Any]) -> None:
@@ -326,6 +341,26 @@ def _make_config(controller: str, lead_ms: float, output_dir: Path,
     return config
 
 
+class _CommittedAoRangeCounter:
+    """Count confirmed samples once using the scheduler's monotonic AO ranges.
+
+    AO outcomes are published by one ordered writer. Keeping the greatest
+    committed exclusive sample index makes duplicate or delayed old ranges
+    idempotent with constant memory.
+    """
+
+    def __init__(self) -> None:
+        self._committed_through = 0
+
+    def add(self, pulse_id: str, start_sample_index: int, end_sample_index: int) -> int:
+        start, end = int(start_sample_index), int(end_sample_index)
+        if end <= start:
+            return 0
+        newly_committed = max(0, end - max(start, self._committed_through))
+        self._committed_through = max(self._committed_through, end)
+        return newly_committed
+
+
 def _replay_blocks(replay: ReplayData, limit_samples: int | None = None) -> Iterator[tuple[int, np.ndarray]]:
     block = 100
     used = 0
@@ -427,9 +462,9 @@ class _Harness:
                 raise TimeoutError("browser UI did not connect to the benchmark WebSocket")
         self.pulse_commit_samples = 0
         self._pulse_commit_ids: set[str] = set()
-        self.scheduler = app.SimulatedAoScheduler(config, self.state, self.recorder,
-                                                  self._commit_actuator_event,
-                                                  self.core.record_ao_outcome)
+        self._pulse_commit_ranges = _CommittedAoRangeCounter()
+        self._pulse_commit_lock = threading.Lock()
+        self.scheduler = self._create_scheduler(config)
         self.metrics = RunMetrics(
             case_id=self.recording_path.stem, source_name=source_name, controller=config.controller,
             sample_rate_hz=config.sample_rate, block_samples=config.chunk_size,
@@ -850,6 +885,8 @@ class _Harness:
             for _ in range(drain_blocks):
                 self._advance_virtual(self.config.chunk_size / self.config.sample_rate)
         self._stop_ao_clock()
+        self._flush_final_core_notifications()
+        actuator_phase = _capture_actuator_rate_phase(self.metrics, self.core.actuator)
         final_state = self.state.snapshot()
         self.metrics.ao_drain_complete = not final_state.transition_pending
         self.metrics.runtime_fault = final_state.fault
@@ -929,6 +966,7 @@ class _Harness:
         write_progress(self.progress_path, {
             "type": "run_complete", "case_id": self.metrics.case_id,
             "processed_blocks": self.metrics.processed_blocks, "ao": scheduler_stats,
+            "actuator_rate_phase": actuator_phase,
             "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         })
         self.core.close_ui()
@@ -989,10 +1027,36 @@ class _Harness:
                 raise TimeoutError("simulated AO clock did not stop")
             self._ao_clock_thread = None
 
+    def _flush_final_core_notifications(self) -> None:
+        """Persist final AO owner outcomes without advancing finite source time."""
+        self.core.drain_ao_notifications()
+
+    def _create_scheduler(self, config: app.AppConfig) -> app.SimulatedAoScheduler:
+        scheduler = app.SimulatedAoScheduler(
+            config, self.state, self.recorder,
+            commit_event=self._commit_actuator_event,
+            ao_outcome=self.core.record_ao_outcome,
+            pulse_outcome=self._receive_pulse_outcome,
+        )
+        self.core.set_local_account_sink(scheduler.enqueue_local_account)
+        return scheduler
+
+    def _receive_pulse_outcome(self, outcome: app.PulseAoOutcome) -> None:
+        """Queue authoritative ranges to Core and count only new confirmed AO samples."""
+        self.core.enqueue_ao_outcome(outcome)
+        if outcome.status != "committed":
+            return
+        with self._pulse_commit_lock:
+            newly_committed = self._pulse_commit_ranges.add(
+                outcome.pulse_id, outcome.start_sample_index, outcome.end_sample_index,
+            )
+            if newly_committed:
+                self.pulse_commit_samples += newly_committed
+                self._pulse_commit_ids.add(outcome.pulse_id)
+
     def _commit_actuator_event(self, pulse_id: str, samples: int) -> None:
-        self.pulse_commit_samples += int(samples)
-        self._pulse_commit_ids.add(str(pulse_id))
-        self.core.commit_actuator_event(pulse_id, samples)
+        """Legacy observer hook; typed absolute AO outcomes own commitment accounting."""
+        return None
 
     async def _start_ui_transport(self):
         shutdown = asyncio.Event()

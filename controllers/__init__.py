@@ -1,4 +1,4 @@
-from .actuator import ActuatorResult, PulseActuator, PulseEvent, PulsePlan
+from .actuator import ActuatorResult, PulseActuator, PulseAoOutcome, PulseEvent, PulsePlan
 from .base import Controller
 from .calibration import CausalEnvelope
 from .esn import EsnController
@@ -8,4 +8,4 @@ from .types import ActuatorFeedback, ControllerAction, ControllerDiagnostics, Co
 
 __all__ = ["ActuatorFeedback", "ActuatorResult", "CausalEnvelope", "Controller", "ControllerAction",
            "ControllerDiagnostics", "ControllerInput", "EsnController", "PIDController", "PulseActuator",
-           "PulseEvent", "PulsePlan", "RuleController", "StepResult"]
+           "PulseAoOutcome", "PulseEvent", "PulsePlan", "RuleController", "StepResult"]

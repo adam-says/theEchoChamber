@@ -1,0 +1,106 @@
+{
+  "probe": "ESN rolling threshold replay parity",
+  "result": "pass",
+  "recordings": [
+    {
+      "recording": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_231556_20261028T221556Z_2026_05_29_0001_esn_100ms.h5",
+      "artifact": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\artifacts\\esn_corrected_v1.npz",
+      "artifact_sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+      "recording_float32_input_replayed_through_esn": true,
+      "actual_live_float64_daq_bitwise_reproduction": false,
+      "configuration": {
+        "sample_rate": 20000,
+        "chunk_size": 100,
+        "ctx_index": 1,
+        "pulse_threshold_std": 3.0,
+        "pulse_window_sec": 10.0,
+        "pulse_polarity": "absolute",
+        "passthrough_dc_block_hz": 0.5
+      },
+      "coverage": {
+        "scope": "full_recording",
+        "requested_limit_seconds": null,
+        "planned_blocks": 360000,
+        "processed_blocks": 360000,
+        "selected_input_complete": true,
+        "all_committed_input_covered": true,
+        "committed_input_samples": 36000000,
+        "selected_input_samples": 36000000,
+        "stopped_at_first_event_mismatch": false
+      },
+      "blocks": {
+        "compared_esn": 359998,
+        "skipped": 2,
+        "resets": 1
+      },
+      "event_parity": {
+        "mismatches": 0,
+        "examples": []
+      },
+      "detector_parity_gate": {
+        "passed": true,
+        "requires_exact_fired_and_trigger_indices": true,
+        "requires_bounded_threshold_error": true
+      },
+      "threshold_abs_error": {
+        "max": 3.410605131648481e-13,
+        "p99": 4.2630829422130034e-16,
+        "mean": 8.747905876266222e-17,
+        "compared_blocks": 359798,
+        "tolerance_rule": "max(2e-12, 4 * abs(spacing(old_numpy_threshold)))",
+        "gate_failures": 0,
+        "gate_passed": true,
+        "failure_examples": []
+      },
+      "trigger_indices": {
+        "old_numpy": {
+          "count": 482,
+          "sha256": "4e9b3fc964fe16fadb60d7852f7f2a42e149fee23b1122a7fdd54f03de70531a"
+        },
+        "incremental": {
+          "count": 482,
+          "sha256": "4e9b3fc964fe16fadb60d7852f7f2a42e149fee23b1122a7fdd54f03de70531a"
+        },
+        "identical": true
+      },
+      "recording_reconstruction": {
+        "scope": "exact float32 block means and threshold diagnostics; HDF5 does not store full model predictions",
+        "model_block_mean_check": {
+          "compared_blocks": 359998,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "recorded_threshold_check": {
+          "compared_blocks": 359798,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "execution_evidence_mismatches": 0,
+        "total_gate_failures": 0,
+        "mismatch_examples": [],
+        "gate_passed": true
+      },
+      "rolling_stat_rebuild_count": 23,
+      "exact_threshold_fallback_count": 1979,
+      "prediction_stream_sha256": "a822f5d3d9137942f76d5f57e183e416682734ec64c50a3a8095aa9e8ae481fd",
+      "timing": {
+        "bridge_total": {
+          "median_ms": 0.3138,
+          "p99_ms": 0.7755
+        },
+        "new_threshold_stats": {
+          "median_ms": 0.0684,
+          "p99_ms": 0.2319
+        },
+        "old_numpy_threshold_stats": {
+          "median_ms": 0.4081,
+          "p99_ms": 2.085302999999997
+        }
+      },
+      "limitations": [
+        "The reconstruction gate compares only per-block float32 means; it does not recover full model predictions from those means.",
+        "Exact float32 mean matching is authoritative only when the captured electrode_mV inputs match the canonical input samples; live DAQ recordings may lose float64 detail before HDF5 storage and can correctly fail this gate."
+      ]
+    }
+  ]
+}

@@ -644,6 +644,11 @@ def _plot(records: list[dict[str, Any]], path: Path) -> None:
     plt.close(fig)
 
 
+def _format_timing_ms(value: Any) -> str:
+    number = _number(value)
+    return f"{number:.3f}" if number is not None else "n/a"
+
+
 def _markdown(summary: dict[str, Any]) -> str:
     lines = ["# Controller validation evidence", "",
              f"**Overall status:** {summary['overall_status']}", "",
@@ -673,7 +678,7 @@ def _markdown(summary: dict[str, Any]) -> str:
                         f"source={case.get('source_samples'):,}/processed={case.get('recording_expected_samples_from_processed_blocks'):,}"
                         if case.get("recording_committed_samples") is not None
                         else "not reported")
-            lines.append(f"| {case['status']} | {case['run_kind']} @ {case.get('ao_lead_ms','n/a')} ms | {case['source_name']} | {case['controller']} | {case['processed_blocks']:,} / {case['expected_blocks']:,} | {case['source_samples'] if case['source_samples'] is not None else 'n/a'} / {case['expected_samples']:,} | {p99 if p99 is not None else 'n/a'} | {maximum if maximum is not None else 'n/a'} | {case.get('source_index_gap_samples') if case.get('source_index_gap_samples') is not None else 'n/a'} | {case.get('skipped_source_samples') if case.get('skipped_source_samples') is not None else 'n/a'} | {ao} | {recorder} | {browser} |")
+            lines.append(f"| {case['status']} | {case['run_kind']} @ {case.get('ao_lead_ms','n/a')} ms | {case['source_name']} | {case['controller']} | {case['processed_blocks']:,} / {case['expected_blocks']:,} | {case['source_samples'] if case['source_samples'] is not None else 'n/a'} / {case['expected_samples']:,} | {_format_timing_ms(p99)} | {_format_timing_ms(maximum)} | {case.get('source_index_gap_samples') if case.get('source_index_gap_samples') is not None else 'n/a'} | {case.get('skipped_source_samples') if case.get('skipped_source_samples') is not None else 'n/a'} | {ao} | {recorder} | {browser} |")
     else:
         lines.append("No required 1800-second matrix or paced cases were supplied.")
     diagnostic_cases = [case for case in summary["benchmark_cases"] if case["run_kind"] in {"smoke", "lead_sweep"}]
@@ -682,7 +687,7 @@ def _markdown(summary: dict[str, Any]) -> str:
         lines.append("These smoke and lead-sweep runs show timing behavior only. Their duration does not count toward the 1800-second matrix or paced gates.")
         lines.extend(["", "| Status | Run | Source | Controller | Lead ms | Blocks | p99 ms | Max ms |", "|---|---|---|---|---:|---:|---:|---:|"])
         for case in diagnostic_cases:
-            lines.append(f"| {case['status']} | {case['run_kind']} | {case['source_name']} | {case['controller']} | {case.get('ao_lead_ms','n/a')} | {case['processed_blocks']:,} | {case.get('process_p99_ms') if case.get('process_p99_ms') is not None else 'n/a'} | {case.get('process_max_ms') if case.get('process_max_ms') is not None else 'n/a'} |")
+            lines.append(f"| {case['status']} | {case['run_kind']} | {case['source_name']} | {case['controller']} | {case.get('ao_lead_ms','n/a')} | {case['processed_blocks']:,} | {_format_timing_ms(case.get('process_p99_ms'))} | {_format_timing_ms(case.get('process_max_ms'))} |")
     else:
         lines.append("No smoke or lead-sweep diagnostics were supplied.")
     lines.extend(["", "## Failures and limits", ""])
