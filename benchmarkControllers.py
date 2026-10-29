@@ -36,6 +36,16 @@ DEFAULT_TRACES = tuple(
 CONTROLLERS = ("rule", "pid", "esn")
 LEAD_SWEEP_MS = (100.0, 75.0, 50.0, 40.0, 30.0, 20.0)
 PID_SYNTHETIC_CONFIG = Path(__file__).resolve().parent / "controller_configs" / "pid_synthetic_demo.json"
+REFERENCE_COVERAGE = {
+    "duration_seconds": 1800.0,
+    "processed_blocks": 360_000,
+    "source_samples": 36_000_000,
+    "sample_rate_hz": 20_000.0,
+    "block_samples": 100,
+    "block_ms": 5.0,
+    "deadline_ms": 5.0,
+}
+EXPECTED_CONTROLLERS = ("rule", "pid", "esn")
 
 
 def file_sha256(path: Path) -> str:
@@ -217,16 +227,20 @@ def write_progress(path: Path | None, value: dict[str, Any]) -> None:
 
 
 def acceptance_failures(metrics: RunMetrics) -> list[str]:
-    """Evaluate hard software acceptance limits for a completed benchmark case."""
+    """Evaluate runtime checks that apply to both diagnostics and full cases."""
     failures: list[str] = []
+    if metrics.runtime_fault:
+        failures.append(f"runtime fault was latched: {metrics.runtime_fault}")
     if metrics.processed_blocks <= 0:
         failures.append("no processing blocks completed")
     if metrics.skipped_source_samples or metrics.source_index_gap_samples:
         failures.append("paced source data was skipped or has an index gap")
     if not np.isfinite(metrics.process_p99_ms) or metrics.process_p99_ms >= 2.5:
         failures.append("process p99 is not below 2.5 ms")
-    if not np.isfinite(metrics.process_max_ms) or metrics.process_max_ms >= metrics.deadline_ms:
+    if not np.isfinite(metrics.process_max_ms) or metrics.process_max_ms >= REFERENCE_COVERAGE["deadline_ms"]:
         failures.append("maximum process time reached or exceeded the block deadline")
+    if metrics.deadline_ms != REFERENCE_COVERAGE["deadline_ms"]:
+        failures.append("configured process deadline does not match the 5 ms reference")
     if metrics.deadline_exceeded_blocks:
         failures.append("one or more blocks exceeded the processing deadline")
     if metrics.ao_active_demand_misses:
@@ -258,6 +272,209 @@ def acceptance_failures(metrics: RunMetrics) -> list[str]:
             or metrics.requested_pulse_events != metrics.rendered_pulse_events + metrics.rejected_pulse_events):
         failures.append("requested pulse events were not all categorized as rendered or rejected")
     return failures
+
+
+def _observed_coverage(metrics: RunMetrics) -> dict[str, float | int]:
+    return {
+        "duration_seconds": float(metrics.duration_source_s),
+        "processed_blocks": int(metrics.processed_blocks),
+        "source_samples": int(metrics.source_samples),
+        "sample_rate_hz": float(metrics.sample_rate_hz),
+        "block_samples": int(metrics.block_samples),
+        "block_ms": float(metrics.block_ms),
+        "deadline_ms": float(metrics.deadline_ms),
+    }
+
+
+def _coverage_failures(metrics: RunMetrics) -> list[str]:
+    observed = _observed_coverage(metrics)
+    failures = []
+    for key in ("duration_seconds", "processed_blocks", "source_samples", "sample_rate_hz",
+                "block_samples", "block_ms", "deadline_ms"):
+        expected = REFERENCE_COVERAGE[key]
+        actual = observed[key]
+        if key == "duration_seconds":
+            expected_s = float(expected)
+            sample_period_s = 1 / float(REFERENCE_COVERAGE["sample_rate_hz"])
+            numeric_epsilon_s = 2 * math.ulp(expected_s)
+            matches = (math.isfinite(float(actual))
+                       and abs(float(actual) - expected_s) <= sample_period_s + numeric_epsilon_s)
+        else:
+            matches = actual == expected
+        if not matches:
+            failures.append(f"full replay coverage {key} is {actual}, expected {expected}")
+    return failures
+
+
+def acceptance_scope(run_kind: str, metrics: RunMetrics,
+                     requested_scope: str | None = None) -> str:
+    """Classify intentional short runs as diagnostics, malformed full runs as failures."""
+    if run_kind not in {"matrix", "paced"} or requested_scope == "diagnostic_prefix":
+        return "diagnostic_prefix"
+    if requested_scope in {"full_replay_case", "paced_30min_case"}:
+        return "paced_30min_case" if run_kind == "paced" else "full_replay_case"
+    # Direct callers without CLI intent can infer a short prefix from duration.
+    expected_duration = float(REFERENCE_COVERAGE["duration_seconds"])
+    observed_duration = float(metrics.duration_source_s)
+    sample_period_s = 1 / float(REFERENCE_COVERAGE["sample_rate_hz"])
+    numeric_epsilon_s = 2 * math.ulp(expected_duration)
+    if (not math.isfinite(observed_duration)
+            or observed_duration < expected_duration - sample_period_s - numeric_epsilon_s):
+        return "diagnostic_prefix"
+    return "paced_30min_case" if run_kind == "paced" else "full_replay_case"
+
+
+def evaluate_case_acceptance(metrics: RunMetrics, run_kind: str,
+                             requested_scope: str | None = None) -> dict[str, Any]:
+    """Separate mode-independent runtime checks from duration-scoped acceptance."""
+    scope = acceptance_scope(run_kind, metrics, requested_scope)
+    runtime_failures = acceptance_failures(metrics)
+    coverage_failures = _coverage_failures(metrics)
+    observed = _observed_coverage(metrics)
+    coverage_complete = not coverage_failures
+    if scope == "diagnostic_prefix":
+        full_failures: list[str] = []
+        full_passed: bool | None = None
+        full_status = "NOT EVALUATED"
+    else:
+        full_failures = [*runtime_failures, *coverage_failures]
+        full_passed = not full_failures
+        full_status = "PASS" if full_passed else "FAIL"
+    return {
+        "case_id": metrics.case_id,
+        "scope": scope,
+        "runtime_checks_passed": not runtime_failures,
+        "runtime_failures": runtime_failures,
+        "coverage": {
+            "required": dict(REFERENCE_COVERAGE),
+            "observed": observed,
+            "complete": coverage_complete,
+            "failures": coverage_failures,
+        },
+        "full_acceptance_status": full_status,
+        "full_acceptance_passed": full_passed,
+        # `passed` remains for readers of the original v1 schema; it now means
+        # full acceptance only and is null for diagnostic prefixes.
+        "passed": full_passed,
+        "failures": full_failures if full_passed is not None else runtime_failures,
+    }
+
+
+def failed_case_acceptance(case_id: str, failure: dict[str, Any],
+                           requested_scope: str) -> dict[str, Any]:
+    reason = f"{failure.get('exception_type', 'Exception')}: {failure.get('message', 'case failed')}"
+    full_passed = False if requested_scope != "diagnostic_prefix" else None
+    return {
+        "case_id": case_id,
+        "scope": requested_scope,
+        "runtime_checks_passed": False,
+        "runtime_failures": [reason],
+        "coverage": {"required": dict(REFERENCE_COVERAGE), "observed": None,
+                     "complete": False, "failures": ["case produced no complete coverage metrics"]},
+        "full_acceptance_status": "FAIL" if full_passed is False else "NOT EVALUATED",
+        "full_acceptance_passed": full_passed,
+        "passed": full_passed,
+        "failures": [reason],
+    }
+
+
+def evaluate_collection_acceptance(run_kind: str, metrics: list[RunMetrics],
+                                   case_failures: list[dict[str, Any]], *,
+                                   requested_scope: str, finalized: bool) -> dict[str, Any]:
+    """Keep the nine-case/three-controller collection gate separate from case scope."""
+    if run_kind not in {"matrix", "paced"} or requested_scope == "diagnostic_prefix":
+        return {
+            "collection_kind": run_kind,
+            "status": "NOT EVALUATED",
+            "full_acceptance_passed": None,
+            "required": None,
+            "observed": None,
+            "failures": [],
+        }
+    required = {
+        "case_count": 9 if run_kind == "matrix" else 3,
+        "controller_count": 3,
+        "controllers": list(EXPECTED_CONTROLLERS),
+        "trace_count": 3 if run_kind == "matrix" else None,
+        "unique_source_controller_pairs": 9 if run_kind == "matrix" else 3,
+    }
+    source_names = {item.source_name for item in metrics}
+    controllers = {item.controller for item in metrics}
+    pairs = {(item.source_name, item.controller) for item in metrics}
+    case_scopes = [acceptance_scope(run_kind, item, requested_scope) for item in metrics]
+    case_acceptance = [evaluate_case_acceptance(item, run_kind, requested_scope) for item in metrics]
+    full_acceptance_failed_ids = [
+        item["case_id"] for item in case_acceptance
+        if item["full_acceptance_passed"] is False
+    ]
+    observed = {
+        "completed_case_count": len(metrics),
+        "failed_case_count": len(case_failures),
+        "full_scope_case_count": sum(scope != "diagnostic_prefix" for scope in case_scopes),
+        "source_count": len(source_names),
+        "source_names": sorted(source_names),
+        "controller_count": len(controllers),
+        "controllers": sorted(controllers),
+        "unique_source_controller_pairs": len(pairs),
+        "full_acceptance_passed_case_count": sum(
+            item["full_acceptance_passed"] is True for item in case_acceptance),
+        "failed_full_acceptance_case_ids": full_acceptance_failed_ids,
+    }
+    failures = []
+    if case_failures:
+        failures.append(f"{len(case_failures)} case(s) failed before producing metrics")
+    runtime_failed = [item.case_id for item in metrics if acceptance_failures(item)]
+    if runtime_failed:
+        failures.append(f"runtime checks failed for {len(runtime_failed)} completed case(s)")
+    if full_acceptance_failed_ids:
+        failures.append(
+            f"full acceptance failed for {len(full_acceptance_failed_ids)} completed case(s)")
+    if run_kind == "matrix":
+        complete_collection = (
+            len(metrics) == 9 and not case_failures and len(source_names) == 3
+            and controllers == set(EXPECTED_CONTROLLERS) and len(pairs) == 9
+            and all(scope == "full_replay_case" for scope in case_scopes)
+            and all(item["full_acceptance_passed"] is True for item in case_acceptance)
+        )
+        if not complete_collection:
+            failures.append("full matrix requires all 9 source/controller cases across 3 traces")
+    else:
+        complete_collection = (
+            len(metrics) == 3 and not case_failures
+            and controllers == set(EXPECTED_CONTROLLERS) and len(pairs) == 3
+            and all(scope == "paced_30min_case" for scope in case_scopes)
+            and all(item["full_acceptance_passed"] is True for item in case_acceptance)
+        )
+        if not complete_collection:
+            failures.append("paced collection requires one full 30-minute case for each of 3 controllers")
+    if not finalized:
+        return {
+            "collection_kind": run_kind,
+            "status": "IN PROGRESS",
+            "full_acceptance_passed": None,
+            "required": required,
+            "observed": observed,
+            "failures": failures,
+        }
+    if failures:
+        status = "FAIL" if runtime_failed or case_failures or full_acceptance_failed_ids else "INCOMPLETE"
+        return {
+            "collection_kind": run_kind,
+            "status": status,
+            "full_acceptance_passed": False,
+            "required": required,
+            "observed": observed,
+            "failures": failures,
+        }
+    status = "PASS"
+    return {
+        "collection_kind": run_kind,
+        "status": status,
+        "full_acceptance_passed": True,
+        "required": required,
+        "observed": observed,
+        "failures": [],
+    }
 
 
 def _record_pulse_event_metrics(metrics: RunMetrics, seen: set[str], events: Iterable[Any]) -> None:
@@ -1283,7 +1500,8 @@ def _ui_channel_mapping(packet: str | None) -> dict[str, Any] | None:
 
 def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]], output_dir: Path,
                   *, run_kind: str, acceptance: list[dict[str, Any]] | None = None,
-                  case_failures: list[dict[str, Any]] | None = None) -> tuple[Path, Path]:
+                  case_failures: list[dict[str, Any]] | None = None,
+                  collection_acceptance: dict[str, Any] | None = None) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     json_path = output_dir / f"controller_{run_kind}_{stamp}.json"
@@ -1298,6 +1516,7 @@ def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]],
                       "deadline_ms": 5.0, "lead_sweep_ms": list(LEAD_SWEEP_MS)},
         "physical_pulse_claims": False,
         "acceptance": acceptance or [],
+        "collection_acceptance": collection_acceptance,
         "cases": [asdict(x) for x in metrics], "environments": environments,
         "case_failures": case_failures or [],
     }
@@ -1305,6 +1524,20 @@ def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]],
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
         metric_fields = [item.name for item in fields(RunMetrics)]
         csv_fields = metric_fields + ["case_status", "failure_type", "failure_message",
+                                      "acceptance_scope", "runtime_checks_passed", "runtime_failures",
+                                      "full_acceptance_status", "full_acceptance_passed",
+                                      "required_duration_seconds", "required_blocks", "required_samples",
+                                      "required_sample_rate_hz", "required_block_samples",
+                                      "required_block_ms", "required_deadline_ms",
+                                      "observed_duration_seconds", "observed_blocks", "observed_samples",
+                                      "observed_sample_rate_hz", "observed_block_samples",
+                                      "observed_block_ms", "observed_deadline_ms", "coverage_complete",
+                                      "collection_status", "collection_full_acceptance_passed",
+                                      "collection_required_cases", "collection_observed_cases",
+                                      "collection_required_controllers", "collection_observed_controllers",
+                                      "collection_required_traces", "collection_observed_traces",
+                                      "collection_required_pairs", "collection_observed_pairs",
+                                      "collection_failures",
                                       "acceptance_passed", "acceptance_failures"]
         writer = csv.DictWriter(stream, fieldnames=csv_fields)
         writer.writeheader()
@@ -1313,8 +1546,8 @@ def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]],
             row = asdict(item)
             row["case_status"] = "completed"
             evaluated = acceptance_by_id.get(item.case_id)
-            row["acceptance_passed"] = evaluated["passed"] if evaluated else ""
-            row["acceptance_failures"] = json.dumps(evaluated["failures"]) if evaluated else ""
+            _write_acceptance_csv_fields(row, evaluated)
+            _write_collection_csv_fields(row, collection_acceptance)
             writer.writerow(row)
         for failure in case_failures or []:
             row = {name: "" for name in metric_fields}
@@ -1325,9 +1558,9 @@ def write_results(metrics: list[RunMetrics], environments: list[dict[str, Any]],
                 "case_status": "failed",
                 "failure_type": failure.get("exception_type", "Exception"),
                 "failure_message": failure.get("message", ""),
-                "acceptance_passed": False,
-                "acceptance_failures": json.dumps([failure.get("message", "case failed")]),
             })
+            _write_acceptance_csv_fields(row, acceptance_by_id.get(str(failure.get("case_id", ""))))
+            _write_collection_csv_fields(row, collection_acceptance)
             writer.writerow(row)
     return json_path, csv_path
 
@@ -1336,7 +1569,8 @@ def write_case_checkpoint(output_dir: Path, *, run_kind: str, case_index: int,
                           metrics: RunMetrics | None = None,
                           environment: dict[str, Any] | None = None,
                           failure: dict[str, Any] | None = None,
-                          acceptance_required: bool = False) -> tuple[Path, Path]:
+                          requested_scope: str | None = None,
+                          collection_progress: dict[str, Any] | None = None) -> tuple[Path, Path]:
     """Persist one case immediately; the checkpoint never marks a matrix complete."""
     if (metrics is None) == (failure is None):
         raise ValueError("provide exactly one of metrics or failure")
@@ -1347,15 +1581,9 @@ def write_case_checkpoint(output_dir: Path, *, run_kind: str, case_index: int,
     stem = f"controller_case_{case_index:03d}_{safe_case_id}"
     json_path = output_dir / f"{stem}.json"
     csv_path = output_dir / f"{stem}.csv"
-    acceptance = None
-    if metrics is not None and acceptance_required:
-        failures = acceptance_failures(metrics)
-        acceptance = {"case_id": case_id, "passed": not failures, "failures": failures}
-    elif failure is not None:
-        acceptance = {
-            "case_id": case_id, "passed": False,
-            "failures": [f"{failure.get('exception_type', 'Exception')}: {failure.get('message', 'case failed')}"],
-        }
+    acceptance = (evaluate_case_acceptance(metrics, run_kind, requested_scope) if metrics is not None else
+                  failed_case_acceptance(case_id, failure or {},
+                                         requested_scope or "diagnostic_prefix"))
     document = {
         "schema": "echo-chamber-controller-case-checkpoint-v1",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1368,6 +1596,7 @@ def write_case_checkpoint(output_dir: Path, *, run_kind: str, case_index: int,
         "environment": environment,
         "failure": failure,
         "acceptance": acceptance,
+        "collection_progress": collection_progress,
         "physical_pulse_claims": False,
     }
     json_path.write_text(json.dumps(json_safe(document), indent=2, allow_nan=False) + "\n", encoding="utf-8")
@@ -1381,15 +1610,80 @@ def write_case_checkpoint(output_dir: Path, *, run_kind: str, case_index: int,
         "case_status": case_status,
         "failure_type": failure.get("exception_type", "Exception") if failure else "",
         "failure_message": failure.get("message", "") if failure else "",
-        "acceptance_passed": acceptance["passed"] if acceptance is not None else "",
-        "acceptance_failures": json.dumps(acceptance["failures"]) if acceptance is not None else "",
         "matrix_complete": False,
     })
+    _write_acceptance_csv_fields(row, acceptance)
     with csv_path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=metric_fields + [
             "case_status", "failure_type", "failure_message", "acceptance_passed",
+            "acceptance_scope", "runtime_checks_passed", "runtime_failures",
+            "full_acceptance_status", "full_acceptance_passed",
+            "required_duration_seconds", "required_blocks", "required_samples",
+            "required_sample_rate_hz", "required_block_samples",
+            "required_block_ms", "required_deadline_ms",
+            "observed_duration_seconds", "observed_blocks", "observed_samples",
+            "observed_sample_rate_hz", "observed_block_samples",
+            "observed_block_ms", "observed_deadline_ms", "coverage_complete",
+            "collection_status", "collection_full_acceptance_passed",
+            "collection_required_cases", "collection_observed_cases",
+            "collection_required_controllers", "collection_observed_controllers",
+            "collection_required_traces", "collection_observed_traces",
+            "collection_required_pairs", "collection_observed_pairs",
+            "collection_failures",
             "acceptance_failures", "matrix_complete",
         ])
         writer.writeheader()
         writer.writerow(row)
     return json_path, csv_path
+
+
+def _write_acceptance_csv_fields(row: dict[str, Any], acceptance: dict[str, Any] | None) -> None:
+    if acceptance is None:
+        return
+    coverage = acceptance.get("coverage") or {}
+    required = coverage.get("required") or {}
+    observed = coverage.get("observed") or {}
+    row.update({
+        "acceptance_scope": acceptance.get("scope", ""),
+        "runtime_checks_passed": acceptance.get("runtime_checks_passed"),
+        "runtime_failures": json.dumps(acceptance.get("runtime_failures", [])),
+        "full_acceptance_status": acceptance.get("full_acceptance_status", ""),
+        "full_acceptance_passed": acceptance.get("full_acceptance_passed"),
+        "required_duration_seconds": required.get("duration_seconds", ""),
+        "required_blocks": required.get("processed_blocks", ""),
+        "required_samples": required.get("source_samples", ""),
+        "required_sample_rate_hz": required.get("sample_rate_hz", ""),
+        "required_block_samples": required.get("block_samples", ""),
+        "required_block_ms": required.get("block_ms", ""),
+        "required_deadline_ms": required.get("deadline_ms", ""),
+        "observed_duration_seconds": observed.get("duration_seconds", ""),
+        "observed_blocks": observed.get("processed_blocks", ""),
+        "observed_samples": observed.get("source_samples", ""),
+        "observed_sample_rate_hz": observed.get("sample_rate_hz", ""),
+        "observed_block_samples": observed.get("block_samples", ""),
+        "observed_block_ms": observed.get("block_ms", ""),
+        "observed_deadline_ms": observed.get("deadline_ms", ""),
+        "coverage_complete": coverage.get("complete"),
+        "acceptance_passed": acceptance.get("full_acceptance_passed"),
+        "acceptance_failures": json.dumps(acceptance.get("failures", [])),
+    })
+
+
+def _write_collection_csv_fields(row: dict[str, Any], collection: dict[str, Any] | None) -> None:
+    if collection is None:
+        return
+    required = collection.get("required") or {}
+    observed = collection.get("observed") or {}
+    row.update({
+        "collection_status": collection.get("status", ""),
+        "collection_full_acceptance_passed": collection.get("full_acceptance_passed"),
+        "collection_required_cases": required.get("case_count", ""),
+        "collection_observed_cases": observed.get("completed_case_count", ""),
+        "collection_required_controllers": required.get("controller_count", ""),
+        "collection_observed_controllers": observed.get("controller_count", ""),
+        "collection_required_traces": required.get("trace_count", ""),
+        "collection_observed_traces": observed.get("source_count", ""),
+        "collection_required_pairs": required.get("unique_source_controller_pairs", ""),
+        "collection_observed_pairs": observed.get("unique_source_controller_pairs", ""),
+        "collection_failures": json.dumps(collection.get("failures", [])),
+    })

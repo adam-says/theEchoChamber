@@ -2,12 +2,14 @@
 
 Status date: 2026-10-29
 
-Validation code baseline: `6cc4035`
+Current implementation: `88469989` ESN bridge revision
 
 The reviewed software paths listed below are implemented. The current full test
-suite passes on Python 3.12.14 and Python 3.14.0. The updated implementation has
-not completed the full replay matrix or paced acceptance set. No hardware
-requirement has been verified.
+suite passes on Python 3.12.14 and Python 3.14.0. The latest nine-case replay
+matrix completed every 30-minute recording but failed strict timing limits.
+That matrix predates the current ESN moment-only rebase. Full replay timing and
+ESN parity on the current bridge, plus the three paced cases, remain pending.
+No hardware requirement has been verified.
 
 ## Implemented software behavior
 
@@ -16,6 +18,11 @@ requirement has been verified.
 - NumPy and Numba ESN inference reset state between recordings and produce
   chunk-invariant output. The supplied recurrence matches ReservoirPy 0.3.11
   exactly over 10,000 random samples.
+- The reviewed moment-only rebase recalculates centered rolling moments while
+  preserving the live peak queue and its absolute sample sequence. Contraction
+  and drift callers reset scale high-water to the live peak. Window resizing
+  still rebuilds peak metadata. The current `esn_bridge.py` SHA-256 is
+  `88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749`.
 - The corrected training path fits separate input and target scalers, uses a
   one-second washout, and resets state for each recording.
 - The replay path imports ABF recordings offline and writes calibrated
@@ -42,11 +49,10 @@ requirement has been verified.
 
 ## Current test status
 
-The full suite passes with 229 tests and 13 subtests under both supported
-interpreters. Python 3.12.14 completed in 62.86 seconds and emitted one Numba
-performance warning for a non-contiguous `np.dot` input. Python 3.14.0 completed
-in 38.64 seconds without warnings. Run `python -m pytest -q` with each
-interpreter to reproduce these counts.
+The full suite passes with 240 tests and 15 subtests under both supported
+interpreters. Python 3.12.14 completed in 53.27 seconds. Python 3.14.0 completed
+in 47.75 seconds. Run `python -m pytest -q` with each interpreter to reproduce
+these counts.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
 3.12 and 3.14. Its counts are historical and do not describe the current
@@ -81,12 +87,14 @@ nRMSE was `1.007` versus `2.062`. One of five corrected held-out recordings had
 weak negative correlation (`-0.034`), so research runs still require
 per-recording review.
 
-The incremental ESN rolling-threshold path also matched the previous NumPy
-reference across all three complete baseline recordings. Trigger indices matched
-exactly, and recorded float32 model means and thresholds reconstructed with no
-mismatches. See the [full-recording ESN parity report](docs/validation/esn-full-parity/README.md).
-This establishes replay algorithm parity, not real-time timing or hardware
-acceptance.
+The incremental ESN rolling-threshold path matched the previous NumPy reference
+across all three complete baseline recordings. Trigger indices matched exactly,
+and recorded float32 model means and thresholds reconstructed with no
+mismatches. That report used the earlier `f6147a59` ESN bridge. The current
+moment-only rebase has SHA-256
+`88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749`. The old
+result remains previous-revision evidence. Rerun parity on the current bridge.
+Neither result establishes real-time timing or hardware acceptance.
 
 ## Synthetic tracking evidence
 
@@ -105,26 +113,34 @@ with no gaps or skipped samples.
 This is software-only evidence from a deterministic plant. It does not prove
 physical output, hardware safety, or biological efficacy.
 
-## Frozen replay matrix: failed timing gates
+## Full replay matrix: failed timing gates
 
-The frozen `6cc4035` baseline completed all nine 30-minute matrix cases: each
-processed 360,000 blocks and all 36,000,000 samples. All nine recordings
-completed and drained with an empty queue. Every case reported zero source gaps
-or skipped samples, AO late or stale commands, and active-demand misses. These
-continuity and scheduler results do not offset the timing failures.
+The `e965d808` matrix completed all nine full replay cases. Each processed
+360,000 blocks and all 36,000,000 samples. All nine cases failed the strict
+maximum process-time limit of `<5 ms>`, with maxima from 9.959 to 199.559 ms.
+The three ESN cases also failed the p99 limit of `<2.5 ms>`, with p99 values
+from 2.700 to 3.022 ms. These results predate the current moment-only ESN
+rebase. They establish full input and recording coverage for that revision,
+not timing acceptance for the current bridge. See
+[`docs/validation/replay-e965d80/`](docs/validation/replay-e965d80/).
 
-All nine cases exceeded the strict maximum process-time limit of `<5 ms>`; the
-observed maxima ranged from 7.095 to 34.104 ms. All three ESN cases also failed
-the p99 limit of `<2.5 ms>`, with p99 values from 4.745 to 4.830 ms. Rule and PID
-p99 values were below 2.5 ms, but their maxima still failed. The baseline matrix
-therefore failed overall. The summary and per-case results are in
-[`docs/validation/baseline-6cc4035/`](docs/validation/baseline-6cc4035/).
+The frozen `6cc4035` baseline also completed all nine cases. All three PID
+cases had positive requested-rate blocks: 80,123 for May 29, 79,272 for Aug 5,
+and 32,025 for Aug 6. Each had zero pulse proposals. Positive rate requests
+therefore did not become pulses on those traces.
 
-Run the complete matrix on the updated implementation before claiming replay
-acceptance. Each case must meet both timing limits, process all source samples
-without gaps or skips, report no late or stale AO commands, active-demand
-misses, or noncommitted nonzero AO blocks, complete recording, consume UI
-packets, and finish AO drain with an empty queue.
+The earlier baseline had different timing results. It exceeded the maximum
+limit with maxima from 7.095 to 34.104 ms. Its three ESN p99 values ranged from
+4.745 to 4.830 ms. The current matrix results above supersede those numbers for
+the `e965d808` revision.
+
+The matrix report separates case coverage from timing acceptance. Full matrix
+acceptance requires all nine trace/controller cases. Each case must meet both
+timing limits, process every source sample without gaps or skips, report no late
+or stale AO commands, active-demand misses, or noncommitted nonzero AO blocks,
+complete recording, consume UI packets, and finish AO drain with an empty queue.
+The collection cannot pass if any individual full case fails its coverage or
+runtime checks.
 
 The separate paced acceptance set remains pending: it requires one 30-minute
 run per controller with the real browser page connected. Any browser disconnect

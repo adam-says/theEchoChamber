@@ -159,6 +159,119 @@ class IncrementalPulseStatsTests(unittest.TestCase):
                 np.testing.assert_allclose(np.sqrt(max(0.0, bridge._recent_m2 / len(history))),
                                            centered_std, rtol=2e-10, atol=2e-12)
 
+    @staticmethod
+    def _assert_peak_queue_matches_window(test: unittest.TestCase,
+                                          bridge: EchoChamberEsnBridge) -> None:
+        expected: list[float] = []
+        for value in bridge._recent:
+            magnitude = abs(float(value))
+            while expected and expected[-1] <= magnitude:
+                expected.pop()
+            expected.append(magnitude)
+        actual = [magnitude for _, magnitude in bridge._recent_peak_abs_values]
+        test.assertEqual(actual, expected)
+        sequences = [sequence for sequence, _ in bridge._recent_peak_abs_values]
+        test.assertEqual(sequences, sorted(sequences))
+
+    def test_moment_only_rebase_preserves_peak_queue_sequence_and_future_expiry(self) -> None:
+        _, bridge = EchoChamberEsnBridgeTests().make_bridge(pulse_window_sec=1.0)
+        _, full_rebuild_reference = EchoChamberEsnBridgeTests().make_bridge(pulse_window_sec=1.0)
+        bridge._recent = deque(maxlen=5)
+        for value in (5.0, 1.0, 5.0, 0.0, 0.0, 2.0):
+            bridge._append_recent(value)
+
+        live_queue = tuple(bridge._recent_peak_abs_values)
+        live_sequence = bridge._recent_sequence
+        live_highwater = bridge._recent_scale_highwater
+        rebuilds_before = bridge.rolling_stat_rebuild_count
+        bridge._rebuild_recent_moments()
+
+        self.assertEqual(tuple(bridge._recent_peak_abs_values), live_queue)
+        self.assertEqual(bridge._recent_sequence, live_sequence)
+        self.assertEqual(bridge._recent_scale_highwater, live_highwater)
+        self.assertEqual(bridge.rolling_stat_rebuild_count, rebuilds_before + 1)
+        self._assert_peak_queue_matches_window(self, bridge)
+
+        # Compare subsequent equal-peak and zero-tail expiry against the former
+        # full-rebuild behavior; both queues must remain exact as old maxima leave.
+        full_rebuild_reference._recent = deque(bridge._recent, maxlen=5)
+        full_rebuild_reference._rebuild_recent_statistics()
+        for value in (0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0):
+            bridge._append_recent(value)
+            full_rebuild_reference._append_recent(value)
+            np.testing.assert_array_equal(np.fromiter(bridge._recent, dtype=np.float64),
+                                          np.fromiter(full_rebuild_reference._recent, dtype=np.float64))
+            self._assert_peak_queue_matches_window(self, bridge)
+            self._assert_peak_queue_matches_window(self, full_rebuild_reference)
+            self.assertEqual(
+                [magnitude for _, magnitude in bridge._recent_peak_abs_values],
+                [magnitude for _, magnitude in full_rebuild_reference._recent_peak_abs_values],
+            )
+            self.assertEqual(bridge._recent_scale_highwater,
+                             full_rebuild_reference._recent_scale_highwater)
+
+    def test_scale_contraction_rebases_moments_and_resets_only_live_highwater(self) -> None:
+        for values, expected_peak in (
+            ((0.0, 0.002, 0.002, 0.001, 0.0), 0.002),
+            ((0.0, 0.0, 0.0, 0.0, 0.0), 0.0),
+        ):
+            with self.subTest(expected_peak=expected_peak):
+                _, bridge = EchoChamberEsnBridgeTests().make_bridge(pulse_window_sec=1.0)
+                bridge._recent = deque(maxlen=5)
+                for value in values:
+                    bridge._append_recent(value)
+                queue_before = tuple(bridge._recent_peak_abs_values)
+                sequence_before = bridge._recent_sequence
+                bridge._recent_scale_highwater = 100.0
+                rebuilds_before = bridge.rolling_stat_rebuild_count
+
+                self.assertTrue(bridge._maybe_rebuild_after_scale_contraction(warmup=5))
+
+                self.assertEqual(bridge.rolling_stat_rebuild_count, rebuilds_before + 1)
+                self.assertEqual(tuple(bridge._recent_peak_abs_values), queue_before)
+                self.assertEqual(bridge._recent_sequence, sequence_before)
+                self.assertEqual(bridge._recent_scale_highwater, expected_peak)
+                self._assert_peak_queue_matches_window(self, bridge)
+                np.testing.assert_allclose(
+                    bridge._recent_origin + bridge._recent_mean_delta,
+                    np.mean(np.asarray(values, dtype=np.float64)), rtol=0, atol=1e-15,
+                )
+
+    def test_drift_rebase_preserves_updated_sequence_and_resets_highwater(self) -> None:
+        _, bridge = EchoChamberEsnBridgeTests().make_bridge(pulse_window_sec=1.0)
+        bridge._recent = deque(maxlen=4)
+        for value in (1e9, 1e9, 1e9, 1e9):
+            bridge._append_recent(value)
+        bridge._rebuild_recent_statistics()
+        bridge._recent_origin = 0.0
+        bridge._recent_mean_delta = 1e9
+        bridge._recent_m2 = 0.0
+        bridge._recent_scale_highwater = 1e12
+        rebuilds_before = bridge.rolling_stat_rebuild_count
+
+        bridge._append_recent(1e9)
+
+        self.assertEqual(bridge.rolling_stat_rebuild_count, rebuilds_before + 1)
+        self.assertEqual(bridge._recent_sequence, 5)
+        self.assertEqual(bridge._recent_scale_highwater,
+                         bridge._recent_peak_abs_values[0][1])
+        self._assert_peak_queue_matches_window(self, bridge)
+        self.assertAlmostEqual(bridge._recent_origin + bridge._recent_mean_delta,
+                               float(np.mean(np.fromiter(bridge._recent, dtype=np.float64))))
+
+    def test_configured_window_resize_keeps_full_peak_rebuild_semantics(self) -> None:
+        _, bridge = EchoChamberEsnBridgeTests().make_bridge(pulse_window_sec=1.0)
+        bridge._recent = deque(maxlen=5)
+        for value in (3.0, 3.0, 0.0, 1.0, 0.0, 2.0):
+            bridge._append_recent(value)
+
+        bridge.configure(pulse_window_sec=2.0)
+
+        self.assertEqual(bridge._recent_sequence, len(bridge._recent))
+        self.assertEqual(bridge._recent_scale_highwater,
+                         max(abs(float(value)) for value in bridge._recent))
+        self._assert_peak_queue_matches_window(self, bridge)
+
     def test_incremental_stats_match_old_numpy_path_through_wrap_resize_and_reset(self) -> None:
         rng = np.random.default_rng(2918)
         for polarity in ("absolute", "positive", "negative"):

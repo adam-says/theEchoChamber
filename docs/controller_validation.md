@@ -110,14 +110,36 @@ run is diagnostic and cannot pass the full-duration gate.
 
 The replay matrix loads the nonzero synthetic-demo PID configuration. It uses
 `kp=0.4`, `ki=0.1`, `kd=0.02`, `target_z=1`, and a 2 Hz rate limit. It does not
-use the zero-gain hardware PID defaults. Nonzero gains do not guarantee pulse
-requests for every replay. All three PID replay cases had zero scheduler
-`pulse_requests`. Two of the three showed positive requested-rate blocks. This
-shows that the PID rate path ran on those two traces, but does not establish
+use the zero-gain hardware PID defaults. In the current full replay results,
+all three PID cases had positive requested-rate blocks but zero pulse
+proposals: May 29 had 80,123 requested-rate blocks, phase high-water 0.118351397,
+and 29,210 phase resets; Aug 5 had 79,272 blocks, phase high-water 0.146280455,
+and 32,764 resets; Aug 6 had 32,025 blocks, phase high-water 0.12974451823226668,
+and 8,816 resets. The phase never reached one, so these runs do not establish
 effective SWR pulse control. The replay cases did not have equal stimulation
 exposure. Compare requested rates and generated pulse counts before comparing
 controller outcomes. The 64-second actual-core tracking fixture below provides
 separate software actuation and feedback evidence.
+
+The frozen `6cc4035` baseline showed the same requested-rate block counts on
+these three traces and also produced zero PID pulse proposals.
+
+Each JSON and CSV case reports its `acceptance_scope`, runtime checks, and
+reference coverage. A short run—including `--matrix --duration-seconds 20` or
+`--paced --duration-seconds 20`—is labeled `diagnostic_prefix`; full-duration
+acceptance is `NOT EVALUATED` and its pass value is null. The report still
+records whether runtime checks passed, and a runtime-check failure still makes
+the command exit nonzero. Full replay acceptance requires exactly 1,800 source
+seconds, 360,000 blocks, 36,000,000 samples, 20 kHz, 100 samples per block, and
+the 5 ms processing deadline.
+The required and observed values are included in both case JSON and CSV.
+Per-case full passes do not stand in for collection completeness: the aggregate
+matrix gate requires all nine trace/controller pairs across three traces, and
+the paced collection gate requires one full 30-minute case for each of the
+three controllers. A deliberately selected subset remains collection-incomplete
+even when its individual full cases pass. A malformed full-intent case remains
+in full scope and fails coverage or runtime acceptance. It is not relabeled as a
+diagnostic. The matrix or paced collection fails if any required case fails.
 
 The unpaced recorder uses a bounded queue. When backlog reaches its configured
 threshold, the producer waits between blocks for the writer to drain. This wait
@@ -204,14 +226,23 @@ state. The progress JSONL records the process ID, run state, and case progress.
 
 The [full-recording ESN threshold parity report](validation/esn-full-parity/README.md)
 documents exact trigger-index parity and float32 reconstruction on all three
-30-minute ESN recordings. It does not establish real-time timing or hardware
+30-minute ESN recordings for the earlier `f6147a59` bridge. The current bridge
+has SHA-256
+`88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749` and includes
+the reviewed moment-only rebase. That rebase recalculates count, origin, mean,
+and M2 while preserving the live peak queue and absolute sequence. Contraction
+and drift callers reset scale high-water to the current live peak. Window resize
+still rebuilds peak metadata. Full three-recording parity on the current bridge
+is pending. Neither parity result establishes real-time timing or hardware
 acceptance.
 
-The full current Python test suite passes with 229 tests and 13 subtests on both
-Python 3.12.14 and Python 3.14.0. It includes controller readiness transactions,
-AO range attribution, unresolved-write retention, and shutdown outcome flushing.
-Run `python -m pytest -q` with each interpreter to reproduce these counts. These
-tests do not establish full replay timing or hardware acceptance.
+The full current Python test suite passes with 240 tests and 15 subtests on both
+Python 3.12.14 and Python 3.14.0. The 3.12 run took 53.27 seconds; the 3.14 run
+took 47.75 seconds. It includes controller readiness transactions, AO range
+attribution, unresolved-write retention, shutdown outcome flushing, and the
+moment-only ESN rebase. Run `python -m pytest -q` with each interpreter to
+reproduce these counts. These tests do not establish full replay timing or
+hardware acceptance.
 
 Treat the timing limits as strict: process p99 must be below 2.5 ms, and the
 maximum process time must be below the 5 ms block deadline. The process interval
@@ -235,20 +266,21 @@ separate measures.
 
 ## Current replay status
 
-On 2026-10-29, the frozen `6cc4035` baseline completed all nine 30-minute
-matrix cases. Each processed 360,000 blocks and 36,000,000 samples, with complete recordings and
-successful AO drains. All nine failed the strict maximum process-time limit:
-maxima ranged from 7.095 to 34.104 ms against the `<5 ms>` limit. The three ESN
-cases also failed the p99 limit, at 4.745 to 4.830 ms against `<2.5 ms>`. Every
-case had zero source gaps or skips, AO late or stale commands, and active-demand
-misses. The baseline matrix failed overall; these continuity results do not
-cancel the timing failures.
+The `e965d808` full matrix completed all nine 30-minute cases on October 29,
+2026. Each processed 360,000 blocks and 36,000,000 samples. All nine failed the
+strict maximum process-time limit. Maxima ranged from 9.959 to 199.559 ms,
+against the `<5 ms>` limit. The three ESN cases also failed the p99 limit, at
+2.700 to 3.022 ms against `<2.5 ms>`. The exact case results are in
+[`validation/replay-e965d80/`](validation/replay-e965d80/).
 
-Full matrix acceptance on the updated implementation and the separate paced
-30-minute run for each controller remain pending. See
-[implementation and validation status](../IMPLEMENTATION_STATUS.md) and the
-[frozen baseline report](validation/baseline-6cc4035/controller_validation_summary.md).
-Rerun both sets before making a release claim.
+This matrix predates the reviewed moment-only ESN rebase. It is not timing or
+parity evidence for the current bridge. Full replay timing and three paced
+30-minute runs on the current implementation remain pending. The historical
+`6cc4035` matrix is available in
+[`validation/baseline-6cc4035/`](validation/baseline-6cc4035/); its maxima were
+7.095 to 34.104 ms, and its ESN p99 values were 4.745 to 4.830 ms. See
+[implementation and validation status](../IMPLEMENTATION_STATUS.md) before
+making a release claim.
 
 ## Hardware status
 

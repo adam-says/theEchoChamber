@@ -16,7 +16,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from benchmarkControllers import (  # noqa: E402
-    CONTROLLERS, DEFAULT_TRACES, LEAD_SWEEP_MS, acceptance_failures, json_safe,
+    CONTROLLERS, DEFAULT_TRACES, LEAD_SWEEP_MS, REFERENCE_COVERAGE,
+    evaluate_case_acceptance, evaluate_collection_acceptance, failed_case_acceptance, json_safe,
     _browser_connection_url, run_replay_case, write_case_checkpoint, write_progress, write_results,
 )
 from simulation import (  # noqa: E402
@@ -234,7 +235,6 @@ def main(argv: list[str] | None = None) -> int:
 
     leads = args.leads_ms if args.lead_sweep else [args.lead_ms]
     run_kind = "smoke" if args.smoke else "paced" if args.paced else "lead_sweep" if args.lead_sweep else "matrix"
-    gate_enabled = bool(args.matrix or args.paced)
     case_index = 0
     if args.lead_sweep and args.duration_seconds is None and not args.smoke:
         print("Lead sweep uses full traces unless --duration-seconds limits each run.")
@@ -246,6 +246,11 @@ def main(argv: list[str] | None = None) -> int:
             traces = traces[:1]
     else:
         duration = args.duration_seconds
+    requested_scope = "diagnostic_prefix"
+    if run_kind == "matrix" and (duration is None or duration >= REFERENCE_COVERAGE["duration_seconds"]):
+        requested_scope = "full_replay_case"
+    elif run_kind == "paced" and duration >= REFERENCE_COVERAGE["duration_seconds"]:
+        requested_scope = "paced_30min_case"
     for lead in leads:
         for trace in traces:
             for controller in controllers:
@@ -276,9 +281,14 @@ def main(argv: list[str] | None = None) -> int:
                         "failed_at_utc": datetime.now(timezone.utc).isoformat(),
                     }
                     case_failures.append(failure)
+                    collection_progress = evaluate_collection_acceptance(
+                        run_kind, metrics, case_failures, requested_scope=requested_scope,
+                        finalized=False,
+                    )
                     checkpoint_json, checkpoint_csv = write_case_checkpoint(
                         output_dir, run_kind=run_kind, case_index=case_index,
-                        failure=failure, acceptance_required=gate_enabled,
+                        failure=failure, requested_scope=requested_scope,
+                        collection_progress=collection_progress,
                     )
                     write_progress(progress, {"type": "case_checkpoint", "case_index": case_index,
                                               "case_status": "failed", "json": str(checkpoint_json),
@@ -289,35 +299,50 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 metrics.append(result)
                 environments.append(environment)
+                collection_progress = evaluate_collection_acceptance(
+                    run_kind, metrics, case_failures, requested_scope=requested_scope,
+                    finalized=False,
+                )
                 checkpoint_json, checkpoint_csv = write_case_checkpoint(
                     output_dir, run_kind=run_kind, case_index=case_index,
                     metrics=result, environment=environment,
-                    acceptance_required=gate_enabled,
+                    requested_scope=requested_scope,
+                    collection_progress=collection_progress,
                 )
                 write_progress(progress, {"type": "case_checkpoint", "case_index": case_index,
                                           "case_id": result.case_id, "case_status": "completed",
                                           "json": str(checkpoint_json), "csv": str(checkpoint_csv),
                                           "matrix_complete": False})
                 print(f"done case={result.case_id} blocks={result.processed_blocks} "
-                      f"p99={result.process_p99_ms:.3f}ms late={result.deadline_exceeded_blocks}", flush=True)
+                      f"p99={result.process_p99_ms:.3f}ms "
+                      f"processing_deadline_misses={result.deadline_exceeded_blocks} "
+                      f"ao_late_commands={result.ao_late_commands}", flush=True)
     acceptance = [
-        {"case_id": result.case_id, "passed": not acceptance_failures(result),
-         "failures": acceptance_failures(result)}
+        evaluate_case_acceptance(result, run_kind, requested_scope)
         for result in metrics
-    ] if gate_enabled else []
-    acceptance.extend({
-        "case_id": failure["case_id"], "passed": False,
-        "failures": [f"{failure['exception_type']}: {failure['message']}"],
-    } for failure in case_failures)
+    ]
+    acceptance.extend(
+        failed_case_acceptance(failure["case_id"], failure, requested_scope)
+        for failure in case_failures
+    )
+    collection_acceptance = evaluate_collection_acceptance(
+        run_kind, metrics, case_failures, requested_scope=requested_scope,
+        finalized=True,
+    )
     json_path, csv_path = write_results(metrics, environments, output_dir, run_kind=run_kind,
-                                        acceptance=acceptance, case_failures=case_failures)
+                                        acceptance=acceptance, case_failures=case_failures,
+                                        collection_acceptance=collection_acceptance)
     write_progress(progress, {"type": "validation_complete", "pid": os.getpid(),
                               "json": str(json_path), "csv": str(csv_path),
                               "completed_at_utc": datetime.now(timezone.utc).isoformat()})
     print(f"JSON: {json_path}\nCSV: {csv_path}\nProgress: {progress}")
-    if gate_enabled and any(not item["passed"] for item in acceptance):
-        failed = sum(not item["passed"] for item in acceptance)
-        print(f"ACCEPTANCE FAILED: {failed}/{len(acceptance)} cases; results retained at {json_path}", file=sys.stderr)
+    failed_runtime = sum(not item["runtime_checks_passed"] for item in acceptance)
+    failed_full = sum(item["full_acceptance_passed"] is False for item in acceptance)
+    collection_failed = collection_acceptance.get("full_acceptance_passed") is False
+    if failed_runtime or failed_full or collection_failed:
+        print(f"VALIDATION FAILED: runtime_checks={failed_runtime}, full_acceptance={failed_full}; "
+              f"collection={collection_acceptance.get('status')}; results retained at {json_path}",
+              file=sys.stderr)
         return 1
     if case_failures:
         print(f"FAILED: {len(case_failures)} case(s); results retained at {json_path}", file=sys.stderr)

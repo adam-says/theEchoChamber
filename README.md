@@ -11,11 +11,14 @@ controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
 > **Software validation is in progress.** The current full test suite passes
-> with 229 tests and 13 subtests on Python 3.12.14 and Python 3.14.0. The frozen
-> `6cc4035` replay matrix completed all nine cases and failed the strict timing
-> gates. Full replay acceptance on the updated implementation and paced runs
-> remain pending. See [implementation and validation status](IMPLEMENTATION_STATUS.md)
-> for the evidence and remaining software gates.
+> with 240 tests and 15 subtests on Python 3.12.14 and Python 3.14.0. The
+> `e965d808` replay matrix completed all nine 30-minute cases and failed the
+> strict timing gates: all nine maxima were 9.959 to 199.559 ms, and the three
+> ESN p99 values were 2.700 to 3.022 ms. That matrix predates the reviewed
+> moment-only ESN rebase. Full replay timing and ESN parity on the current
+> bridge, and all three paced acceptance runs, remain pending. See
+> [implementation and validation status](IMPLEMENTATION_STATUS.md) for the
+> evidence and remaining software gates.
 >
 > **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
 > working assumptions, not measured calibration. Do not treat software results
@@ -31,6 +34,12 @@ passthrough mode.
 - The ReservoirPy graph was replaced by an inference-only NumPy/Numba loop. Its
   recurrence was verified exactly against ReservoirPy 0.3.11 for the supplied
   model.
+- The current ESN bridge has SHA-256
+  `88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749`. Its
+  moment-only rebase recalculates centered moments without rebuilding the live
+  peak queue or changing its absolute sample sequence. Full-recording parity
+  for this bridge remains pending; the existing parity report uses an earlier
+  bridge revision.
 - Input and target scaling are separate in the corrected training path.
 - The 20 kHz input is anti-aliased, decimated to 2 kHz, causally low-pass
   filtered, evaluated by the ESN, and causally returned to 20 kHz.

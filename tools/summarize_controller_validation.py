@@ -501,9 +501,17 @@ def _parse_results(paths: list[Path]) -> tuple[list[dict[str, Any]], list[dict[s
             for case_index, item in enumerate(doc.get("cases", [])):
                 case_id = str(item.get("case_id", "unknown"))
                 acceptance_entry = acceptance.get(case_id, {})
-                listed = list(acceptance_entry.get("failures", []))
-                if acceptance_entry and not acceptance_entry.get("passed", False) and not listed:
-                    listed.append("validation report marked this case as acceptance-failed")
+                if "runtime_checks_passed" in acceptance_entry:
+                    listed = list(acceptance_entry.get("runtime_failures", []))
+                    if acceptance_entry.get("full_acceptance_passed") is False:
+                        for failure_message in acceptance_entry.get("failures", []):
+                            if failure_message not in listed:
+                                listed.append(failure_message)
+                else:
+                    # Read pre-scope v1 reports with their original `passed` meaning.
+                    listed = list(acceptance_entry.get("failures", []))
+                    if acceptance_entry and not acceptance_entry.get("passed", False) and not listed:
+                        listed.append("validation report marked this case as acceptance-failed")
                 exception = failed.get(case_id)
                 if exception:
                     listed = list(listed) + [f"{exception.get('exception_type', 'Exception')}: {exception.get('message', 'case failed')}"]
@@ -617,29 +625,44 @@ def _overall_status(groups: dict[str, dict[str, Any]], report_errors: list[dict[
 def _plot(records: list[dict[str, Any]], path: Path) -> None:
     plotted = [x for x in records if _number(x.get("process_p99_ms")) is not None
                or _number(x.get("process_max_ms")) is not None]
-    fig, ax = plt.subplots(figsize=(max(8, min(18, 0.62 * len(plotted) + 4)), 5.5), constrained_layout=True)
+    fig, (p99_ax, max_ax) = plt.subplots(
+        2, 1, sharex=True,
+        figsize=(max(9, min(20, 0.62 * len(plotted) + 5)), 8),
+        gridspec_kw={"height_ratios": [1, 1.15]}, constrained_layout=True,
+    )
     if plotted:
         x = list(range(len(plotted)))
         p99 = [_number(row.get("process_p99_ms")) for row in plotted]
         maximum = [_number(row.get("process_max_ms")) for row in plotted]
-        ax.scatter(x, p99, label="Process p99", marker="o", color="#2368a0", s=45)
-        ax.scatter(x, maximum, label="Process maximum", marker="x", color="#bd4b36", s=48)
+        p99_ax.scatter(x, p99, label="Process p99", marker="o", color="#2368a0", s=45)
+        max_ax.scatter(x, maximum, label="Process maximum", marker="x", color="#bd4b36", s=48)
         labels = []
         for row in plotted:
             source = str(row.get("source_name", "?"))
             lead = row.get("ao_lead_ms")
             lead_label = f"{lead:g} ms" if isinstance(lead, (int, float)) else ""
             labels.append(f"{row.get('controller','?')} · {row.get('status','?')}\n{source[:15]} {lead_label}".strip())
-        ax.set_xticks(x, labels, rotation=40, ha="right", fontsize=8)
-        ax.axhline(MAX_P99_MS, color="#2368a0", linestyle="--", linewidth=1, label="p99 limit 2.5 ms")
-        ax.axhline(MAX_PROCESS_MS, color="#bd4b36", linestyle=":", linewidth=1, label="block limit 5 ms")
-        ax.set_ylabel("Processing time (ms)")
-        ax.legend(loc="upper left", ncols=2, fontsize=8)
-        ax.set_title("Controller timing evidence · duration gates are reported separately")
+        p99_ax.axhline(MAX_P99_MS, color="#2368a0", linestyle="--", linewidth=1,
+                       label="p99 limit 2.5 ms")
+        p99_top = max(5.5, max((v for v in p99 if v is not None), default=0.0) * 1.08)
+        p99_ax.set_ylim(0, p99_top)
+        p99_ax.set_ylabel("p99 (ms, linear)")
+        p99_ax.legend(loc="upper left", fontsize=8)
+        max_ax.axhline(MAX_PROCESS_MS, color="#bd4b36", linestyle=":", linewidth=1,
+                       label="block deadline 5 ms")
+        max_ax.set_yscale("log")
+        max_ax.set_ylabel("Maximum (ms, log scale)")
+        max_ax.legend(loc="upper left", fontsize=8)
+        max_ax.set_xticks(x, labels, rotation=40, ha="right", fontsize=8)
+        max_ax.set_xlabel("Run")
+        fig.suptitle("Controller timing evidence · duration gates are reported separately")
     else:
-        ax.text(0.5, 0.5, "No process timing values in supplied reports", ha="center", va="center")
-        ax.set_axis_off()
-    ax.grid(axis="y", alpha=0.2)
+        p99_ax.text(0.5, 0.5, "No process timing values in supplied reports",
+                    ha="center", va="center", transform=p99_ax.transAxes)
+        p99_ax.set_axis_off()
+        max_ax.set_axis_off()
+    p99_ax.grid(axis="y", alpha=0.2)
+    max_ax.grid(axis="y", which="both", alpha=0.2)
     fig.savefig(path, dpi=160)
     plt.close(fig)
 

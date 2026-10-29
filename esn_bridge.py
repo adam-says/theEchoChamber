@@ -299,12 +299,15 @@ class EchoChamberEsnBridge:
         self._recent_sequence = 0
         self._recent_scale_highwater = 0.0
 
-    def _rebuild_recent_statistics(self) -> None:
-        """Rebase rolling moments and peak scale with a centered two-pass sum."""
+    def _rebuild_recent_moments(self) -> np.ndarray:
+        """Recalculate centered moments without touching live peak metadata."""
         self._rolling_stat_rebuilds += 1
-        self._reset_recent_statistics()
         if not self._recent:
-            return
+            self._recent_count = 0
+            self._recent_origin = 0.0
+            self._recent_mean_delta = 0.0
+            self._recent_m2 = 0.0
+            return np.empty(0, dtype=np.float64)
         values = np.fromiter(self._recent, dtype=np.float64, count=len(self._recent))
         self._recent_origin = float(values[0])
         centered = values - self._recent_origin
@@ -312,6 +315,15 @@ class EchoChamberEsnBridge:
         deviations = centered - self._recent_mean_delta
         self._recent_m2 = float(np.sum(deviations * deviations, dtype=np.float64))
         self._recent_count = int(values.size)
+
+        return values
+
+    def _rebuild_recent_statistics(self) -> None:
+        """Rebase moments and rebuild peak metadata after a history resize."""
+        values = self._rebuild_recent_moments()
+        self._recent_peak_abs_values.clear()
+        self._recent_sequence = 0
+        self._recent_scale_highwater = 0.0
         self._recent_sequence = int(values.size)
         for sequence, value in enumerate(values):
             magnitude = abs(float(value))
@@ -376,7 +388,13 @@ class EchoChamberEsnBridge:
         # rebase once. This path is unusual and keeps Welford deltas well-scaled.
         std = float(np.sqrt(max(0.0, self._recent_m2 / max(1, self._recent_count))))
         if abs(self._recent_mean_delta) > 1e6 * max(std, 1e-12):
-            self._rebuild_recent_statistics()
+            live_peak = (self._recent_peak_abs_values[0][1]
+                         if self._recent_peak_abs_values else 0.0)
+            self._rebuild_recent_moments()
+            # The old full rebuild reset its scale high-water to the maximum
+            # of the current window. Preserve that policy while retaining the
+            # already-current monotone queue and its absolute sample sequence.
+            self._recent_scale_highwater = live_peak
 
     def _maybe_rebuild_after_scale_contraction(self, warmup: int) -> bool:
         """Empirically rebase once when the live scale contracts materially."""
@@ -387,7 +405,8 @@ class EchoChamberEsnBridge:
         if highwater <= 0.0:
             return False
         if live_peak == 0.0 or live_peak <= self._recent_scale_contraction_factor * highwater:
-            self._rebuild_recent_statistics()
+            self._rebuild_recent_moments()
+            self._recent_scale_highwater = live_peak
             return True
         return False
 

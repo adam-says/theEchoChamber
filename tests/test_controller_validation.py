@@ -21,7 +21,8 @@ import echoChamber as app
 import benchmarkControllers as benchmark
 from benchmarkControllers import (
     RunMetrics, _BrowserPresenceTracker, _CountingUiHub, _Harness, _browser_connection_url,
-    _record_pulse_event_metrics, acceptance_failures, file_sha256,
+    _record_pulse_event_metrics, acceptance_failures, evaluate_case_acceptance,
+    evaluate_collection_acceptance, file_sha256,
     json_safe, parse_ui_packet, run_replay_case,
 )
 from simulation import (PlantSettings, ResponsiveSyntheticPlant, _summarize_capacity_reference,
@@ -544,6 +545,175 @@ class UiWireFormatTests(unittest.TestCase):
 
 
 class BenchmarkGateTests(unittest.TestCase):
+    @staticmethod
+    def _healthy_case(*, seconds: float, blocks: int, samples: int) -> RunMetrics:
+        return RunMetrics(
+            case_id="coverage-fixture", source_name="fixture", controller="rule",
+            sample_rate_hz=20_000, block_samples=100, block_ms=5.0,
+            ao_lead_ms=100.0, deadline_ms=5.0,
+            source_samples=samples, processed_blocks=blocks, duration_source_s=seconds,
+            process_p99_ms=1.0, process_max_ms=2.0,
+            ao_drain_complete=True, recording_completed=True,
+            recording_committed_samples=samples,
+            ui_packets_submitted=1, ui_packets_consumed=1,
+        )
+
+    def test_twenty_second_matrix_prefix_does_not_pass_full_replay_acceptance(self) -> None:
+        diagnostic = evaluate_case_acceptance(
+            self._healthy_case(seconds=20.0, blocks=4_000, samples=400_000), "matrix")
+        self.assertEqual(diagnostic["scope"], "diagnostic_prefix")
+        self.assertTrue(diagnostic["runtime_checks_passed"])
+        self.assertIsNone(diagnostic["full_acceptance_passed"])
+        self.assertEqual(diagnostic["full_acceptance_status"], "NOT EVALUATED")
+        self.assertFalse(diagnostic["coverage"]["complete"])
+        self.assertEqual(diagnostic["coverage"]["required"], {
+            "duration_seconds": 1800.0, "processed_blocks": 360_000,
+            "source_samples": 36_000_000, "sample_rate_hz": 20_000.0,
+            "block_samples": 100, "block_ms": 5.0, "deadline_ms": 5.0,
+        })
+        self.assertEqual(diagnostic["coverage"]["observed"]["duration_seconds"], 20.0)
+
+    def test_full_matrix_and_paced_cases_require_exact_reference_coverage(self) -> None:
+        complete = self._healthy_case(seconds=1800.0, blocks=360_000, samples=36_000_000)
+        matrix = evaluate_case_acceptance(complete, "matrix")
+        paced = evaluate_case_acceptance(complete, "paced")
+        self.assertEqual(matrix["scope"], "full_replay_case")
+        self.assertEqual(paced["scope"], "paced_30min_case")
+        self.assertTrue(matrix["coverage"]["complete"])
+        self.assertTrue(matrix["full_acceptance_passed"])
+        self.assertTrue(paced["full_acceptance_passed"])
+
+    def test_duration_coverage_tolerance_is_one_sample_period(self) -> None:
+        one_sample_short = self._healthy_case(
+            seconds=1800.0 - 1 / 20_000, blocks=360_000, samples=36_000_000)
+        two_samples_short = replace(
+            one_sample_short, duration_source_s=1800.0 - 2 / 20_000)
+
+        accepted = evaluate_case_acceptance(
+            one_sample_short, "matrix", requested_scope="full_replay_case")
+        rejected = evaluate_case_acceptance(
+            two_samples_short, "matrix", requested_scope="full_replay_case")
+
+        self.assertTrue(accepted["coverage"]["complete"])
+        self.assertTrue(accepted["full_acceptance_passed"])
+        self.assertFalse(rejected["coverage"]["complete"])
+        self.assertFalse(rejected["full_acceptance_passed"])
+
+    def test_full_duration_with_invalid_sampling_configuration_fails_full_scope(self) -> None:
+        malformed = self._healthy_case(seconds=1800.0, blocks=360_000, samples=36_000_000)
+        malformed.sample_rate_hz = 10_000
+
+        result = evaluate_case_acceptance(
+            malformed, "matrix", requested_scope="full_replay_case")
+
+        self.assertEqual(result["scope"], "full_replay_case")
+        self.assertFalse(result["coverage"]["complete"])
+        self.assertIn("full replay coverage sample_rate_hz", " ".join(result["coverage"]["failures"]))
+        self.assertFalse(result["full_acceptance_passed"])
+        self.assertEqual(result["full_acceptance_status"], "FAIL")
+
+    def test_latched_runtime_fault_fails_runtime_and_full_acceptance(self) -> None:
+        faulty = self._healthy_case(seconds=1800.0, blocks=360_000, samples=36_000_000)
+        faulty.runtime_fault = "safety trip after final source block"
+
+        failures = acceptance_failures(faulty)
+        result = evaluate_case_acceptance(
+            faulty, "matrix", requested_scope="full_replay_case")
+
+        self.assertTrue(any("runtime fault was latched" in failure for failure in failures))
+        self.assertFalse(result["runtime_checks_passed"])
+        self.assertFalse(result["full_acceptance_passed"])
+
+    def test_collection_gate_requires_nine_matrix_or_three_paced_cases(self) -> None:
+        matrix_cases = [
+            replace(self._healthy_case(seconds=1800.0, blocks=360_000, samples=36_000_000),
+                    case_id=f"{trace}-{controller}", source_name=trace, controller=controller)
+            for trace in ("trace-a", "trace-b", "trace-c")
+            for controller in ("rule", "pid", "esn")
+        ]
+        complete = evaluate_collection_acceptance(
+            "matrix", matrix_cases, [], requested_scope="full_replay_case", finalized=True)
+        self.assertEqual(complete["status"], "PASS")
+        self.assertTrue(complete["full_acceptance_passed"])
+        self.assertEqual(complete["required"]["case_count"], 9)
+        self.assertEqual(complete["observed"]["completed_case_count"], 9)
+        self.assertEqual(complete["observed"]["source_count"], 3)
+        self.assertEqual(complete["observed"]["unique_source_controller_pairs"], 9)
+
+        malformed_matrix = list(matrix_cases)
+        malformed_matrix[0] = replace(malformed_matrix[0], sample_rate_hz=10_000)
+        malformed_collection = evaluate_collection_acceptance(
+            "matrix", malformed_matrix, [], requested_scope="full_replay_case", finalized=True)
+        self.assertEqual(malformed_collection["status"], "FAIL")
+        self.assertFalse(malformed_collection["full_acceptance_passed"])
+        self.assertEqual(malformed_collection["observed"]["failed_full_acceptance_case_ids"],
+                         [malformed_matrix[0].case_id])
+
+        subset = evaluate_collection_acceptance(
+            "matrix", matrix_cases[:3], [], requested_scope="full_replay_case", finalized=True)
+        self.assertEqual(subset["status"], "INCOMPLETE")
+        self.assertFalse(subset["full_acceptance_passed"])
+
+        paced_cases = [
+            replace(self._healthy_case(seconds=1800.0, blocks=360_000, samples=36_000_000),
+                    case_id=f"paced-{controller}", source_name="trace-a", controller=controller)
+            for controller in ("rule", "pid", "esn")
+        ]
+        paced = evaluate_collection_acceptance(
+            "paced", paced_cases, [], requested_scope="paced_30min_case", finalized=True)
+        self.assertEqual(paced["status"], "PASS")
+        self.assertEqual(paced["required"]["case_count"], 3)
+
+        malformed_paced_cases = list(paced_cases)
+        malformed_paced_cases[1] = replace(malformed_paced_cases[1], deadline_ms=6.0)
+        malformed_paced = evaluate_collection_acceptance(
+            "paced", malformed_paced_cases, [], requested_scope="paced_30min_case",
+            finalized=True)
+        self.assertEqual(malformed_paced["status"], "FAIL")
+        self.assertFalse(malformed_paced["full_acceptance_passed"])
+        self.assertEqual(malformed_paced["observed"]["failed_full_acceptance_case_ids"],
+                         [malformed_paced_cases[1].case_id])
+
+        diagnostic_collection = evaluate_collection_acceptance(
+            "matrix", [self._healthy_case(seconds=20.0, blocks=4_000, samples=400_000)], [],
+            requested_scope="diagnostic_prefix", finalized=True)
+        self.assertEqual(diagnostic_collection["status"], "NOT EVALUATED")
+        self.assertIsNone(diagnostic_collection["full_acceptance_passed"])
+
+    def test_short_matrix_cli_records_runtime_pass_and_null_full_acceptance(self) -> None:
+        diagnostic = self._healthy_case(seconds=20.0, blocks=4_000, samples=400_000)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(validate_cli, "run_replay_case", return_value=(diagnostic, {})):
+                code = validate_cli.main([
+                    "--matrix", "--trace", "synthetic-fixture.h5", "--controller", "rule",
+                    "--duration-seconds", "20", "--output-dir", directory,
+                ])
+            aggregate = next(Path(directory).glob("controller_matrix_*.json"))
+            checkpoint = next(Path(directory).glob("controller_case_*.json"))
+            csv_path = aggregate.with_suffix(".csv")
+            result = json.loads(aggregate.read_text(encoding="utf-8"))
+            case_result = json.loads(checkpoint.read_text(encoding="utf-8"))
+            with csv_path.open(encoding="utf-8", newline="") as stream:
+                row = next(csv.DictReader(stream))
+        self.assertEqual(code, 0)
+        for acceptance in (result["acceptance"][0], case_result["acceptance"]):
+            self.assertEqual(acceptance["scope"], "diagnostic_prefix")
+            self.assertTrue(acceptance["runtime_checks_passed"])
+            self.assertIsNone(acceptance["full_acceptance_passed"])
+            self.assertEqual(acceptance["full_acceptance_status"], "NOT EVALUATED")
+        self.assertEqual(row["acceptance_scope"], "diagnostic_prefix")
+        self.assertEqual(row["runtime_checks_passed"], "True")
+        self.assertEqual(row["full_acceptance_status"], "NOT EVALUATED")
+        self.assertEqual(row["full_acceptance_passed"], "")
+        self.assertEqual(row["required_blocks"], "360000")
+        self.assertEqual(row["observed_blocks"], "4000")
+        self.assertEqual(row["required_samples"], "36000000")
+        self.assertEqual(row["required_sample_rate_hz"], "20000.0")
+        self.assertEqual(row["required_block_samples"], "100")
+        self.assertEqual(result["collection_acceptance"]["status"], "NOT EVALUATED")
+        self.assertIsNone(result["collection_acceptance"]["full_acceptance_passed"])
+        self.assertEqual(row["collection_status"], "NOT EVALUATED")
+
     def test_gate_fails_known_invalid_latency_summary(self) -> None:
         invalid = RunMetrics(
             case_id="known-invalid", source_name="fixture", controller="rule",
@@ -575,9 +745,11 @@ class BenchmarkGateTests(unittest.TestCase):
             with csv_path.open(encoding="utf-8", newline="") as stream:
                 rows = list(csv.DictReader(stream))
         self.assertEqual(code, 1)
-        self.assertFalse(result["acceptance"][0]["passed"])
+        self.assertFalse(result["acceptance"][0]["runtime_checks_passed"])
+        self.assertIsNone(result["acceptance"][0]["full_acceptance_passed"])
         self.assertTrue(any("process p99" in item for item in result["acceptance"][0]["failures"]))
-        self.assertEqual(rows[0]["acceptance_passed"], "False")
+        self.assertEqual(rows[0]["runtime_checks_passed"], "False")
+        self.assertEqual(rows[0]["full_acceptance_passed"], "")
 
     def test_matrix_exception_writes_machine_readable_json_and_csv(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -595,7 +767,8 @@ class BenchmarkGateTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(result["case_failures"]), 1)
         self.assertEqual(result["case_failures"][0]["message"], "recording queue overflow")
-        self.assertFalse(result["acceptance"][0]["passed"])
+        self.assertFalse(result["acceptance"][0]["runtime_checks_passed"])
+        self.assertIsNone(result["acceptance"][0]["full_acceptance_passed"])
         self.assertEqual(rows[0]["case_status"], "failed")
         self.assertEqual(rows[0]["failure_type"], "RuntimeError")
 
