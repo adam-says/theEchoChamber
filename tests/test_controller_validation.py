@@ -37,6 +37,40 @@ from controllers import ControllerAction, ControllerDiagnostics, StepResult
 
 
 class ResponsivePlantTests(unittest.TestCase):
+    def test_unavailable_post_settling_tracking_metric_is_null_in_reports(self) -> None:
+        settings = PlantSettings(disturbance_start_s=0.0, disturbance_stop_s=20.0)
+        trace = [(index * 0.005, float("nan"), float("nan")) for index in range(4_000)]
+        summary = _summarize_target_tracking(
+            trace, settings, target_z=1.0, max_rate_hz=2.0,
+            source_duration_s=20.0, source_samples_seen=400_000,
+        )
+        self.assertFalse(summary["window_complete"])
+        self.assertTrue(np.isnan(summary["post_settling_raw_error_std_z"]))
+
+        serialized = json.dumps(json_safe(summary), allow_nan=False)
+        self.assertIsNone(json.loads(serialized)["post_settling_raw_error_std_z"])
+        self.assertIsNone(validate_cli._optional_csv_tracking_value(
+            summary, "post_settling_raw_error_std_z"))
+
+        # Older saved summaries may predate this optional metric.
+        self.assertIsNone(validate_cli._optional_csv_tracking_value({}, "post_settling_raw_error_std_z"))
+        self.assertEqual(validate_cli._optional_csv_tracking_value(
+            {"post_settling_raw_error_std_z": 0.125}, "post_settling_raw_error_std_z"), 0.125)
+        complete_trace = [(index * 0.005, 1.1, 0.5) for index in range(4_000)]
+        complete_summary = _summarize_target_tracking(
+            complete_trace, settings, target_z=1.0, max_rate_hz=2.0,
+            source_duration_s=20.0, source_samples_seen=400_000,
+        )
+        self.assertTrue(complete_summary["window_complete"])
+        self.assertEqual(validate_cli._optional_csv_tracking_value(
+            complete_summary, "post_settling_raw_error_std_z"), 0.0)
+        output = StringIO()
+        writer = csv.DictWriter(output, fieldnames=("post_settling_raw_error_std_z",))
+        writer.writeheader()
+        writer.writerow({"post_settling_raw_error_std_z": validate_cli._optional_csv_tracking_value(
+            summary, "post_settling_raw_error_std_z")})
+        self.assertEqual(next(csv.DictReader(StringIO(output.getvalue())))["post_settling_raw_error_std_z"], "")
+
     def test_strict_json_sanitizes_nested_numpy_nonfinite_tracking_metrics(self) -> None:
         payload = {
             "tracking": {

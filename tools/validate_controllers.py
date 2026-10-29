@@ -62,6 +62,11 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
+def _optional_csv_tracking_value(tracking: dict[str, object], key: str) -> object:
+    """Return an optional tracking metric as a strict-JSON/CSV-safe value."""
+    return json_safe(tracking.get(key))
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.progress_interval_seconds <= 0:
@@ -210,7 +215,8 @@ def main(argv: list[str] | None = None) -> int:
                     "final_window_raw_mae_z": case["stimulated"]["controller_tracking"]["final_window_raw_mae_z"],
                     "moving_mean_error_max_abs_z": case["stimulated"]["controller_tracking"]["moving_mean_error_max_abs_z"],
                     "raw_error_std_z": case["stimulated"]["controller_tracking"]["raw_error_std_z"],
-                    "post_settling_raw_error_std_z": case["stimulated"]["controller_tracking"]["post_settling_raw_error_std_z"],
+                    "post_settling_raw_error_std_z": _optional_csv_tracking_value(
+                        case["stimulated"]["controller_tracking"], "post_settling_raw_error_std_z"),
                     "raw_error_std_limit_z": case["stimulated"]["controller_tracking"]["raw_error_std_limit_z"],
                     "raw_ripple_within_bounds": case["stimulated"]["controller_tracking"]["raw_ripple_within_bounds"],
                     "tracking_gate_passed": case["tracking_gate_passed"],

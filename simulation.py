@@ -435,6 +435,7 @@ def _summarize_target_tracking(trace: list[tuple[float, float, float]], settings
                 "final_window_moving_mean_error_z": float("nan"),
                 "final_window_moving_mean_abs_error_z": float("nan"),
                 "moving_mean_error_max_abs_z": float("nan"), "raw_error_std_z": float("nan"),
+                "post_settling_raw_error_std_z": float("nan"),
                 "raw_error_std_limit_z": TRACKING_RAW_ERROR_STD_LIMIT_Z,
                 "raw_ripple_within_bounds": False,
                 "settled_within_band": False, "tracking_response_gate_passed": False,
