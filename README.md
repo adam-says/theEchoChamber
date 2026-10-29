@@ -37,8 +37,14 @@ passthrough mode.
 > per controller. Rule p99/max were 2.190158/4.2422 ms with zero deadline
 > misses. PID measured 2.439674/5.7394 ms with one miss. ESN measured
 > 2.776818/5.401 ms with one miss. These short runs are not acceptance. The
-> current full nine-case replay matrix is running, and the post-calibration
-> lead sweep remains pending.
+> `bb65477` full nine-case replay matrix then completed and failed: all nine
+> maxima exceeded 5 ms, and all three ESN p99 values exceeded 2.5 ms. Every
+> case recorded 36 million samples with no source gaps, zero AO active-demand
+> misses, late commands, or stale rejections, and a completed AO drain. An
+> independent closed-file audit found no structural issues. See the
+> [full matrix report](docs/validation/replay-bb65477/README.md). The
+> matrix used a WebSocket client without browser rendering. The post-calibration
+> lead sweep, current paced set, and full simulation matrix remain pending.
 >
 > **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
 > working assumptions, not measured calibration. Do not treat software results

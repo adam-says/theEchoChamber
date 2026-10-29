@@ -115,7 +115,7 @@ run is diagnostic and cannot pass the full-duration gate.
 
 The replay matrix loads the nonzero synthetic-demo PID configuration. It uses
 `kp=0.4`, `ki=0.1`, `kd=0.02`, `target_z=1`, and a 2 Hz rate limit. It does not
-use the zero-gain hardware PID defaults. In the current full replay results,
+use the zero-gain hardware PID defaults. In the earlier `e965d808` matrix,
 all three PID cases had positive requested-rate blocks but zero pulse
 proposals: May 29 had 80,123 requested-rate blocks, phase high-water 0.118351397,
 and 29,210 phase resets; Aug 5 had 79,272 blocks, phase high-water 0.146280455,
@@ -339,13 +339,36 @@ This matrix predates the reviewed moment-only ESN rebase. It is not timing or
 parity evidence for the current bridge. All three current-bridge full-recording
 parity cases passed; see
 [`validation/esn-full-parity-88469989/`](validation/esn-full-parity-88469989/).
-As of 2026-10-29, the current full nine-case replay matrix is running. Its
-first case, May 29 Rule, recorded all 36,000,000 samples and completed AO drain.
-It measured p99 2.244601 ms, maximum 16.7774 ms, and 47 processing deadline
-misses. It passed p99 and failed the strict maximum-time gate. The other eight
-cases remain incomplete. The lead sweep and full simulation matrix remain
-pending. A paced
-Rule run and a separate paced PID run on
+The `bb65477` full nine-case matrix completed at the 100 ms AO lead. All nine
+cases processed and recorded 36,000,000 samples. The independent closed-file
+audit checked the retained recordings, block and controller rows, headers, and
+provenance. It found no structural issues. Every case failed the strict maximum
+time gate; all three ESN cases also failed the p99 gate. Rule and PID p99 passed.
+
+| Trace | Controller | p99 (ms) | Maximum (ms) | Deadline misses |
+|---|---|---:|---:|---:|
+| May 29 | Rule | 2.244601 | 16.7774 | 47 |
+| May 29 | PID | 2.176102 | 240.7780 | 54 |
+| May 29 | ESN | 2.884603 | 148.2125 | 224 |
+| Aug 5 | Rule | 2.185002 | 297.8926 | 41 |
+| Aug 5 | PID | 2.012201 | 28.2999 | 44 |
+| Aug 5 | ESN | 2.628504 | 447.2756 | 133 |
+| Aug 6 | Rule | 2.118502 | 15.6181 | 29 |
+| Aug 6 | PID | 2.122004 | 17.1542 | 37 |
+| Aug 6 | ESN | 2.770607 | 486.6503 | 168 |
+
+All cases reported zero source gaps and skipped samples, AO active-demand misses,
+late commands, and stale rejections. AO drain completed with an empty queue,
+and the run consumed all submitted WebSocket packets without a rendered
+browser. PID had positive requested-rate blocks but zero pulse proposals,
+commits, and nonzero AO samples, so its p99 results do not demonstrate PID
+stimulation on these traces. The
+detailed case summary and closed-file audit are in
+[`validation/replay-bb65477/`](validation/replay-bb65477/). Hardware delivery
+was not measured.
+
+The post-calibration lead sweep, current all-controller paced set, and full
+simulation matrix remain pending. A paced Rule run and a separate paced PID run on
 `09ebf1e` processed all 36,000,000 source samples, but both failed. The Rule
 recording contains only 16,608,200 samples. Its fault stopped acquisition and
 `RecordBlock` submission near source second 830.41. It had 578 processing
@@ -384,7 +407,8 @@ A 32-second diagnostic on `bb65477` processed and recorded 640,000 samples for
 each controller. Rule p99/max were 2.190158/4.2422 ms with zero deadline
 misses. PID measured 2.439674/5.7394 ms with one miss. ESN measured
 2.776818/5.401 ms with one miss. These short cases are diagnostics, not timing
-acceptance. The current full matrix is still running.
+acceptance. The full nine-case matrix later completed and failed timing
+acceptance.
 The figures are summarized in
 [`validation/reporting-prefix-bb65477/summary.json`](validation/reporting-prefix-bb65477/summary.json).
 

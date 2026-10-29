@@ -23,7 +23,8 @@ Full-recording ESN parity on the current bridge passed all three canonical recor
 No hardware requirement has been verified.
 
 The strict software timing limits remain p99 `<2.5 ms` and maximum `<5 ms`.
-The current full matrix and post-calibration lead sweep are not complete.
+The current full matrix completed and failed timing acceptance. The
+post-calibration lead sweep is not complete.
 Historical plan and benchmark statements describe their original runs, not
 current acceptance.
 
@@ -168,9 +169,9 @@ A separate 32-second diagnostic on committed tree `bb65477` processed and
 recorded 640,000 samples per controller. Rule measured p99/max of
 2.190158/4.2422 ms with zero deadline misses. PID measured 2.439674/5.7394 ms
 with one miss. ESN measured 2.776818/5.401 ms with one miss. These short cases
-do not establish timing acceptance. The current full nine-case matrix is
-running. The post-calibration lead sweep has not been completed. The exact
-short-prefix figures are in
+do not establish timing acceptance. The full matrix later completed and
+failed timing acceptance. The post-calibration lead sweep has not been
+completed. The exact short-prefix figures are in
 [`docs/validation/reporting-prefix-bb65477/summary.json`](docs/validation/reporting-prefix-bb65477/summary.json).
 
 ## Full-recording reader check
@@ -219,16 +220,18 @@ not timing acceptance for the current bridge. See
 
 The current bridge parity rerun is separate from the matrix: all three
 recordings passed exact event and trigger-index checks and the threshold gate.
-The current-source full nine-case matrix is running. The post-calibration lead
-sweep, all-controller 30-minute paced set, and full simulation matrix remain
-pending. The parked process-recorder prototype did not show a repeatable timing
-benefit and does not isolate GIL contention.
-
-The first current-source matrix case, May 29 Rule, completed all 36,000,000
-source and recorded samples with a complete file and successful AO drain. Its
-p99 was 2.244601 ms, maximum 16.7774 ms, and it reported 47 processing deadline
-misses. It passed the p99 limit and failed the maximum-time limit. The other
-eight cases are not yet complete.
+The `bb65477` full nine-case matrix completed all cases at the 100 ms AO lead.
+Every case processed and recorded 36,000,000 samples with no source gaps or
+skips. The independent closed-file audit found no structural issues. All nine
+failed the strict maximum-time limit, and the three ESN cases also failed p99.
+All cases reported zero AO active-demand misses, late commands, stale
+rejections, and completed AO drain. The PID matrix cases had positive
+requested-rate blocks but zero pulse proposals, commits, and nonzero AO
+samples. The detailed nine-case results are in
+[`docs/validation/replay-bb65477/`](docs/validation/replay-bb65477/). The
+post-calibration lead sweep, current all-controller 30-minute paced set, and
+full simulation matrix remain pending. The parked process-recorder prototype
+did not show a repeatable timing benefit and does not isolate GIL contention.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID
 cases had positive requested-rate blocks: 80,123 for May 29, 79,272 for Aug 5,

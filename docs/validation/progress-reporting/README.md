@@ -22,6 +22,13 @@ candidate to the published working tree without rewriting the original test
 provenance. The manifest's source hash list is the authoritative record of the
 actual tested files.
 
+A later independent mapping check verified that all 93 original tested-source
+hashes still match the isolated working tree. It found only line-ending
+differences in 31 corresponding files between the isolated and main checkouts;
+their Git trees were identical. The original commit IDs and uncommitted-test
+status remain unchanged in the manifest. See
+`tested-source-mapping-650c4a4.json`.
+
 ## What the progress-writer changes cover
 
 The harness sends detached observations through a bounded queue to one

@@ -1,0 +1,446 @@
+{
+  "schema": "echo-chamber-completed-full-matrix-audit-v1",
+  "matrix_report": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\controller_matrix_20261029T163102Z.json",
+  "git_revision": "bb65477dfb79b5372013d9f3ec52cfa2fd263401",
+  "matrix_collection_status": "FAIL",
+  "matrix_full_acceptance_passed": false,
+  "cases_expected": 9,
+  "cases_observed": 9,
+  "cases_full_scope_preserved": true,
+  "case_acceptance_results": {
+    "expected": "FAIL due strict runtime timing gates",
+    "observed": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "physical_pulse_claims": false,
+  "audit_passed": true,
+  "global_issues": [],
+  "cases": [
+    {
+      "case_id": "20261029_165157_20261029T155157Z_2026_05_29_0001_rule_100ms",
+      "source_name": "2026_05_29_0001",
+      "controller": "rule",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.244601000000001,
+      "max_ms": 16.7774,
+      "deadline_misses": 47,
+      "p99_gate_passed": true,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 2228,
+      "requested_pulse_events": 2228,
+      "pulse_commit_count": 1579,
+      "pulse_commit_samples": 157900,
+      "ao_nonzero_generated_samples": 156321,
+      "pulse_event_rows": 3135,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_165157_20261029T155157Z_2026_05_29_0001_rule_100ms.h5",
+        "complete": true,
+        "recording_bytes": 92535209,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 3135,
+          "controller_ids": [
+            "rule"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_165615_20261029T155615Z_2026_05_29_0001_pid_100ms",
+      "source_name": "2026_05_29_0001",
+      "controller": "pid",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.176102000000002,
+      "max_ms": 240.778,
+      "deadline_misses": 54,
+      "p99_gate_passed": true,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 0,
+      "requested_pulse_events": 0,
+      "pulse_commit_count": 0,
+      "pulse_commit_samples": 0,
+      "ao_nonzero_generated_samples": 0,
+      "pulse_event_rows": 0,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_165615_20261029T155615Z_2026_05_29_0001_pid_100ms.h5",
+        "complete": true,
+        "recording_bytes": 92377857,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 0,
+          "controller_ids": [
+            "pid"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_170025_20261029T160025Z_2026_05_29_0001_esn_100ms",
+      "source_name": "2026_05_29_0001",
+      "controller": "esn",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "process p99 is not below 2.5 ms",
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.8846030000000025,
+      "max_ms": 148.2125,
+      "deadline_misses": 224,
+      "p99_gate_passed": false,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 482,
+      "requested_pulse_events": 482,
+      "pulse_commit_count": 477,
+      "pulse_commit_samples": 47700,
+      "ao_nonzero_generated_samples": 47223,
+      "pulse_event_rows": 933,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_170025_20261029T160025Z_2026_05_29_0001_esn_100ms.h5",
+        "complete": true,
+        "recording_bytes": 93052941,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 933,
+          "controller_ids": [
+            "esn"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_170525_20261029T160525Z_2026_08_05_0000_rule_100ms",
+      "source_name": "2026_08_05_0000",
+      "controller": "rule",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.185002000000002,
+      "max_ms": 297.8926,
+      "deadline_misses": 41,
+      "p99_gate_passed": true,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 3542,
+      "requested_pulse_events": 3542,
+      "pulse_commit_count": 2052,
+      "pulse_commit_samples": 205200,
+      "ao_nonzero_generated_samples": 203148,
+      "pulse_event_rows": 4064,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_170525_20261029T160525Z_2026_08_05_0000_rule_100ms.h5",
+        "complete": true,
+        "recording_bytes": 93491341,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 4064,
+          "controller_ids": [
+            "rule"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_170939_20261029T160939Z_2026_08_05_0000_pid_100ms",
+      "source_name": "2026_08_05_0000",
+      "controller": "pid",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.012201000000001,
+      "max_ms": 28.2999,
+      "deadline_misses": 44,
+      "p99_gate_passed": true,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 0,
+      "requested_pulse_events": 0,
+      "pulse_commit_count": 0,
+      "pulse_commit_samples": 0,
+      "ao_nonzero_generated_samples": 0,
+      "pulse_event_rows": 0,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_170939_20261029T160939Z_2026_08_05_0000_pid_100ms.h5",
+        "complete": true,
+        "recording_bytes": 93048784,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 0,
+          "controller_ids": [
+            "pid"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_171328_20261029T161328Z_2026_08_05_0000_esn_100ms",
+      "source_name": "2026_08_05_0000",
+      "controller": "esn",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "process p99 is not below 2.5 ms",
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.6285040000000035,
+      "max_ms": 447.2756,
+      "deadline_misses": 133,
+      "p99_gate_passed": false,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 318,
+      "requested_pulse_events": 318,
+      "pulse_commit_count": 316,
+      "pulse_commit_samples": 31600,
+      "ao_nonzero_generated_samples": 31284,
+      "pulse_event_rows": 598,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_171328_20261029T161328Z_2026_08_05_0000_esn_100ms.h5",
+        "complete": true,
+        "recording_bytes": 93736166,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 598,
+          "controller_ids": [
+            "esn"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_171808_20261029T161808Z_2026_08_06_0000_rule_100ms",
+      "source_name": "2026_08_06_0000",
+      "controller": "rule",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.118502000000002,
+      "max_ms": 15.6181,
+      "deadline_misses": 29,
+      "p99_gate_passed": true,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 1675,
+      "requested_pulse_events": 1675,
+      "pulse_commit_count": 1627,
+      "pulse_commit_samples": 162700,
+      "ao_nonzero_generated_samples": 161073,
+      "pulse_event_rows": 3235,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_171808_20261029T161808Z_2026_08_06_0000_rule_100ms.h5",
+        "complete": true,
+        "recording_bytes": 93914148,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 3235,
+          "controller_ids": [
+            "rule"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_172214_20261029T162214Z_2026_08_06_0000_pid_100ms",
+      "source_name": "2026_08_06_0000",
+      "controller": "pid",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.1220040000000036,
+      "max_ms": 17.1542,
+      "deadline_misses": 37,
+      "p99_gate_passed": true,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 0,
+      "requested_pulse_events": 0,
+      "pulse_commit_count": 0,
+      "pulse_commit_samples": 0,
+      "ao_nonzero_generated_samples": 0,
+      "pulse_event_rows": 0,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_172214_20261029T162214Z_2026_08_06_0000_pid_100ms.h5",
+        "complete": true,
+        "recording_bytes": 93430489,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 0,
+          "controller_ids": [
+            "pid"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    },
+    {
+      "case_id": "20261029_172613_20261029T162613Z_2026_08_06_0000_esn_100ms",
+      "source_name": "2026_08_06_0000",
+      "controller": "esn",
+      "lead_ms": 100.0,
+      "scope": "full_replay_case",
+      "full_acceptance_passed": false,
+      "runtime_failures": [
+        "process p99 is not below 2.5 ms",
+        "maximum process time reached or exceeded the block deadline",
+        "one or more blocks exceeded the processing deadline"
+      ],
+      "p99_ms": 2.7706070000000063,
+      "max_ms": 486.6503,
+      "deadline_misses": 168,
+      "p99_gate_passed": false,
+      "maximum_gate_passed": false,
+      "deadline_gate_passed": false,
+      "source_samples": 36000000,
+      "recorded_samples": 36000000,
+      "pulse_proposal_count": 513,
+      "requested_pulse_events": 513,
+      "pulse_commit_count": 513,
+      "pulse_commit_samples": 51300,
+      "ao_nonzero_generated_samples": 50787,
+      "pulse_event_rows": 968,
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-bb65477\\full-matrix\\recordings\\20261029_172613_20261029T162613Z_2026_08_06_0000_esn_100ms.h5",
+        "complete": true,
+        "recording_bytes": 94774885,
+        "metadata_and_rows_checked": {
+          "block_rows_checked": 360000,
+          "controller_rows_checked": 360000,
+          "source_gaps": 0,
+          "pulse_event_rows": 968,
+          "controller_ids": [
+            "esn"
+          ],
+          "first_source_offset": 0,
+          "last_source_offset": 35999900,
+          "first_ai_index": 0,
+          "last_ai_index": 35999900
+        },
+        "issues": []
+      },
+      "issues": []
+    }
+  ]
+}
