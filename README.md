@@ -49,7 +49,8 @@ passthrough mode.
 > gates failed in 15 and passed in 3. Full-duration
 > timing was not evaluated. See
 > [the lead-sweep evidence](docs/validation/lead-sweep-650c4a4/README.md).
-> The current paced set and full simulation matrix remain pending.
+> The three 30-minute paced runs with an actual browser and the full
+> simulation matrix remain pending.
 > The earlier default simulation export wrote JSON then failed during CSV
 > serialization; a separate PID control segment also faulted and recorded
 > only a prefix. The post-fix retry wrote all three CSV rows but had a separate
@@ -60,6 +61,10 @@ passthrough mode.
 > recovery checks, but the control segment faulted before full recording; all
 > three segment maxima exceeded 5 ms. See
 > [the tracking audit](docs/validation/tracking-ef81a23/README.md).
+> A separate injected 150 ms stall proof passed the expected cancellation,
+> zero-output, no-effect, and drain checks, while correctly failing runtime
+> acceptance for the faulted prefix. It is software-only evidence: see
+> [the stall audit](docs/validation/stall-150ms-ef81a23/README.md).
 >
 > **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
 > working assumptions, not measured calibration. Do not treat software results

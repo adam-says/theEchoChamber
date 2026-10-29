@@ -108,6 +108,14 @@ stimulated/control/capacity maxima were 24.0277/280.6627/5.1051 ms, with
 exceeded 5 ms. The run is shorter than the 1,800-second timing requirement. See
 the [post-fix tracking audit](validation/tracking-ef81a23/README.md).
 
+A separate 150 ms simulated producer-stall test on `ef81a23` passed its
+expected fail-safe checks. One pulse proposal was canceled before commit; no
+pulse samples, nonzero AO samples, or plant effects occurred; final AO drain
+was empty. The faulted recording was a contiguous 250,000/320,000-sample
+prefix, while its uninjected control completed all 320,000 samples. Runtime
+acceptance correctly failed for the injected-fault case. This is not hardware
+evidence. See the [stall proof audit](validation/stall-150ms-ef81a23/README.md).
+
 ## Run the finite replay matrix
 
 Run all three controllers on each of the three full finite recordings:
@@ -385,7 +393,8 @@ Eligible source coverage was 28.25 seconds for Rule, 33.99 seconds for PID,
 and 44.995 seconds for ESN. Runtime timing gates failed in 15 cases and passed
 in 3. Full-duration timing acceptance was not evaluated. See the
 [lead-sweep report and audit](validation/lead-sweep-650c4a4/README.md). The
-current all-controller paced set and full simulation matrix remain pending. A
+three 30-minute paced runs with an actual browser and the full simulation
+matrix remain pending. A
 paced Rule run and a separate paced PID run on
 `09ebf1e` processed all 36,000,000 source samples, but both failed. The Rule
 recording contains only 16,608,200 samples. Its fault stopped acquisition and

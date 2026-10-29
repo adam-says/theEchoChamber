@@ -221,6 +221,17 @@ with 8, 11, and 1 deadline misses respectively. All p99 values were below
 meet the 1,800-second timing requirement. See
 [`docs/validation/tracking-ef81a23/`](docs/validation/tracking-ef81a23/).
 
+## Injected-stall fail-safe proof
+
+A targeted 150 ms simulated producer stall on `ef81a23` passed its expected
+fault-behavior checks: one pulse proposal was rejected and canceled before
+commit; no pulse samples, nonzero AO samples, plant effects, or final rate phase
+remained; final drain was empty. The faulted recording is the expected
+250,000/320,000-sample prefix, while the uninjected control completed all
+320,000 samples. The strict runtime acceptance result is false by design for
+this fault-injection case. This is a software check, not hardware proof. See
+[`docs/validation/stall-150ms-ef81a23/`](docs/validation/stall-150ms-ef81a23/).
+
 ## Full-recording reader check
 
 The v5 reader loaded a complete earlier Rule recording and compared it with
@@ -278,8 +289,8 @@ samples. The detailed nine-case results are in
 [`docs/validation/replay-bb65477/`](docs/validation/replay-bb65477/). The
 45-second unpaced lead sweep with virtual AO has an audited 18/18 coverage result,
 with 15 runtime timing failures and 3 passes; full-duration timing was not
-evaluated. The current all-controller 30-minute paced set and full simulation
-matrix remain pending. The parked process-recorder prototype
+evaluated. The three 30-minute paced runs with an actual browser and the full
+simulation matrix remain pending. The parked process-recorder prototype
 did not show a repeatable timing benefit and does not isolate GIL contention.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID

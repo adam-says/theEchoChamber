@@ -1,0 +1,344 @@
+{
+  "schema": "intentional-150ms-stall-evidence-audit-v1",
+  "report": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\stall-150ms\\responsive_simulation_20261029T171043Z.json",
+  "progress_log": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\stall-150ms\\progress.jsonl",
+  "report_schema": "echo-chamber-responsive-simulation-matrix-v1",
+  "scenario": "saturation_and_activity_comparison",
+  "git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+  "physical_pulse_claims": false,
+  "expected_fault_test_behavior_passed": true,
+  "runtime_acceptance_passed": false,
+  "checks": {
+    "exactly_one_150ms_injected_stall": true,
+    "fault_latched_and_active_miss": true,
+    "single_request_has_no_commit_or_nonzero_generation": true,
+    "faulted_request_has_rejection_and_cancellation_without_commit": true,
+    "no_plant_effect": true,
+    "no_rate_debt_or_postfault_pulse_burst": true,
+    "final_drain_and_empty_queue": true,
+    "uninjected_control_full_320k_and_faultfree": true,
+    "both_h5_indices_and_metadata_consistent": true
+  },
+  "fault_observation_events": [
+    {
+      "type": "ao_clock_fault",
+      "source_sample_index": 249900,
+      "fault": "simulated AO active deadline missed; refill replaced with zeros",
+      "generated_sample_count": 251000,
+      "next_write_block": 2530,
+      "ao_service_gap_ms": 15.312999952584505,
+      "observation_is_fault_onset": false,
+      "latest_completed_core_source_sample_index": 249900,
+      "core_call_started_not_yet_published_source_sample_index": null,
+      "source_availability_lag_ms": 0.6636998150497675
+    }
+  ],
+  "active_demand_miss_events": [
+    {
+      "source_sample_index": 249900,
+      "target_block": 2519,
+      "generated_sample_count": 252800,
+      "next_write_block": 2542
+    }
+  ],
+  "segments": [
+    {
+      "segment": "stimulated",
+      "case_id": "20261029_181011_20261029T171011Z_responsive_generic_seed_1414_pid_100ms",
+      "recording_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\stall-150ms\\recordings\\20261029_181011_20261029T171011Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "recording_complete_attr": 1,
+      "committed_samples": 250000,
+      "expected_full_samples": 320000,
+      "recording_fraction": 0.78125,
+      "h5_metadata_datafile_matches": true,
+      "h5_metadata_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "schema": "echo-chamber-recording",
+      "format_tag": "echoChamber_H5_v5",
+      "signal_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          250000
+        ],
+        "signals/electrode_mV": [
+          2,
+          250000
+        ],
+        "signals/ao_command_V": [
+          1,
+          250000
+        ]
+      },
+      "ao_recorded_nonzero_samples": 0,
+      "diagnostic_rows": 2500,
+      "controller_diagnostic_rows": 2500,
+      "indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "action_stage_counts": {
+        "drain_acknowledged": 1,
+        "rendered_for_ao": 1,
+        "zero_substituted": 15,
+        "rejected": 1,
+        "ao_cancelled": 2
+      },
+      "pulse_outcome_rows": [
+        {
+          "pulse_id": "g2-p1",
+          "stage": "rendered_for_ao",
+          "generation": 2,
+          "source_onset": 249999,
+          "target_onset": 251999,
+          "ao_start": 251999,
+          "ao_end": -1,
+          "reason": "controller and actuator proposal; AO scheduler outcome follows"
+        },
+        {
+          "pulse_id": "g2-p1",
+          "stage": "rejected",
+          "generation": 2,
+          "source_onset": 249999,
+          "target_onset": 251999,
+          "ao_start": 251999,
+          "ao_end": -1,
+          "reason": "latched fault rejected AO command"
+        },
+        {
+          "pulse_id": "g2-p1",
+          "stage": "ao_cancelled",
+          "generation": 2,
+          "source_onset": 249999,
+          "target_onset": 251999,
+          "ao_start": 251999,
+          "ao_end": 252099,
+          "reason": "fault rejected before AO reservation"
+        },
+        {
+          "pulse_id": "g2-p1",
+          "stage": "ao_cancelled",
+          "generation": 2,
+          "source_onset": 249999,
+          "target_onset": 251999,
+          "ao_start": 251999,
+          "ao_end": 252000,
+          "reason": "fault rejected before AO reservation"
+        }
+      ],
+      "fault_zero_ranges": [
+        {
+          "start": 251900,
+          "end": 254200,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 254200,
+          "end": 256400,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 256400,
+          "end": 262000,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 262000,
+          "end": 267600,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 267600,
+          "end": 273200,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 273200,
+          "end": 277800,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 277800,
+          "end": 282500,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 282500,
+          "end": 288100,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 288100,
+          "end": 293700,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 293700,
+          "end": 299500,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 299500,
+          "end": 303900,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 303900,
+          "end": 309500,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 309500,
+          "end": 315200,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 315200,
+          "end": 320000,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "start": 320000,
+          "end": 325600,
+          "generation": 2,
+          "reason": "faulted AO refill committed as safe zero"
+        }
+      ],
+      "fault_zero_range_samples": 73700,
+      "report_metrics": {
+        "source_samples": 320000,
+        "processed_blocks": 3200,
+        "duration_source_s": 16.0,
+        "skipped_source_samples": 0,
+        "source_index_gap_samples": 0,
+        "recording_completed": true,
+        "recording_committed_samples": 250000,
+        "runtime_fault": "simulated AO active deadline missed; refill replaced with zeros",
+        "injected_stall_count": 1,
+        "injected_stall_ms_total": 150.0,
+        "ao_active_demand_misses": 1,
+        "ao_late_commands": 0,
+        "ao_rejected_stale": 0,
+        "ao_zero_substitutions": 737,
+        "ao_drain_complete": true,
+        "ao_final_queue_depth": 0,
+        "requested_pulse_events": 1,
+        "rendered_pulse_events": 1,
+        "rejected_pulse_events": 0,
+        "unclassified_pulse_events": 0,
+        "pulse_request_ids": [
+          "g2-p1"
+        ],
+        "pulse_rejected_ids": [],
+        "pulse_commit_ids": [],
+        "pulse_commit_samples": 0,
+        "ao_nonzero_generated_samples": 0,
+        "max_requested_rate_hz": 2.0,
+        "actuator_rate_phase_high_water": 1.0000000000000007,
+        "actuator_rate_phase_reset_count": 30,
+        "actuator_rate_phase_final": 0.0,
+        "bounded_rate_request_count": 170,
+        "generated_ao_blocks": 3245,
+        "progress_events_accepted": 6,
+        "progress_events_written": 6,
+        "progress_events_dropped": 0,
+        "progress_events_rejected": 0,
+        "progress_events_pending": 0
+      },
+      "plant_effect_pulses": 0,
+      "plant_effect_samples": 0,
+      "generated_nonzero_ao_samples": 0,
+      "physical_pulse_claims": false
+    },
+    {
+      "segment": "no_stimulation_control",
+      "case_id": "20261029_181027_20261029T171027Z_responsive_generic_seed_1414_pid_100ms",
+      "recording_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\stall-150ms\\recordings\\20261029_181027_20261029T171027Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "recording_complete_attr": 1,
+      "committed_samples": 320000,
+      "expected_full_samples": 320000,
+      "recording_fraction": 1.0,
+      "h5_metadata_datafile_matches": true,
+      "h5_metadata_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "schema": "echo-chamber-recording",
+      "format_tag": "echoChamber_H5_v5",
+      "signal_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          320000
+        ],
+        "signals/electrode_mV": [
+          2,
+          320000
+        ],
+        "signals/ao_command_V": [
+          1,
+          320000
+        ]
+      },
+      "ao_recorded_nonzero_samples": 0,
+      "diagnostic_rows": 3200,
+      "controller_diagnostic_rows": 3200,
+      "indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "action_stage_counts": {
+        "drain_acknowledged": 1
+      },
+      "pulse_outcome_rows": [],
+      "fault_zero_ranges": [],
+      "fault_zero_range_samples": 0,
+      "report_metrics": {
+        "source_samples": 320000,
+        "processed_blocks": 3200,
+        "duration_source_s": 16.0,
+        "skipped_source_samples": 0,
+        "source_index_gap_samples": 0,
+        "recording_completed": true,
+        "recording_committed_samples": 320000,
+        "runtime_fault": null,
+        "injected_stall_count": 0,
+        "injected_stall_ms_total": 0.0,
+        "ao_active_demand_misses": 0,
+        "ao_late_commands": 0,
+        "ao_rejected_stale": 0,
+        "ao_zero_substitutions": 44,
+        "ao_drain_complete": true,
+        "ao_final_queue_depth": 0,
+        "requested_pulse_events": 0,
+        "rendered_pulse_events": 0,
+        "rejected_pulse_events": 0,
+        "unclassified_pulse_events": 0,
+        "pulse_request_ids": [],
+        "pulse_rejected_ids": [],
+        "pulse_commit_ids": [],
+        "pulse_commit_samples": 0,
+        "ao_nonzero_generated_samples": 0,
+        "max_requested_rate_hz": 0.0,
+        "actuator_rate_phase_high_water": 0.0,
+        "actuator_rate_phase_reset_count": 0,
+        "actuator_rate_phase_final": 0.0,
+        "bounded_rate_request_count": 0,
+        "generated_ao_blocks": 3244,
+        "progress_events_accepted": 2,
+        "progress_events_written": 2,
+        "progress_events_dropped": 0,
+        "progress_events_rejected": 0,
+        "progress_events_pending": 0
+      },
+      "plant_effect_pulses": 0,
+      "plant_effect_samples": 0,
+      "generated_nonzero_ao_samples": 0,
+      "physical_pulse_claims": false
+    }
+  ]
+}
