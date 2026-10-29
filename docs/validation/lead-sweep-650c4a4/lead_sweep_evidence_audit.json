@@ -1,0 +1,806 @@
+{
+  "schema": "echo-chamber-lead-sweep-evidence-audit-v1",
+  "report": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\controller_lead_sweep_20261029T163915Z.json",
+  "progress_log": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\progress.jsonl",
+  "report_git_revision": "650c4a456019b03f14f88e8c54667874a5361c71",
+  "source": "2026_05_29_0001",
+  "canonical_source_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\tmp\\ca3_import_validation\\2026_05_29_0001.h5",
+  "canonical_source_sha256": "282827974028af3f22375fba78cc3d969e228e39e5de23458b0a9ddccb44422b",
+  "cases_expected": 18,
+  "cases_observed": 18,
+  "leads_ms_expected": [
+    20.0,
+    30.0,
+    40.0,
+    50.0,
+    75.0,
+    100.0
+  ],
+  "controllers_expected": [
+    "esn",
+    "pid",
+    "rule"
+  ],
+  "required_post_calibration_feature_samples_per_case": 400000,
+  "expected_prefix_seconds": 45.0,
+  "full_duration_timing_acceptance": "NOT EVALUATED; lead sweep is a 45-second diagnostic prefix",
+  "validated_unique_18_case_collection": true,
+  "coverage_audit_passed": true,
+  "all_diagnostic_runtime_timing_gates_passed": false,
+  "physical_pulse_claims": false,
+  "global_issues": [],
+  "cases": [
+    {
+      "case_id": "20261029_173653_20261029T163653Z_2026_05_29_0001_rule_100ms",
+      "controller": "rule",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 100.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 5650,
+      "post_calibration_invalid_rows": 1148,
+      "post_calibration_invalid_samples": 112140,
+      "post_calibration_stimulated_samples": 3000,
+      "post_calibration_feature_eligible_samples": 565000,
+      "post_calibration_feature_eligible_seconds": 28.25,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.115303,
+        "maximum_ms": 5.5263,
+        "deadline_misses": 3,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173653_20261029T163653Z_2026_05_29_0001_rule_100ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "rule"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 20
+    },
+    {
+      "case_id": "20261029_173700_20261029T163700Z_2026_05_29_0001_pid_100ms",
+      "controller": "pid",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 100.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 6798,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 679800,
+      "post_calibration_feature_eligible_seconds": 33.99,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.140518000000003,
+        "maximum_ms": 6.3948,
+        "deadline_misses": 2,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173700_20261029T163700Z_2026_05_29_0001_pid_100ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "pid"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 20
+    },
+    {
+      "case_id": "20261029_173707_20261029T163707Z_2026_05_29_0001_esn_100ms",
+      "controller": "esn",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "model_threshold_readiness_not_baseline_calibration",
+      "ao_lead_ms": 100.0,
+      "first_qualified_ready_calibrated_source_sample": 0,
+      "calibrated_diagnostic_rows": 9000,
+      "ready_diagnostic_rows": 9000,
+      "post_calibration_valid_rows": 8999,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 899900,
+      "post_calibration_feature_eligible_seconds": 44.995,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.9992270000000025,
+        "maximum_ms": 5.8054,
+        "deadline_misses": 3,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173707_20261029T163707Z_2026_05_29_0001_esn_100ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 9000,
+        "controller_ids": [
+          "esn"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 20
+    },
+    {
+      "case_id": "20261029_173717_20261029T163717Z_2026_05_29_0001_rule_75ms",
+      "controller": "rule",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 75.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 5650,
+      "post_calibration_invalid_rows": 1148,
+      "post_calibration_invalid_samples": 112140,
+      "post_calibration_stimulated_samples": 3000,
+      "post_calibration_feature_eligible_samples": 565000,
+      "post_calibration_feature_eligible_seconds": 28.25,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.5199120000000024,
+        "maximum_ms": 10.0809,
+        "deadline_misses": 1,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173717_20261029T163717Z_2026_05_29_0001_rule_75ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "rule"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 16
+    },
+    {
+      "case_id": "20261029_173725_20261029T163725Z_2026_05_29_0001_pid_75ms",
+      "controller": "pid",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 75.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 6798,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 679800,
+      "post_calibration_feature_eligible_seconds": 33.99,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.306401,
+        "maximum_ms": 6.9591,
+        "deadline_misses": 1,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173725_20261029T163725Z_2026_05_29_0001_pid_75ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "pid"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 16
+    },
+    {
+      "case_id": "20261029_173733_20261029T163733Z_2026_05_29_0001_esn_75ms",
+      "controller": "esn",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "model_threshold_readiness_not_baseline_calibration",
+      "ao_lead_ms": 75.0,
+      "first_qualified_ready_calibrated_source_sample": 0,
+      "calibrated_diagnostic_rows": 9000,
+      "ready_diagnostic_rows": 9000,
+      "post_calibration_valid_rows": 8999,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 899900,
+      "post_calibration_feature_eligible_seconds": 44.995,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.894481000000004,
+        "maximum_ms": 6.8548,
+        "deadline_misses": 9,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173733_20261029T163733Z_2026_05_29_0001_esn_75ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 9000,
+        "controller_ids": [
+          "esn"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 16
+    },
+    {
+      "case_id": "20261029_173742_20261029T163742Z_2026_05_29_0001_rule_50ms",
+      "controller": "rule",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 50.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 5650,
+      "post_calibration_invalid_rows": 1148,
+      "post_calibration_invalid_samples": 112140,
+      "post_calibration_stimulated_samples": 3000,
+      "post_calibration_feature_eligible_samples": 565000,
+      "post_calibration_feature_eligible_seconds": 28.25,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.1638210000000004,
+        "maximum_ms": 5.4797,
+        "deadline_misses": 1,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173742_20261029T163742Z_2026_05_29_0001_rule_50ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "rule"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 10
+    },
+    {
+      "case_id": "20261029_173749_20261029T163749Z_2026_05_29_0001_pid_50ms",
+      "controller": "pid",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 50.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 6798,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 679800,
+      "post_calibration_feature_eligible_seconds": 33.99,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.184917,
+        "maximum_ms": 5.2476,
+        "deadline_misses": 1,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173749_20261029T163749Z_2026_05_29_0001_pid_50ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "pid"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 10
+    },
+    {
+      "case_id": "20261029_173756_20261029T163756Z_2026_05_29_0001_esn_50ms",
+      "controller": "esn",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "model_threshold_readiness_not_baseline_calibration",
+      "ao_lead_ms": 50.0,
+      "first_qualified_ready_calibrated_source_sample": 0,
+      "calibrated_diagnostic_rows": 9000,
+      "ready_diagnostic_rows": 9000,
+      "post_calibration_valid_rows": 8999,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 899900,
+      "post_calibration_feature_eligible_seconds": 44.995,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.814734000000001,
+        "maximum_ms": 6.2162,
+        "deadline_misses": 4,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173756_20261029T163756Z_2026_05_29_0001_esn_50ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 9000,
+        "controller_ids": [
+          "esn"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 10
+    },
+    {
+      "case_id": "20261029_173805_20261029T163805Z_2026_05_29_0001_rule_40ms",
+      "controller": "rule",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 40.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 5650,
+      "post_calibration_invalid_rows": 1148,
+      "post_calibration_invalid_samples": 112140,
+      "post_calibration_stimulated_samples": 3000,
+      "post_calibration_feature_eligible_samples": 565000,
+      "post_calibration_feature_eligible_seconds": 28.25,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.127638000000001,
+        "maximum_ms": 14.183,
+        "deadline_misses": 5,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173805_20261029T163805Z_2026_05_29_0001_rule_40ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "rule"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 12
+    },
+    {
+      "case_id": "20261029_173812_20261029T163812Z_2026_05_29_0001_pid_40ms",
+      "controller": "pid",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 40.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 6798,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 679800,
+      "post_calibration_feature_eligible_seconds": 33.99,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.277132000000001,
+        "maximum_ms": 5.1874,
+        "deadline_misses": 1,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173812_20261029T163812Z_2026_05_29_0001_pid_40ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "pid"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 12
+    },
+    {
+      "case_id": "20261029_173820_20261029T163820Z_2026_05_29_0001_esn_40ms",
+      "controller": "esn",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "model_threshold_readiness_not_baseline_calibration",
+      "ao_lead_ms": 40.0,
+      "first_qualified_ready_calibrated_source_sample": 0,
+      "calibrated_diagnostic_rows": 9000,
+      "ready_diagnostic_rows": 9000,
+      "post_calibration_valid_rows": 8999,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 899900,
+      "post_calibration_feature_eligible_seconds": 44.995,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 3.1704230000000004,
+        "maximum_ms": 6.1907,
+        "deadline_misses": 6,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173820_20261029T163820Z_2026_05_29_0001_esn_40ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 9000,
+        "controller_ids": [
+          "esn"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 12
+    },
+    {
+      "case_id": "20261029_173829_20261029T163829Z_2026_05_29_0001_rule_30ms",
+      "controller": "rule",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 30.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 5650,
+      "post_calibration_invalid_rows": 1148,
+      "post_calibration_invalid_samples": 112140,
+      "post_calibration_stimulated_samples": 3000,
+      "post_calibration_feature_eligible_samples": 565000,
+      "post_calibration_feature_eligible_seconds": 28.25,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.1276960000000043,
+        "maximum_ms": 12.1513,
+        "deadline_misses": 8,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173829_20261029T163829Z_2026_05_29_0001_rule_30ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "rule"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 9
+    },
+    {
+      "case_id": "20261029_173836_20261029T163836Z_2026_05_29_0001_pid_30ms",
+      "controller": "pid",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 30.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 6798,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 679800,
+      "post_calibration_feature_eligible_seconds": 33.99,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.0191550000000036,
+        "maximum_ms": 4.6732,
+        "deadline_misses": 0,
+        "diagnostic_runtime_checks_passed": true,
+        "runtime_failures": [],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173836_20261029T163836Z_2026_05_29_0001_pid_30ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "pid"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 9
+    },
+    {
+      "case_id": "20261029_173843_20261029T163843Z_2026_05_29_0001_esn_30ms",
+      "controller": "esn",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "model_threshold_readiness_not_baseline_calibration",
+      "ao_lead_ms": 30.0,
+      "first_qualified_ready_calibrated_source_sample": 0,
+      "calibrated_diagnostic_rows": 9000,
+      "ready_diagnostic_rows": 9000,
+      "post_calibration_valid_rows": 8999,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 899900,
+      "post_calibration_feature_eligible_seconds": 44.995,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 3.465491000000002,
+        "maximum_ms": 6.7772,
+        "deadline_misses": 7,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173843_20261029T163843Z_2026_05_29_0001_esn_30ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 9000,
+        "controller_ids": [
+          "esn"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 9
+    },
+    {
+      "case_id": "20261029_173854_20261029T163854Z_2026_05_29_0001_rule_20ms",
+      "controller": "rule",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 20.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 5650,
+      "post_calibration_invalid_rows": 1148,
+      "post_calibration_invalid_samples": 112140,
+      "post_calibration_stimulated_samples": 3000,
+      "post_calibration_feature_eligible_samples": 565000,
+      "post_calibration_feature_eligible_seconds": 28.25,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 1.9139009999999999,
+        "maximum_ms": 4.1415,
+        "deadline_misses": 0,
+        "diagnostic_runtime_checks_passed": true,
+        "runtime_failures": [],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173854_20261029T163854Z_2026_05_29_0001_rule_20ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "rule"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 8
+    },
+    {
+      "case_id": "20261029_173901_20261029T163901Z_2026_05_29_0001_pid_20ms",
+      "controller": "pid",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "baseline_calibration",
+      "ao_lead_ms": 20.0,
+      "first_qualified_ready_calibrated_source_sample": 220100,
+      "calibrated_diagnostic_rows": 6799,
+      "ready_diagnostic_rows": 6799,
+      "post_calibration_valid_rows": 6798,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 679800,
+      "post_calibration_feature_eligible_seconds": 33.99,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 1.9975770000000017,
+        "maximum_ms": 4.0887,
+        "deadline_misses": 0,
+        "diagnostic_runtime_checks_passed": true,
+        "runtime_failures": [],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173901_20261029T163901Z_2026_05_29_0001_pid_20ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 6799,
+        "controller_ids": [
+          "pid"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 8
+    },
+    {
+      "case_id": "20261029_173908_20261029T163908Z_2026_05_29_0001_esn_20ms",
+      "controller": "esn",
+      "source_name": "2026_05_29_0001",
+      "controller_readiness_semantics": "model_threshold_readiness_not_baseline_calibration",
+      "ao_lead_ms": 20.0,
+      "first_qualified_ready_calibrated_source_sample": 0,
+      "calibrated_diagnostic_rows": 9000,
+      "ready_diagnostic_rows": 9000,
+      "post_calibration_valid_rows": 8999,
+      "post_calibration_invalid_rows": 0,
+      "post_calibration_invalid_samples": 0,
+      "post_calibration_stimulated_samples": 0,
+      "post_calibration_feature_eligible_samples": 899900,
+      "post_calibration_feature_eligible_seconds": 44.995,
+      "coverage_passed": true,
+      "runtime_timing": {
+        "p99_ms": 2.8190410000000035,
+        "maximum_ms": 6.0787,
+        "deadline_misses": 4,
+        "diagnostic_runtime_checks_passed": false,
+        "runtime_failures": [
+          "process p99 is not below 2.5 ms",
+          "maximum process time reached or exceeded the block deadline",
+          "one or more blocks exceeded the processing deadline"
+        ],
+        "full_duration_timing_acceptance": "NOT EVALUATED"
+      },
+      "hdf5": {
+        "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-650c4a4\\lead-sweep-45s\\recordings\\20261029_173908_20261029T163908Z_2026_05_29_0001_esn_20ms.h5",
+        "complete": true,
+        "committed_samples": 900000,
+        "sample_rate_hz": 20000,
+        "controller_diagnostic_rows": 9000,
+        "ready_diagnostic_rows": 9000,
+        "controller_ids": [
+          "esn"
+        ],
+        "block_diagnostic_rows": 9000,
+        "source_discontinuity_rows": 0
+      },
+      "issues": [],
+      "ao_zero_substitutions": 8
+    }
+  ]
+}

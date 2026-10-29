@@ -11,11 +11,11 @@ controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
 > **Software validation is in progress.** The current full test suite passes
-> with 285 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. The suite
-> ran on the uncommitted candidate based on `95603cf`; the candidate was then
-> committed in isolation and cherry-picked to the main checkout. Both commits
-> map to tree `8524f3b3b450d5cc0732743269f69cf9a17b16e5`. Logs and the
-> original run manifest are in
+> with 286 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. It ran
+> on an uncommitted candidate based on `996dd1e`, then was committed as
+> isolated `4967720` and cherry-picked as main `ef81a23`, both at tree
+> `440255a110cd240c7b399df145fc0a360669b2b4`. Logs and the exact source-hash
+> manifest are in
 > [progress-reporting validation](docs/validation/progress-reporting/README.md).
 > The
 > `e965d808` replay matrix completed all nine 30-minute cases and failed the
@@ -43,8 +43,23 @@ passthrough mode.
 > misses, late commands, or stale rejections, and a completed AO drain. An
 > independent closed-file audit found no structural issues. See the
 > [full matrix report](docs/validation/replay-bb65477/README.md). The
-> matrix used a WebSocket client without browser rendering. The post-calibration
-> lead sweep, current paced set, and full simulation matrix remain pending.
+> matrix used a WebSocket client without browser rendering. The 45-second
+> post-calibration lead sweep has audited coverage for all 18 controller/lead
+> cases using unpaced processing with a virtual AO scheduler; runtime timing
+> gates failed in 15 and passed in 3. Full-duration
+> timing was not evaluated. See
+> [the lead-sweep evidence](docs/validation/lead-sweep-650c4a4/README.md).
+> The current paced set and full simulation matrix remain pending.
+> The earlier default simulation export wrote JSON then failed during CSV
+> serialization; a separate PID control segment also faulted and recorded
+> only a prefix. The post-fix retry wrote all three CSV rows but had a separate
+> ESN-stimulated AO fault; all functional simulation gates still failed. See
+> the [earlier audit](docs/validation/default-simulation-2a3a1fb/README.md)
+> and [post-fix retry](docs/validation/default-simulation-ef81a23/README.md).
+> The 64-second post-fix PID tracking diagnostic passed modeled tracking and
+> recovery checks, but the control segment faulted before full recording; all
+> three segment maxima exceeded 5 ms. See
+> [the tracking audit](docs/validation/tracking-ef81a23/README.md).
 >
 > **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
 > working assumptions, not measured calibration. Do not treat software results
@@ -52,6 +67,12 @@ passthrough mode.
 
 `echoChamber.py` is the supported development application.
 `echoChamber_v4.py` is retained only as the previous NI-tested reference.
+
+The post-run CSV fix only serializes unavailable tracking metrics as null and
+accepts older summaries without that optional field. It does not change the
+processing path measured by the prior full matrix or lead sweep. The PID
+control fault from the first attempt did not recur in the retry; the retry
+instead faulted in ESN stimulation. No cause is established.
 
 ## What changed
 

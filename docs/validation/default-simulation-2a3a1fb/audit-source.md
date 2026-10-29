@@ -1,0 +1,21 @@
+# Default responsive simulation evidence
+
+- Report: `work\theEchoChamber\work\validation_runs\acceptance-2a3a1fb\default-simulations\responsive_simulation_20261029T164720Z.json`
+- Revision: `2a3a1fb052ade0ea57057af52bcd573523a9a626`
+- Scope: six finite 24-second software simulation runs (stimulated/control for Rule, PID, ESN). HDF5 metadata, shapes, diagnostic row indices and AO command samples were inspected; raw AI/electrode samples were not reread.
+- The JSON aggregate contains all six segments despite the CLI failing while exporting an optional CSV column. The saved CSV contains only the first two controller rows.
+- All six HDF5 files have complete=1 and contiguous recorded block indices. Five contain the full 480,000-sample run; PID no-stimulation stopped recording after a latched AO fault at 273,100 samples (56.9% coverage), although finite replay processing continued to 480,000 samples.
+- Functional comparison by controller:
+  - rule: activity changed=True; RMS reduction=0.0003938979560124678 mV; tracking IAE improved=True; tracking/recovery/overall gates=False/False/False.
+  - pid: activity changed=True; RMS reduction=0.015439837265240342 mV; tracking IAE improved=False; tracking/recovery/overall gates=False/False/False.
+  - esn: activity changed=False; RMS reduction=0.0 mV; tracking IAE improved=False; tracking/recovery/overall gates=False/True/False.
+- Processing timing by segment (p99 / max / deadline misses, ms / ms / count):
+  - rule stimulated: 1.2670410000000007 / 4.8939 / 0; recording 480000/480000 samples.
+  - rule no_stimulation_control: 1.4805880000000018 / 3.2438 / 0; recording 480000/480000 samples.
+  - pid stimulated: 1.2935470000000011 / 2.5022 / 0; recording 480000/480000 samples.
+  - pid no_stimulation_control: 1.3196660000000016 / 211.9717 / 6; recording 273100/480000 samples.
+  - esn stimulated: 2.3916120000000003 / 4.2398 / 0; recording 480000/480000 samples.
+  - esn no_stimulation_control: 2.2672190000000003 / 7.4532 / 3; recording 480000/480000 samples.
+- Functional and processing results are separate. The six-case simulation acceptance gates did not pass. P99 is an all-call aggregate and does not hide the PID control fault or its shortened recording.
+- The faulted PID control H5 contains 42 coalesced fault-zero ranges covering 199,200 AO samples; scheduler metrics report 2,115 zero-substitution blocks. This evidence summary preserves both counts and does not claim they are reconciled.
+- Reported AO values are simulated command data, not physical pulse delivery. The plant is generic, not a tissue model.

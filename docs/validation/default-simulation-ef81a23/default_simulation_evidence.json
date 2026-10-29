@@ -1,0 +1,1270 @@
+{
+  "schema": "default-responsive-six-case-evidence-audit-v1",
+  "report_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\responsive_simulation_20261029T165702Z.json",
+  "report_schema": "echo-chamber-responsive-simulation-matrix-v1",
+  "report_scenario": "saturation_and_activity_comparison",
+  "report_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+  "csv_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\responsive_simulation_20261029T165702Z.csv",
+  "csv_rows": 3,
+  "csv_controllers": [
+    "rule",
+    "pid",
+    "esn"
+  ],
+  "csv_matches_three_controllers": true,
+  "expected_segments": 6,
+  "audited_segments": 6,
+  "all_six_report_segments_present": true,
+  "all_files_closed_cleanly": true,
+  "full_source_coverage_segments": 5,
+  "faulted_segments": 1,
+  "all_source_indices_contiguous": true,
+  "full_simulation_acceptance_passed": false,
+  "physical_pulse_claims": false,
+  "controller_comparisons": [
+    {
+      "controller": "rule",
+      "observed_disturbance_rms_reduction_mv": 0.0003938979560124678,
+      "feedback_changed_observed_activity": true,
+      "tracking_error_reduction_z_seconds": 28.053137240661272,
+      "tracking_iae_improved": true,
+      "tracking_gate_passed": false,
+      "plant_recovery_passed": false,
+      "simulation_acceptance_passed": false,
+      "plant_is_tissue_model": false,
+      "physical_pulse_claims": false
+    },
+    {
+      "controller": "pid",
+      "observed_disturbance_rms_reduction_mv": 0.015439837265240342,
+      "feedback_changed_observed_activity": true,
+      "tracking_error_reduction_z_seconds": 1173.2908790555216,
+      "tracking_iae_improved": true,
+      "tracking_gate_passed": false,
+      "plant_recovery_passed": false,
+      "simulation_acceptance_passed": false,
+      "plant_is_tissue_model": false,
+      "physical_pulse_claims": false
+    },
+    {
+      "controller": "esn",
+      "observed_disturbance_rms_reduction_mv": 0.0,
+      "feedback_changed_observed_activity": false,
+      "tracking_error_reduction_z_seconds": null,
+      "tracking_iae_improved": false,
+      "tracking_gate_passed": false,
+      "plant_recovery_passed": true,
+      "simulation_acceptance_passed": false,
+      "plant_is_tissue_model": false,
+      "physical_pulse_claims": false
+    }
+  ],
+  "segments": [
+    {
+      "controller": "rule",
+      "segment": "stimulated",
+      "case_id": "20261029_175436_20261029T165436Z_responsive_generic_seed_1414_rule_100ms",
+      "h5_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\recordings\\20261029_175436_20261029T165436Z_responsive_generic_seed_1414_rule_100ms.h5",
+      "h5_filename_matches_case": true,
+      "h5_controller_matches": true,
+      "h5_schema": "echo-chamber-recording",
+      "h5_format_tag": "echoChamber_H5_v5",
+      "h5_complete": 1,
+      "committed_samples": 480000,
+      "expected_full_samples": 480000,
+      "recording_coverage_fraction": 1.0,
+      "signals_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          480000
+        ],
+        "signals/electrode_mV": [
+          2,
+          480000
+        ],
+        "signals/ao_command_V": [
+          1,
+          480000
+        ]
+      },
+      "diagnostic_block_rows": 4800,
+      "controller_diagnostic_rows": 4800,
+      "diagnostic_indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "controller_ids": [
+        "rule"
+      ],
+      "ready_rows": 2600,
+      "calibrated_rows": 2600,
+      "feature_invalid_samples": 11214,
+      "stimulated_mask_samples": 300,
+      "recorded_ao_nonzero_samples": 297,
+      "action_stage_rows": 26,
+      "action_stages": {
+        "drain_acknowledged": 2,
+        "ao_committed": 6,
+        "ao_reserved": 6,
+        "ao_commit": 6,
+        "rendered_for_ao": 3,
+        "committed_tail_rendered": 3
+      },
+      "fault_zero_ranges": [],
+      "report_runtime_fault": null,
+      "report_processed_blocks": 4800,
+      "report_source_samples": 480000,
+      "report_skipped_samples": 0,
+      "report_source_gap_samples": 0,
+      "report_processing_p99_ms": 1.4002120000000002,
+      "report_processing_max_ms": 2.4972,
+      "report_deadline_misses": 0,
+      "report_ao_active_demand_misses": 0,
+      "report_ao_late_commands": 0,
+      "report_ao_zero_substitutions": 47,
+      "report_ao_drain_complete": true,
+      "report_pulse_requests": 3,
+      "report_pulse_rejected": 0,
+      "report_pulse_committed_samples": 300,
+      "report_generated_nonzero_samples": 297,
+      "reported_plant_effect_pulses": 3,
+      "reported_plant_effect_samples": 3,
+      "reported_generated_nonzero_command_samples": 297,
+      "tracking_expected": 1500,
+      "tracking_observed": 1500,
+      "tracking_full_source_coverage": true,
+      "tracking_eligible_fraction": 1.0,
+      "tracking_unexplained_invalid_samples": 0,
+      "tracking_iae_z_seconds": 3477.3893575085362,
+      "tracking_gate_passed": false,
+      "plant_recovery": {
+        "window_complete": true,
+        "pre_recovery_mean_reduction_mv": 1.1145363319399e-08,
+        "final_recovery_mean_reduction_mv": 5.055151114799166e-05,
+        "residual_fraction": 4535.65394858008,
+        "mean_requested_rate_after_two_recovery_constants_hz": 0.0,
+        "bounded_recovery": false
+      },
+      "simulation_acceptance_passed": false,
+      "physical_pulse_claims": null,
+      "fault_zero_range_count": 0,
+      "fault_zero_range_samples": 0,
+      "h5_metadata_plant": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "carrier_hz": 150.0,
+        "baseline_amplitude_mv": 0.12,
+        "disturbance_amplitude_mv": 0.18,
+        "disturbance_start_s": 12.0,
+        "disturbance_stop_s": 20.0,
+        "noise_sd_mv": 0.004,
+        "effect_delay_ms": 20.0,
+        "effect_recovery_s": 0.5,
+        "amplitude_reduction_per_pulse_mv": 0.035,
+        "max_amplitude_reduction_mv": 0.1,
+        "seed": 1414
+      },
+      "h5_metadata_source": {},
+      "h5_data_file_matches": true,
+      "h5_recording_metadata_git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "h5_config_rate_block_lead": [
+        20000,
+        100,
+        100.0
+      ],
+      "all_metadata_shape_checks_passed": true
+    },
+    {
+      "controller": "rule",
+      "segment": "no_stimulation_control",
+      "case_id": "20261029_175501_20261029T165501Z_responsive_generic_seed_1414_rule_100ms",
+      "h5_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\recordings\\20261029_175501_20261029T165501Z_responsive_generic_seed_1414_rule_100ms.h5",
+      "h5_filename_matches_case": true,
+      "h5_controller_matches": true,
+      "h5_schema": "echo-chamber-recording",
+      "h5_format_tag": "echoChamber_H5_v5",
+      "h5_complete": 1,
+      "committed_samples": 480000,
+      "expected_full_samples": 480000,
+      "recording_coverage_fraction": 1.0,
+      "signals_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          480000
+        ],
+        "signals/electrode_mV": [
+          2,
+          480000
+        ],
+        "signals/ao_command_V": [
+          1,
+          480000
+        ]
+      },
+      "diagnostic_block_rows": 4800,
+      "controller_diagnostic_rows": 4800,
+      "diagnostic_indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "controller_ids": [
+        "rule"
+      ],
+      "ready_rows": 2600,
+      "calibrated_rows": 2600,
+      "feature_invalid_samples": 0,
+      "stimulated_mask_samples": 0,
+      "recorded_ao_nonzero_samples": 0,
+      "action_stage_rows": 1,
+      "action_stages": {
+        "drain_acknowledged": 1
+      },
+      "fault_zero_ranges": [],
+      "report_runtime_fault": null,
+      "report_processed_blocks": 4800,
+      "report_source_samples": 480000,
+      "report_skipped_samples": 0,
+      "report_source_gap_samples": 0,
+      "report_processing_p99_ms": 1.3513180000000002,
+      "report_processing_max_ms": 2.2138,
+      "report_deadline_misses": 0,
+      "report_ao_active_demand_misses": 0,
+      "report_ao_late_commands": 0,
+      "report_ao_zero_substitutions": 46,
+      "report_ao_drain_complete": true,
+      "report_pulse_requests": 0,
+      "report_pulse_rejected": 0,
+      "report_pulse_committed_samples": 0,
+      "report_generated_nonzero_samples": 0,
+      "reported_plant_effect_pulses": 0,
+      "reported_plant_effect_samples": 0,
+      "reported_generated_nonzero_command_samples": 0,
+      "tracking_expected": 1500,
+      "tracking_observed": 1500,
+      "tracking_full_source_coverage": true,
+      "tracking_eligible_fraction": 1.0,
+      "tracking_unexplained_invalid_samples": 0,
+      "tracking_iae_z_seconds": 3505.4424947491975,
+      "tracking_gate_passed": false,
+      "plant_recovery": {
+        "window_complete": true,
+        "pre_recovery_mean_reduction_mv": 0.0,
+        "final_recovery_mean_reduction_mv": 0.0,
+        "residual_fraction": 0.0,
+        "mean_requested_rate_after_two_recovery_constants_hz": 0.0,
+        "bounded_recovery": true
+      },
+      "simulation_acceptance_passed": false,
+      "physical_pulse_claims": null,
+      "fault_zero_range_count": 0,
+      "fault_zero_range_samples": 0,
+      "h5_metadata_plant": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "carrier_hz": 150.0,
+        "baseline_amplitude_mv": 0.12,
+        "disturbance_amplitude_mv": 0.18,
+        "disturbance_start_s": 12.0,
+        "disturbance_stop_s": 20.0,
+        "noise_sd_mv": 0.004,
+        "effect_delay_ms": 20.0,
+        "effect_recovery_s": 0.5,
+        "amplitude_reduction_per_pulse_mv": 0.035,
+        "max_amplitude_reduction_mv": 0.1,
+        "seed": 1414
+      },
+      "h5_metadata_source": {},
+      "h5_data_file_matches": true,
+      "h5_recording_metadata_git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "h5_config_rate_block_lead": [
+        20000,
+        100,
+        100.0
+      ],
+      "all_metadata_shape_checks_passed": true
+    },
+    {
+      "controller": "pid",
+      "segment": "stimulated",
+      "case_id": "20261029_175525_20261029T165525Z_responsive_generic_seed_1414_pid_100ms",
+      "h5_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\recordings\\20261029_175525_20261029T165525Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "h5_filename_matches_case": true,
+      "h5_controller_matches": true,
+      "h5_schema": "echo-chamber-recording",
+      "h5_format_tag": "echoChamber_H5_v5",
+      "h5_complete": 1,
+      "committed_samples": 480000,
+      "expected_full_samples": 480000,
+      "recording_coverage_fraction": 1.0,
+      "signals_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          480000
+        ],
+        "signals/electrode_mV": [
+          2,
+          480000
+        ],
+        "signals/ao_command_V": [
+          1,
+          480000
+        ]
+      },
+      "diagnostic_block_rows": 4800,
+      "controller_diagnostic_rows": 4800,
+      "diagnostic_indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "controller_ids": [
+        "pid"
+      ],
+      "ready_rows": 2600,
+      "calibrated_rows": 2600,
+      "feature_invalid_samples": 37380,
+      "stimulated_mask_samples": 1000,
+      "recorded_ao_nonzero_samples": 990,
+      "action_stage_rows": 82,
+      "action_stages": {
+        "drain_acknowledged": 2,
+        "rendered_for_ao": 10,
+        "ao_committed": 20,
+        "ao_reserved": 20,
+        "ao_commit": 20,
+        "committed_tail_rendered": 10
+      },
+      "fault_zero_ranges": [],
+      "report_runtime_fault": null,
+      "report_processed_blocks": 4800,
+      "report_source_samples": 480000,
+      "report_skipped_samples": 0,
+      "report_source_gap_samples": 0,
+      "report_processing_p99_ms": 1.1852460000000011,
+      "report_processing_max_ms": 4.0823,
+      "report_deadline_misses": 0,
+      "report_ao_active_demand_misses": 0,
+      "report_ao_late_commands": 0,
+      "report_ao_zero_substitutions": 47,
+      "report_ao_drain_complete": true,
+      "report_pulse_requests": 10,
+      "report_pulse_rejected": 0,
+      "report_pulse_committed_samples": 1000,
+      "report_generated_nonzero_samples": 990,
+      "reported_plant_effect_pulses": 10,
+      "reported_plant_effect_samples": 10,
+      "reported_generated_nonzero_command_samples": 990,
+      "tracking_expected": 1500,
+      "tracking_observed": 1110,
+      "tracking_full_source_coverage": true,
+      "tracking_eligible_fraction": 1.0,
+      "tracking_unexplained_invalid_samples": 0,
+      "tracking_iae_z_seconds": 2334.1217903512543,
+      "tracking_gate_passed": false,
+      "plant_recovery": {
+        "window_complete": true,
+        "pre_recovery_mean_reduction_mv": 0.02369460194667605,
+        "final_recovery_mean_reduction_mv": 2.7535028618676422e-05,
+        "residual_fraction": 0.0011620802358546952,
+        "mean_requested_rate_after_two_recovery_constants_hz": 0.19803724086378055,
+        "bounded_recovery": false
+      },
+      "simulation_acceptance_passed": false,
+      "physical_pulse_claims": null,
+      "fault_zero_range_count": 0,
+      "fault_zero_range_samples": 0,
+      "h5_metadata_plant": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "carrier_hz": 150.0,
+        "baseline_amplitude_mv": 0.12,
+        "disturbance_amplitude_mv": 0.18,
+        "disturbance_start_s": 12.0,
+        "disturbance_stop_s": 20.0,
+        "noise_sd_mv": 0.004,
+        "effect_delay_ms": 20.0,
+        "effect_recovery_s": 0.5,
+        "amplitude_reduction_per_pulse_mv": 0.035,
+        "max_amplitude_reduction_mv": 0.1,
+        "seed": 1414
+      },
+      "h5_metadata_source": {},
+      "h5_data_file_matches": true,
+      "h5_recording_metadata_git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "h5_config_rate_block_lead": [
+        20000,
+        100,
+        100.0
+      ],
+      "all_metadata_shape_checks_passed": true
+    },
+    {
+      "controller": "pid",
+      "segment": "no_stimulation_control",
+      "case_id": "20261029_175549_20261029T165549Z_responsive_generic_seed_1414_pid_100ms",
+      "h5_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\recordings\\20261029_175549_20261029T165549Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "h5_filename_matches_case": true,
+      "h5_controller_matches": true,
+      "h5_schema": "echo-chamber-recording",
+      "h5_format_tag": "echoChamber_H5_v5",
+      "h5_complete": 1,
+      "committed_samples": 480000,
+      "expected_full_samples": 480000,
+      "recording_coverage_fraction": 1.0,
+      "signals_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          480000
+        ],
+        "signals/electrode_mV": [
+          2,
+          480000
+        ],
+        "signals/ao_command_V": [
+          1,
+          480000
+        ]
+      },
+      "diagnostic_block_rows": 4800,
+      "controller_diagnostic_rows": 4800,
+      "diagnostic_indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "controller_ids": [
+        "pid"
+      ],
+      "ready_rows": 2599,
+      "calibrated_rows": 2599,
+      "feature_invalid_samples": 0,
+      "stimulated_mask_samples": 0,
+      "recorded_ao_nonzero_samples": 0,
+      "action_stage_rows": 1,
+      "action_stages": {
+        "drain_acknowledged": 1
+      },
+      "fault_zero_ranges": [],
+      "report_runtime_fault": null,
+      "report_processed_blocks": 4800,
+      "report_source_samples": 480000,
+      "report_skipped_samples": 0,
+      "report_source_gap_samples": 0,
+      "report_processing_p99_ms": 1.3904350000000008,
+      "report_processing_max_ms": 2.5505,
+      "report_deadline_misses": 0,
+      "report_ao_active_demand_misses": 0,
+      "report_ao_late_commands": 0,
+      "report_ao_zero_substitutions": 45,
+      "report_ao_drain_complete": true,
+      "report_pulse_requests": 0,
+      "report_pulse_rejected": 0,
+      "report_pulse_committed_samples": 0,
+      "report_generated_nonzero_samples": 0,
+      "reported_plant_effect_pulses": 0,
+      "reported_plant_effect_samples": 0,
+      "reported_generated_nonzero_command_samples": 0,
+      "tracking_expected": 1500,
+      "tracking_observed": 1500,
+      "tracking_full_source_coverage": true,
+      "tracking_eligible_fraction": 1.0,
+      "tracking_unexplained_invalid_samples": 0,
+      "tracking_iae_z_seconds": 3507.412669406776,
+      "tracking_gate_passed": false,
+      "plant_recovery": {
+        "window_complete": true,
+        "pre_recovery_mean_reduction_mv": 0.0,
+        "final_recovery_mean_reduction_mv": 0.0,
+        "residual_fraction": 0.0,
+        "mean_requested_rate_after_two_recovery_constants_hz": 0.0,
+        "bounded_recovery": true
+      },
+      "simulation_acceptance_passed": false,
+      "physical_pulse_claims": null,
+      "fault_zero_range_count": 0,
+      "fault_zero_range_samples": 0,
+      "h5_metadata_plant": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "carrier_hz": 150.0,
+        "baseline_amplitude_mv": 0.12,
+        "disturbance_amplitude_mv": 0.18,
+        "disturbance_start_s": 12.0,
+        "disturbance_stop_s": 20.0,
+        "noise_sd_mv": 0.004,
+        "effect_delay_ms": 20.0,
+        "effect_recovery_s": 0.5,
+        "amplitude_reduction_per_pulse_mv": 0.035,
+        "max_amplitude_reduction_mv": 0.1,
+        "seed": 1414
+      },
+      "h5_metadata_source": {},
+      "h5_data_file_matches": true,
+      "h5_recording_metadata_git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "h5_config_rate_block_lead": [
+        20000,
+        100,
+        100.0
+      ],
+      "all_metadata_shape_checks_passed": true
+    },
+    {
+      "controller": "esn",
+      "segment": "stimulated",
+      "case_id": "20261029_175614_20261029T165614Z_responsive_generic_seed_1414_esn_100ms",
+      "h5_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\recordings\\20261029_175614_20261029T165614Z_responsive_generic_seed_1414_esn_100ms.h5",
+      "h5_filename_matches_case": true,
+      "h5_controller_matches": true,
+      "h5_schema": "echo-chamber-recording",
+      "h5_format_tag": "echoChamber_H5_v5",
+      "h5_complete": 1,
+      "committed_samples": 136800,
+      "expected_full_samples": 480000,
+      "recording_coverage_fraction": 0.285,
+      "signals_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          136800
+        ],
+        "signals/electrode_mV": [
+          2,
+          136800
+        ],
+        "signals/ao_command_V": [
+          1,
+          136800
+        ]
+      },
+      "diagnostic_block_rows": 1368,
+      "controller_diagnostic_rows": 1368,
+      "diagnostic_indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "controller_ids": [
+        "esn"
+      ],
+      "ready_rows": 1368,
+      "calibrated_rows": 1368,
+      "feature_invalid_samples": 0,
+      "stimulated_mask_samples": 0,
+      "recorded_ao_nonzero_samples": 0,
+      "action_stage_rows": 70,
+      "action_stages": {
+        "drain_acknowledged": 1,
+        "zero_substituted": 69
+      },
+      "fault_zero_ranges": [
+        {
+          "stage": "zero_substituted",
+          "start_ao": 139400,
+          "end_ao": 141400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 142600,
+          "end_ao": 144600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 146200,
+          "end_ao": 148200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 152400,
+          "end_ao": 154400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 154400,
+          "end_ao": 159800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 159800,
+          "end_ao": 160800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 162200,
+          "end_ao": 167000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 167000,
+          "end_ao": 168000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 168900,
+          "end_ao": 172100,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 172100,
+          "end_ao": 178000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 178000,
+          "end_ao": 183600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 183600,
+          "end_ao": 188000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 188000,
+          "end_ao": 193600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 193600,
+          "end_ao": 199500,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 199500,
+          "end_ao": 204200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 204200,
+          "end_ao": 209800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 209800,
+          "end_ao": 215400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 215400,
+          "end_ao": 219800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 219800,
+          "end_ao": 225700,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 225700,
+          "end_ao": 231300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 231300,
+          "end_ao": 235700,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 235700,
+          "end_ao": 241300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 241300,
+          "end_ao": 245700,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 245700,
+          "end_ao": 251600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 251600,
+          "end_ao": 257200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 257200,
+          "end_ao": 262100,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 262100,
+          "end_ao": 267500,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 267500,
+          "end_ao": 272200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 272200,
+          "end_ao": 278100,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 278100,
+          "end_ao": 283700,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 283700,
+          "end_ao": 288600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 288600,
+          "end_ao": 293000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 293000,
+          "end_ao": 298900,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 298900,
+          "end_ao": 304800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 304800,
+          "end_ao": 309200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 309200,
+          "end_ao": 315100,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 315100,
+          "end_ao": 319800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 319800,
+          "end_ao": 325400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 325400,
+          "end_ao": 331000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 331000,
+          "end_ao": 336600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 336600,
+          "end_ao": 341300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 341300,
+          "end_ao": 347100,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 347100,
+          "end_ao": 351500,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 351500,
+          "end_ao": 357100,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 357100,
+          "end_ao": 363000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 363000,
+          "end_ao": 367400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 367400,
+          "end_ao": 373600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 373600,
+          "end_ao": 378300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 378300,
+          "end_ao": 383900,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 383900,
+          "end_ao": 389500,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 389500,
+          "end_ao": 393900,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 393900,
+          "end_ao": 399800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 399800,
+          "end_ao": 405400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 405400,
+          "end_ao": 410300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 410300,
+          "end_ao": 415000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 415000,
+          "end_ao": 420800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 420800,
+          "end_ao": 426200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 426200,
+          "end_ao": 431200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 431200,
+          "end_ao": 436800,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 436800,
+          "end_ao": 441400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 441400,
+          "end_ao": 447600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 447600,
+          "end_ao": 452300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 452300,
+          "end_ao": 457000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 457000,
+          "end_ao": 462600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 462600,
+          "end_ao": 467300,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 467300,
+          "end_ao": 473200,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 473200,
+          "end_ao": 479000,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 479000,
+          "end_ao": 483400,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        },
+        {
+          "stage": "zero_substituted",
+          "start_ao": 483400,
+          "end_ao": 485600,
+          "generation": 2,
+          "controller": "esn",
+          "reason": "faulted AO refill committed as safe zero"
+        }
+      ],
+      "report_runtime_fault": "simulated AO host refill stalled past committed output",
+      "report_processed_blocks": 4800,
+      "report_source_samples": 480000,
+      "report_skipped_samples": 0,
+      "report_source_gap_samples": 0,
+      "report_processing_p99_ms": 1.701540000000001,
+      "report_processing_max_ms": 302.4315,
+      "report_deadline_misses": 5,
+      "report_ao_active_demand_misses": 1,
+      "report_ao_late_commands": 2,
+      "report_ao_zero_substitutions": 3471,
+      "report_ao_drain_complete": true,
+      "report_pulse_requests": 0,
+      "report_pulse_rejected": 0,
+      "report_pulse_committed_samples": 0,
+      "report_generated_nonzero_samples": 0,
+      "reported_plant_effect_pulses": 0,
+      "reported_plant_effect_samples": 0,
+      "reported_generated_nonzero_command_samples": 0,
+      "tracking_expected": 1500,
+      "tracking_observed": 0,
+      "tracking_full_source_coverage": true,
+      "tracking_eligible_fraction": 0.0,
+      "tracking_unexplained_invalid_samples": 150000,
+      "tracking_iae_z_seconds": null,
+      "tracking_gate_passed": false,
+      "plant_recovery": {
+        "window_complete": true,
+        "pre_recovery_mean_reduction_mv": 0.0,
+        "final_recovery_mean_reduction_mv": 0.0,
+        "residual_fraction": 0.0,
+        "mean_requested_rate_after_two_recovery_constants_hz": 0.0,
+        "bounded_recovery": true
+      },
+      "simulation_acceptance_passed": false,
+      "physical_pulse_claims": null,
+      "fault_zero_range_count": 69,
+      "fault_zero_range_samples": 336900,
+      "h5_metadata_plant": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "carrier_hz": 150.0,
+        "baseline_amplitude_mv": 0.12,
+        "disturbance_amplitude_mv": 0.18,
+        "disturbance_start_s": 12.0,
+        "disturbance_stop_s": 20.0,
+        "noise_sd_mv": 0.004,
+        "effect_delay_ms": 20.0,
+        "effect_recovery_s": 0.5,
+        "amplitude_reduction_per_pulse_mv": 0.035,
+        "max_amplitude_reduction_mv": 0.1,
+        "seed": 1414
+      },
+      "h5_metadata_source": {},
+      "h5_data_file_matches": true,
+      "h5_recording_metadata_git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "h5_config_rate_block_lead": [
+        20000,
+        100,
+        100.0
+      ],
+      "all_metadata_shape_checks_passed": true
+    },
+    {
+      "controller": "esn",
+      "segment": "no_stimulation_control",
+      "case_id": "20261029_175638_20261029T165638Z_responsive_generic_seed_1414_esn_100ms",
+      "h5_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-ef81a23\\default-simulations\\recordings\\20261029_175638_20261029T165638Z_responsive_generic_seed_1414_esn_100ms.h5",
+      "h5_filename_matches_case": true,
+      "h5_controller_matches": true,
+      "h5_schema": "echo-chamber-recording",
+      "h5_format_tag": "echoChamber_H5_v5",
+      "h5_complete": 1,
+      "committed_samples": 480000,
+      "expected_full_samples": 480000,
+      "recording_coverage_fraction": 1.0,
+      "signals_shapes": {
+        "signals/ai_raw_V": [
+          2,
+          480000
+        ],
+        "signals/electrode_mV": [
+          2,
+          480000
+        ],
+        "signals/ao_command_V": [
+          1,
+          480000
+        ]
+      },
+      "diagnostic_block_rows": 4800,
+      "controller_diagnostic_rows": 4800,
+      "diagnostic_indices_contiguous": true,
+      "source_discontinuity_rows": 0,
+      "controller_ids": [
+        "esn"
+      ],
+      "ready_rows": 4800,
+      "calibrated_rows": 4800,
+      "feature_invalid_samples": 0,
+      "stimulated_mask_samples": 0,
+      "recorded_ao_nonzero_samples": 0,
+      "action_stage_rows": 1,
+      "action_stages": {
+        "drain_acknowledged": 1
+      },
+      "fault_zero_ranges": [],
+      "report_runtime_fault": null,
+      "report_processed_blocks": 4800,
+      "report_source_samples": 480000,
+      "report_skipped_samples": 0,
+      "report_source_gap_samples": 0,
+      "report_processing_p99_ms": 2.570704,
+      "report_processing_max_ms": 5.82,
+      "report_deadline_misses": 3,
+      "report_ao_active_demand_misses": 0,
+      "report_ao_late_commands": 0,
+      "report_ao_zero_substitutions": 46,
+      "report_ao_drain_complete": true,
+      "report_pulse_requests": 0,
+      "report_pulse_rejected": 0,
+      "report_pulse_committed_samples": 0,
+      "report_generated_nonzero_samples": 0,
+      "reported_plant_effect_pulses": 0,
+      "reported_plant_effect_samples": 0,
+      "reported_generated_nonzero_command_samples": 0,
+      "tracking_expected": 1500,
+      "tracking_observed": 0,
+      "tracking_full_source_coverage": true,
+      "tracking_eligible_fraction": 0.0,
+      "tracking_unexplained_invalid_samples": 0,
+      "tracking_iae_z_seconds": null,
+      "tracking_gate_passed": false,
+      "plant_recovery": {
+        "window_complete": true,
+        "pre_recovery_mean_reduction_mv": 0.0,
+        "final_recovery_mean_reduction_mv": 0.0,
+        "residual_fraction": 0.0,
+        "mean_requested_rate_after_two_recovery_constants_hz": 0.0,
+        "bounded_recovery": true
+      },
+      "simulation_acceptance_passed": false,
+      "physical_pulse_claims": null,
+      "fault_zero_range_count": 0,
+      "fault_zero_range_samples": 0,
+      "h5_metadata_plant": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "carrier_hz": 150.0,
+        "baseline_amplitude_mv": 0.12,
+        "disturbance_amplitude_mv": 0.18,
+        "disturbance_start_s": 12.0,
+        "disturbance_stop_s": 20.0,
+        "noise_sd_mv": 0.004,
+        "effect_delay_ms": 20.0,
+        "effect_recovery_s": 0.5,
+        "amplitude_reduction_per_pulse_mv": 0.035,
+        "max_amplitude_reduction_mv": 0.1,
+        "seed": 1414
+      },
+      "h5_metadata_source": {},
+      "h5_data_file_matches": true,
+      "h5_recording_metadata_git_revision": "ef81a2348bbf927da10da086a10c555359616f16",
+      "h5_config_rate_block_lead": [
+        20000,
+        100,
+        100.0
+      ],
+      "all_metadata_shape_checks_passed": true
+    }
+  ]
+}

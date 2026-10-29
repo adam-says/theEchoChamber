@@ -50,3 +50,23 @@ failed case even if a later cleanup retry resolves the owner.
 These tests validate reporting, ownership, and cleanup behavior. They do not
 show that asynchronous reporting improves processing latency or that the full
 replay/paced gates pass.
+
+## Post-run simulation-reporting correction
+
+A later full suite covered one additional post-run-only correction. An
+incomplete-coverage tracking summary now includes an unavailable
+`post_settling_raw_error_std_z` value, which strict JSON writes as `null`; CSV
+serialization also accepts older summaries without that optional key. This
+does not modify live processing, AO, plant, or HDF5 recording.
+
+The run used base `996dd1ef7e3a355a2aa98921dea2ac718939219e` plus uncommitted
+changes. They were then committed as isolated `4967720` and main cherry-pick
+`ef81a2348bbf927da10da086a10c555359616f16` (tree
+`440255a110cd240c7b399df145fc0a360669b2b4`). The preserved root manifest is
+[`unit-test-manifest-reporting-fix.json`](unit-test-manifest-reporting-fix.json),
+with outputs in
+[`unit-tests-reporting-fix-python312.txt`](unit-tests-reporting-fix-python312.txt)
+and [`unit-tests-reporting-fix-python314.txt`](unit-tests-reporting-fix-python314.txt).
+It records 286 tests and 17 subtests passing on each interpreter, unchanged
+inputs, and no timing or hardware claim. This is separate from the earlier
+285-test evidence above; neither test run establishes runtime performance.

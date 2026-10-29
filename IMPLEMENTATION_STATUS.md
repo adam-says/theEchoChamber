@@ -2,12 +2,12 @@
 
 Status date: 2026-10-29
 
-Current source: isolated commit `0d57f3c0f8d84274e4201d63d17ed228501a456b`;
-main-checkout cherry-pick `bb65477dfb79b5372013d9f3ec52cfa2fd263401`. Both
-map to Git tree `8524f3b3b450d5cc0732743269f69cf9a17b16e5`.
+Current source: isolated commit `4967720`; main-checkout cherry-pick
+`ef81a2348bbf927da10da086a10c555359616f16`. Both map to Git tree
+`440255a110cd240c7b399df145fc0a360669b2b4`.
 
 The reviewed software paths listed below are implemented. The current full test
-suite passes with 285 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
+suite passes with 286 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
 The earlier nine-case replay matrix completed every 30-minute recording but
 failed strict timing limits. That matrix predates the current ESN moment-only
 rebase. A paced ESN diagnostic on revision `6657c88`, before the progress-
@@ -23,8 +23,10 @@ Full-recording ESN parity on the current bridge passed all three canonical recor
 No hardware requirement has been verified.
 
 The strict software timing limits remain p99 `<2.5 ms` and maximum `<5 ms`.
-The current full matrix completed and failed timing acceptance. The
-post-calibration lead sweep is not complete.
+The current full matrix completed and failed timing acceptance. The 45-second
+unpaced lead sweep with virtual AO has a successful 18-case coverage audit, but its
+timing gates failed in 15 cases and passed in 3. Full-duration timing
+acceptance was not evaluated.
 Historical plan and benchmark statements describe their original runs, not
 current acceptance.
 
@@ -83,17 +85,24 @@ current acceptance.
   rows to a JSONL file whose owner may still be active. If AO ownership times
   out, dependent resources remain open and any owned temporary recording path
   is retained until a later cleanup retry confirms the owner stopped.
+- Responsive simulation summaries report post-settling tracking spread as null
+  when coverage is insufficient; the CSV writer also tolerates older summary
+  objects that lack this optional metric. This is post-run serialization and
+  does not change runtime, Core, recorder, AO, or plant behavior.
 
 ## Current test status
 
-The full suite passes with 285 tests and 17 subtests under both supported
-interpreters. The 3.12 run took 40.47 seconds; the 3.14 run took 40.44 seconds.
-The tests ran on an uncommitted candidate based on
-`95603cf056b9c7b09fafc560ab56b32c76c4fa66`; the candidate's original source
-hash manifest and logs are in
+The full suite passes with 286 tests and 17 subtests under both supported
+interpreters. Root's captured runs took 42.71 seconds on Python 3.12.14 and
+38.33 seconds on Python 3.14.0. They ran on an uncommitted candidate based on
+`996dd1ef7e3a355a2aa98921dea2ac718939219e`; the candidate was committed in
+the isolated checkout as `4967720` and cherry-picked to main as
+`ef81a2348bbf927da10da086a10c555359616f16`, both at tree
+`440255a110cd240c7b399df145fc0a360669b2b4`. The original source-hash manifest
+and exact logs are in
 [`docs/validation/progress-reporting/`](docs/validation/progress-reporting/).
-The provenance note maps that tested candidate to the committed isolated and
-main-checkout trees. Run `python -m pytest -q` with each interpreter to
+The manifest preserves the tested base, uncommitted-candidate status, hashes,
+and input-unchanged results. Run `python -m pytest -q` with each interpreter to
 reproduce the counts.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
@@ -170,9 +179,47 @@ recorded 640,000 samples per controller. Rule measured p99/max of
 2.190158/4.2422 ms with zero deadline misses. PID measured 2.439674/5.7394 ms
 with one miss. ESN measured 2.776818/5.401 ms with one miss. These short cases
 do not establish timing acceptance. The full matrix later completed and
-failed timing acceptance. The post-calibration lead sweep has not been
-completed. The exact short-prefix figures are in
+failed timing acceptance. The post-calibration lead sweep used unpaced
+processing and virtual AO. It is a 45-second diagnostic prefix, not a full
+timing run. Its independent audit verified all
+18 controller/lead cases and found no structural issues. Actual eligible
+coverage was 28.25 seconds for Rule, 33.99 seconds for PID, and 44.995 seconds
+for ESN. Runtime timing gates failed in 15 cases and passed in 3; full-duration
+timing acceptance was not evaluated. See
+[`docs/validation/lead-sweep-650c4a4/`](docs/validation/lead-sweep-650c4a4/).
+The exact short-prefix figures are in
 [`docs/validation/reporting-prefix-bb65477/summary.json`](docs/validation/reporting-prefix-bb65477/summary.json).
+
+## Default responsive-simulation reporting attempt
+
+The six-segment default simulation attempt on `2a3a1fb` wrote its aggregate
+JSON, then failed while exporting CSV because an incomplete ESN tracking
+summary lacked an optional post-settling metric. The retained audit found five
+full 480,000-sample recordings and one PID no-stimulation recording truncated
+at 273,100 samples by a separate latched simulated-AO fault. The faulted case
+reported one active-demand miss, ten late commands, and a 211.9717 ms maximum.
+The CLI/reporting failure and the AO/runtime fault are distinct observations;
+the CSV null-handling fix does not resolve or explain the AO fault. The audit
+also found the functional acceptance gates failed, with modeled capacity
+unreachable. The reporting fix is post-run only; it does not change the
+runtime processing components measured by the prior full matrix or lead sweep.
+The post-fix retry wrote all three CSV rows, but the ESN stimulated segment
+had a separate simulated-AO refill fault and all functional acceptance gates
+remained false. See the
+[`2a3a1fb audit`](docs/validation/default-simulation-2a3a1fb/) and
+[`ef81a23 retry audit`](docs/validation/default-simulation-ef81a23/).
+
+## Post-fix synthetic PID tracking diagnostic
+
+The 64-second `ef81a23` tracking run passed the modeled stimulated tracking,
+recovery, and capacity-reference checks. It is not full simulation acceptance:
+the PID control segment faulted at 1,193,300 of 1,280,000 recorded samples
+(93.23%), with one active-demand miss and five late commands. The stimulated,
+control, and capacity-reference maxima were 24.0277, 280.6627, and 5.1051 ms,
+with 8, 11, and 1 deadline misses respectively. All p99 values were below
+2.5 ms, but all maxima exceeded the 5 ms limit. This 64-second run does not
+meet the 1,800-second timing requirement. See
+[`docs/validation/tracking-ef81a23/`](docs/validation/tracking-ef81a23/).
 
 ## Full-recording reader check
 
@@ -229,8 +276,10 @@ rejections, and completed AO drain. The PID matrix cases had positive
 requested-rate blocks but zero pulse proposals, commits, and nonzero AO
 samples. The detailed nine-case results are in
 [`docs/validation/replay-bb65477/`](docs/validation/replay-bb65477/). The
-post-calibration lead sweep, current all-controller 30-minute paced set, and
-full simulation matrix remain pending. The parked process-recorder prototype
+45-second unpaced lead sweep with virtual AO has an audited 18/18 coverage result,
+with 15 runtime timing failures and 3 passes; full-duration timing was not
+evaluated. The current all-controller 30-minute paced set and full simulation
+matrix remain pending. The parked process-recorder prototype
 did not show a repeatable timing benefit and does not isolate GIL contention.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID

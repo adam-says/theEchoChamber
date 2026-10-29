@@ -99,6 +99,15 @@ See [the compact tracking report](validation/tracking-6657c88/tracking-summary.j
 The older JSON and CSV are under
 `work/validation_runs/tracking-kp02-ki006-capacity-reference/`.
 
+The post-fix 64-second tracking run on `ef81a23` passed the modeled stimulated
+tracking, recovery, and capacity-reference checks, but not full simulation
+acceptance. Its PID control segment faulted at 1,193,300/1,280,000 recorded
+samples (93.23%), with one AO active-demand miss and five late commands. The
+stimulated/control/capacity maxima were 24.0277/280.6627/5.1051 ms, with
+8/11/1 deadline misses. All p99 values remained below 2.5 ms, but every maximum
+exceeded 5 ms. The run is shorter than the 1,800-second timing requirement. See
+the [post-fix tracking audit](validation/tracking-ef81a23/README.md).
+
 ## Run the finite replay matrix
 
 Run all three controllers on each of the three full finite recordings:
@@ -251,16 +260,17 @@ establishes real-time timing or hardware acceptance.
 Earlier suite runs on `09ebf1e`, `c32d151`, and the fault-event candidate are
 historical and superseded by the current suite below.
 
-The current suite was run on an uncommitted candidate based on
-`95603cf056b9c7b09fafc560ab56b32c76c4fa66`. It passed 285 tests and 17
-subtests on Python 3.12.14 in 40.47 seconds and Python 3.14.0 in 40.44 seconds.
-The candidate was committed as `0d57f3c` in the isolated checkout and
-cherry-picked to `bb65477` in the main checkout. Both commits map to tree
-`8524f3b3b450d5cc0732743269f69cf9a17b16e5`. The original run manifest and
-logs are in [progress-reporting validation](validation/progress-reporting/).
+The current suite passed 286 tests and 17 subtests on Python 3.12.14 in 42.71
+seconds and Python 3.14.0 in 38.33 seconds. It ran on an uncommitted candidate
+based on `996dd1ef7e3a355a2aa98921dea2ac718939219e`; the candidate was committed
+as `4967720` in the isolated checkout and cherry-picked as
+`ef81a2348bbf927da10da086a10c555359616f16` in main. Both map to tree
+`440255a110cd240c7b399df145fc0a360669b2b4`. The original source-hash manifest
+and exact logs are in [progress-reporting validation](validation/progress-reporting/).
 Coverage includes AO ownership and terminal outcomes, calibration and settings
-transactions, EOF and shutdown drains, bounded progress reporting, and legacy
-reader behavior. The suite does not establish timing acceptance.
+transactions, EOF and shutdown drains, bounded progress reporting, legacy
+reader behavior, and optional post-run simulation-metric serialization. The
+suite does not establish timing acceptance.
 
 The HDF5 v5 writer prepares block metadata in source order and appends each
 populated metadata dataset once per existing batch. It keeps absolute sample
@@ -367,8 +377,16 @@ detailed case summary and closed-file audit are in
 [`validation/replay-bb65477/`](validation/replay-bb65477/). Hardware delivery
 was not measured.
 
-The post-calibration lead sweep, current all-controller paced set, and full
-simulation matrix remain pending. A paced Rule run and a separate paced PID run on
+The post-calibration lead sweep completed as a 45-second unpaced diagnostic
+with virtual AO.
+Its independent audit verified all 18 controller/lead cases with no structural
+issues and at least 400,000 valid post-calibration feature samples per case.
+Eligible source coverage was 28.25 seconds for Rule, 33.99 seconds for PID,
+and 44.995 seconds for ESN. Runtime timing gates failed in 15 cases and passed
+in 3. Full-duration timing acceptance was not evaluated. See the
+[lead-sweep report and audit](validation/lead-sweep-650c4a4/README.md). The
+current all-controller paced set and full simulation matrix remain pending. A
+paced Rule run and a separate paced PID run on
 `09ebf1e` processed all 36,000,000 source samples, but both failed. The Rule
 recording contains only 16,608,200 samples. Its fault stopped acquisition and
 `RecordBlock` submission near source second 830.41. It had 578 processing
@@ -418,6 +436,19 @@ and settling period; it does not guarantee 20 seconds of eligible data. Verify
 at least 400,000 eligible post-calibration samples and contiguous HDF5 source
 coverage in each case. A readiness banner or elapsed duration does not prove
 post-calibration coverage.
+
+The default six-segment simulation on `2a3a1fb` wrote JSON before CSV export
+failed on an unavailable ESN post-settling tracking field. The audit found five
+full recordings and a PID no-stimulation recording truncated at 273,100 of
+480,000 samples after a latched simulated-AO fault (one active-demand miss, ten
+late commands, 211.9717 ms maximum). These are separate post-run reporting and
+runtime failures. The retry wrote all three CSV rows but faulted in the ESN
+stimulated segment after 136,800 of 480,000 samples; the other five segments
+recorded fully. All controller-level simulation acceptance gates remained
+false. The reporting fix is post-run only and does not change the processing
+path measured in the prior matrix or lead sweep. It does not explain or resolve
+either run's AO fault. See the [first audit](validation/default-simulation-2a3a1fb/README.md)
+and [post-fix retry audit](validation/default-simulation-ef81a23/README.md).
 
 The benchmark keeps a bounded history of the 32 most recent Core calls for
 fault diagnostics. Each row separates call start from completion. The snapshot
