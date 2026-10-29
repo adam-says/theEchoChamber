@@ -1051,7 +1051,12 @@ class RuntimeHealthMetricsTests(unittest.TestCase):
         harness = _Harness.__new__(_Harness)
         calls: list[str] = []
         harness._stop_ao_clock = lambda: calls.append("ao")
-        harness.state = type("State", (), {"set_recording": lambda self, value: calls.append("recording")})()
+        harness._ao_clock_thread = None
+        harness._pending_ao_shutdown_error = None
+        harness.state = type("State", (), {
+            "set_armed": lambda self, value: calls.append("disarm"),
+            "set_recording": lambda self, value: calls.append("recording"),
+        })()
 
         class Recorder:
             def stop_recording(self) -> None:
@@ -1062,7 +1067,10 @@ class RuntimeHealthMetricsTests(unittest.TestCase):
                 raise RuntimeError("writer did not stop")
 
         harness.recorder = Recorder()
-        harness.core = type("Core", (), {"close_ui": lambda self: calls.append("core-ui")})()
+        harness.core = type("Core", (), {
+            "drain_ao_notifications": lambda self: calls.append("drain-core"),
+            "close_ui": lambda self: calls.append("core-ui"),
+        })()
         harness._run_on_loop = lambda awaitable: calls.append("ui-transport")
         harness._stop_ui_transport = lambda: "mock transport shutdown"
         harness.loop = asyncio.new_event_loop()
@@ -1085,7 +1093,10 @@ class RuntimeHealthMetricsTests(unittest.TestCase):
                 harness.loop.close()
 
         self.assertIn("close recorder: RuntimeError: writer did not stop", cleanup_errors)
-        self.assertEqual(calls, ["ao", "recording", "stop-recorder", "close-recorder", "core-ui", "ui-transport"])
+        self.assertEqual(calls, [
+            "disarm", "ao", "drain-core", "recording", "stop-recorder",
+            "close-recorder", "core-ui", "ui-transport",
+        ])
         self.assertFalse(harness.loop_thread.is_alive())
         self.assertTrue(harness.loop.is_closed())
         self.assertNotIn(harness._gc_callback, gc.callbacks)

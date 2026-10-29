@@ -137,8 +137,13 @@ class FirstFaultContextTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             harness.progress_path = Path(directory) / "progress.jsonl"
+            harness._progress_writer = None
+            harness._progress_writer_init_lock = threading.Lock()
+            harness._progress_diagnostic_lock = threading.Lock()
+            harness._progress_diagnostic_error = None
             with patch.object(benchmark.time, "perf_counter", side_effect=(100.0, 100.066)):
                 harness._ao_clock_loop()
+            harness._close_progress_writer()
             event = json.loads(harness.progress_path.read_text(encoding="utf-8").splitlines()[0])
 
         self.assertEqual(event["type"], "ao_clock_fault")

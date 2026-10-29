@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 
 from benchmarkControllers import (  # noqa: E402
     CONTROLLERS, DEFAULT_TRACES, LEAD_SWEEP_MS, REFERENCE_COVERAGE,
+    HarnessOwnerShutdownError,
     evaluate_case_acceptance, evaluate_collection_acceptance, failed_case_acceptance, json_safe,
     _browser_connection_url, run_replay_case, write_case_checkpoint, write_progress, write_results,
 )
@@ -251,8 +252,13 @@ def main(argv: list[str] | None = None) -> int:
         requested_scope = "full_replay_case"
     elif run_kind == "paced" and duration >= REFERENCE_COVERAGE["duration_seconds"]:
         requested_scope = "paced_30min_case"
+    progress_owner_unresolved = False
     for lead in leads:
+        if progress_owner_unresolved:
+            break
         for trace in traces:
+            if progress_owner_unresolved:
+                break
             for controller in controllers:
                 case_index += 1
                 print(f"start controller={controller} trace={trace.name} lead_ms={lead:g}", flush=True)
@@ -280,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
                         "message": str(exc),
                         "failed_at_utc": datetime.now(timezone.utc).isoformat(),
                     }
+                    if isinstance(exc, HarnessOwnerShutdownError):
+                        failure.update(exc.failure_fields())
                     case_failures.append(failure)
                     collection_progress = evaluate_collection_acceptance(
                         run_kind, metrics, case_failures, requested_scope=requested_scope,
@@ -290,12 +298,20 @@ def main(argv: list[str] | None = None) -> int:
                         failure=failure, requested_scope=requested_scope,
                         collection_progress=collection_progress,
                     )
-                    write_progress(progress, {"type": "case_checkpoint", "case_index": case_index,
-                                              "case_status": "failed", "json": str(checkpoint_json),
-                                              "csv": str(checkpoint_csv), "matrix_complete": False})
-                    write_progress(progress, {"type": "case_failed", **failure})
+                    if isinstance(exc, HarnessOwnerShutdownError) and exc.owner_unresolved:
+                        progress_owner_unresolved = True
+                    else:
+                        write_progress(progress, {"type": "case_checkpoint", "case_index": case_index,
+                                                  "case_status": "failed", "json": str(checkpoint_json),
+                                                  "csv": str(checkpoint_csv), "matrix_complete": False})
+                        write_progress(progress, {"type": "case_failed", **failure})
                     print(f"failed case={failure['case_id']}: {failure['exception_type']}: {failure['message']}",
                           file=sys.stderr, flush=True)
+                    if progress_owner_unresolved:
+                        print(
+                            "A harness owner is unresolved; stopping collection and skipping further "
+                            "JSONL writes to its file.", file=sys.stderr, flush=True)
+                        break
                     continue
                 metrics.append(result)
                 environments.append(environment)
@@ -332,10 +348,14 @@ def main(argv: list[str] | None = None) -> int:
     json_path, csv_path = write_results(metrics, environments, output_dir, run_kind=run_kind,
                                         acceptance=acceptance, case_failures=case_failures,
                                         collection_acceptance=collection_acceptance)
-    write_progress(progress, {"type": "validation_complete", "pid": os.getpid(),
-                              "json": str(json_path), "csv": str(csv_path),
-                              "completed_at_utc": datetime.now(timezone.utc).isoformat()})
-    print(f"JSON: {json_path}\nCSV: {csv_path}\nProgress: {progress}")
+    if not progress_owner_unresolved:
+        write_progress(progress, {"type": "validation_complete", "pid": os.getpid(),
+                                  "json": str(json_path), "csv": str(csv_path),
+                                  "completed_at_utc": datetime.now(timezone.utc).isoformat()})
+    if progress_owner_unresolved:
+        print(f"JSON: {json_path}\nCSV: {csv_path}\nProgress JSONL is incomplete: {progress}")
+    else:
+        print(f"JSON: {json_path}\nCSV: {csv_path}\nProgress: {progress}")
     failed_runtime = sum(not item["runtime_checks_passed"] for item in acceptance)
     failed_full = sum(item["full_acceptance_passed"] is False for item in acceptance)
     collection_failed = collection_acceptance.get("full_acceptance_passed") is False

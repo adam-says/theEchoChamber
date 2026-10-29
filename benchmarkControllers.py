@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import csv
 from collections import deque
 import gc
@@ -10,8 +11,11 @@ import json
 import math
 import os
 import platform
+import queue
+import shutil
 import statistics
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -166,6 +170,15 @@ class RunMetrics:
     injected_stall_count: int = 0
     injected_stall_ms_total: float = 0.0
     runtime_fault: str | None = None
+    progress_diagnostic_error: str | None = None
+    progress_events_accepted: int = 0
+    progress_events_written: int = 0
+    progress_events_dropped: int = 0
+    progress_events_rejected: int = 0
+    progress_events_pending: int = 0
+    progress_queue_high_water: int = 0
+    progress_writer_close_timed_out: bool = False
+    progress_writer_owner_alive: bool = False
     generated_ao_blocks: int = 0
     pulse_request_ids: list[str] = field(default_factory=list)
     pulse_rejected_ids: list[str] = field(default_factory=list)
@@ -256,11 +269,280 @@ def write_progress(path: Path | None, value: dict[str, Any]) -> None:
         stream.flush()
 
 
+@dataclass(frozen=True)
+class _ProgressItem:
+    sequence: int
+    observed_perf_counter_ns: int
+    payload: dict[str, Any]
+    recent_core_window: tuple[tuple[float, int, int], ...] | None = None
+
+
+class HarnessOwnerShutdownError(RuntimeError):
+    """A per-run producer/diagnostic owner did not terminate before its deadline."""
+
+    def __init__(self, owner_kind: str, status: dict[str, Any],
+                 *, progress_path: Path | str | None = None) -> None:
+        if owner_kind not in {"progress_writer", "simulated_ao"}:
+            raise ValueError(f"unsupported harness owner kind: {owner_kind}")
+        self.owner_kind = owner_kind
+        self.progress_path = str(progress_path) if progress_path is not None else None
+        self.retained_temporary_path: str | None = None
+        self.refresh(status)
+        super().__init__(self._message())
+
+    def retain_temporary_path(self, path: Path) -> None:
+        self.retained_temporary_path = str(path)
+        self.add_note(
+            "Temporary recording directory retained because a simulated AO owner may still use it.")
+
+    def refresh(self, status: dict[str, Any]) -> None:
+        # Keep status values JSON-safe and detached from mutable owner state.
+        self.owner_status = {
+            str(key): value for key, value in status.items()
+            if value is None or isinstance(value, (str, int, float, bool))
+        }
+        self.owner_unresolved = bool(status.get("owner_alive", False))
+        self.original_error = status.get("error")
+        self.accepted = int(status.get("accepted", 0)) if self.owner_kind == "progress_writer" else 0
+        self.written = int(status.get("written", 0)) if self.owner_kind == "progress_writer" else 0
+        self.dropped = int(status.get("dropped", 0)) if self.owner_kind == "progress_writer" else 0
+        self.rejected = int(status.get("rejected", 0)) if self.owner_kind == "progress_writer" else 0
+        self.pending = int(status.get("pending", 0)) if self.owner_kind == "progress_writer" else 0
+        self.close_timed_out = bool(status.get("close_timed_out", False))
+        self.args = (self._message(),)
+
+    def _message(self) -> str:
+        location = f" ({self.progress_path})" if self.progress_path is not None else ""
+        counts = (
+            f", accepted={self.accepted}, written={self.written}, dropped={self.dropped}, "
+            f"rejected={self.rejected}, pending={self.pending}"
+            if self.owner_kind == "progress_writer" else ""
+        )
+        return (f"{self.owner_kind} shutdown incomplete{location}: "
+                f"owner_unresolved={self.owner_unresolved}{counts}; "
+                f"error={self.original_error or 'none'}")
+
+    def failure_fields(self) -> dict[str, Any]:
+        fields = {
+            "shutdown_owner_kind": self.owner_kind,
+            "owner_unresolved": self.owner_unresolved,
+            "shutdown_owner_error": self.original_error,
+            "shutdown_owner_status": self.owner_status,
+        }
+        if self.progress_path is not None:
+            fields["progress_path"] = self.progress_path
+        if self.retained_temporary_path is not None:
+            fields["retained_temporary_path"] = self.retained_temporary_path
+        if self.owner_kind == "progress_writer":
+            fields.update({
+                "progress_events_accepted": self.accepted,
+                "progress_events_written": self.written,
+                "progress_events_dropped": self.dropped,
+                "progress_events_rejected": self.rejected,
+                "progress_events_pending": self.pending,
+                "progress_writer_close_timed_out": self.close_timed_out,
+            })
+        return fields
+
+
+class _HarnessProgressWriter:
+    """Bounded single-owner progress serialization and file writer."""
+
+    _STOP = object()
+
+    def __init__(self, path: Path, *, capacity: int = 256,
+                 close_timeout_s: float = 5.0) -> None:
+        if capacity <= 0:
+            raise ValueError("progress writer capacity must be positive")
+        if close_timeout_s <= 0:
+            raise ValueError("progress writer close timeout must be positive")
+        self.path = Path(path)
+        self.close_timeout_s = float(close_timeout_s)
+        self._queue: queue.Queue[_ProgressItem | object] = queue.Queue(maxsize=capacity)
+        self._admission_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._closed = False
+        self._stop_enqueued = False
+        self._write_failed = False
+        self._first_error: str | None = None
+        self._sequence = 0
+        self._accepted = 0
+        self._written = 0
+        self._dropped = 0
+        self._rejected = 0
+        self._high_water = 0
+        self._close_timed_out = False
+        self._thread = threading.Thread(
+            target=self._run, name="harness-progress-writer", daemon=True)
+        self._thread.start()
+
+    def _latch_error_locked(self, message: str) -> None:
+        if self._first_error is None:
+            self._first_error = message
+
+    def submit(self, value: dict[str, Any], *,
+               recent_core_window: tuple[tuple[float, int, int], ...] | None = None) -> bool:
+        """Detach and enqueue without waiting for the file writer."""
+        try:
+            payload = copy.deepcopy(dict(value))
+            window = tuple(recent_core_window) if recent_core_window is not None else None
+        except BaseException as exc:
+            with self._state_lock:
+                self._latch_error_locked(
+                    f"could not detach progress observation: {type(exc).__name__}: {exc}")
+                self._rejected += 1
+            return False
+
+        with self._admission_lock:
+            with self._state_lock:
+                if self._closed:
+                    self._latch_error_locked("progress observation submitted after writer close")
+                    self._rejected += 1
+                    return False
+                self._sequence += 1
+                sequence = self._sequence
+            item = _ProgressItem(
+                sequence=sequence,
+                observed_perf_counter_ns=time.perf_counter_ns(),
+                payload=payload,
+                recent_core_window=window,
+            )
+            try:
+                with self._state_lock:
+                    self._queue.put_nowait(item)
+                    self._accepted += 1
+                    self._high_water = max(self._high_water, self._queue.qsize())
+            except queue.Full:
+                with self._state_lock:
+                    self._latch_error_locked(
+                        f"progress writer queue overflow at sequence {sequence} "
+                        f"(capacity {self._queue.maxsize})")
+                    self._rejected += 1
+                return False
+            return True
+
+    def _add_recent_window_fields(self, payload: dict[str, Any],
+                                  window: tuple[tuple[float, int, int], ...] | None) -> None:
+        if payload.get("type") != "run_progress" or window is None:
+            return
+        payload["recent_core_window_count"] = len(window)
+        payload["recent_core_window_start_sample_index"] = window[0][1] if window else None
+        payload["recent_core_window_end_sample_index"] = window[-1][2] if window else None
+        payload["recent_core_window_range_convention"] = "half-open [start, end)"
+        payload["recent_core_window_scope"] = (
+            "last up to 2048 completed Core calls; includes inactive and post-fault calls"
+        )
+        payload["recent_core_p99_ms"] = (
+            float(np.percentile([entry[0] for entry in window], 99)) if window else None
+        )
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is self._STOP:
+                    return
+                assert isinstance(item, _ProgressItem)
+                with self._state_lock:
+                    skip_write = self._write_failed
+                if skip_write:
+                    with self._state_lock:
+                        self._dropped += 1
+                    continue
+                payload = item.payload
+                payload["progress_sequence"] = item.sequence
+                payload["progress_observed_perf_counter_ns"] = item.observed_perf_counter_ns
+                self._add_recent_window_fields(payload, item.recent_core_window)
+                try:
+                    # json_safe, strict JSON encoding, directory creation, and
+                    # all file writes stay on this one owner thread.
+                    write_progress(self.path, payload)
+                except BaseException as exc:
+                    with self._state_lock:
+                        self._write_failed = True
+                        self._latch_error_locked(
+                            f"progress writer failed: {type(exc).__name__}: {exc}")
+                        self._dropped += 1
+                else:
+                    with self._state_lock:
+                        self._written += 1
+            except BaseException as exc:
+                with self._state_lock:
+                    self._write_failed = True
+                    self._latch_error_locked(
+                        f"progress worker failed: {type(exc).__name__}: {exc}")
+                    self._dropped += 1
+            finally:
+                self._queue.task_done()
+
+    def close(self) -> dict[str, Any]:
+        """Stop admission and make a bounded attempt to drain/join the writer."""
+        with self._close_lock:
+            first_timeout = False
+            # Synchronize with a submit already inside admission, then publish
+            # closed and release this lock before waiting for queue capacity.
+            # Later submitters can now reject promptly while the owner drains.
+            with self._admission_lock:
+                with self._state_lock:
+                    self._closed = True
+                    should_signal = not self._stop_enqueued
+            if should_signal:
+                try:
+                    self._queue.put(self._STOP, timeout=self.close_timeout_s)
+                except queue.Full:
+                    with self._state_lock:
+                        first_timeout = not self._close_timed_out
+                        self._close_timed_out = True
+                        self._latch_error_locked(
+                            "timed out waiting to enqueue progress-writer stop marker; "
+                            "accepted observations remain pending")
+                else:
+                    with self._state_lock:
+                        self._stop_enqueued = True
+            if first_timeout:
+                sys.stderr.write(
+                    "Progress writer shutdown timed out before stop marker admission; owner remains unresolved.\n")
+            self._thread.join(timeout=self.close_timeout_s)
+            if self._thread.is_alive():
+                first_timeout = False
+                with self._state_lock:
+                    first_timeout = not self._close_timed_out
+                    self._close_timed_out = True
+                    self._latch_error_locked(
+                        "timed out joining progress writer; owner remains unresolved")
+                if first_timeout:
+                    sys.stderr.write(
+                        "Progress writer shutdown timed out while owner remains alive; case will stop.\n")
+            with self._state_lock:
+                pending = max(0, self._accepted - self._written - self._dropped)
+                return {
+                    "error": self._first_error,
+                    "accepted": self._accepted,
+                    "written": self._written,
+                    "dropped": self._dropped,
+                    "rejected": self._rejected,
+                    "pending": pending,
+                    "queue_high_water": self._high_water,
+                    "closed": self._closed,
+                    "owner_alive": self._thread.is_alive(),
+                    "stop_enqueued": self._stop_enqueued,
+                    "close_timed_out": self._close_timed_out,
+                }
+
+    @property
+    def error(self) -> str | None:
+        with self._state_lock:
+            return self._first_error
+
+
 def acceptance_failures(metrics: RunMetrics) -> list[str]:
     """Evaluate runtime checks that apply to both diagnostics and full cases."""
     failures: list[str] = []
     if metrics.runtime_fault:
         failures.append(f"runtime fault was latched: {metrics.runtime_fault}")
+    if metrics.progress_diagnostic_error:
+        failures.append(f"progress diagnostics failed: {metrics.progress_diagnostic_error}")
     if metrics.processed_blocks <= 0:
         failures.append("no processing blocks completed")
     if metrics.skipped_source_samples or metrics.source_index_gap_samples:
@@ -626,6 +908,25 @@ def _replay_blocks(replay: ReplayData, limit_samples: int | None = None) -> Iter
             used += part.shape[1]
 
 
+def _release_temporary_recording_directory(path: Path | None,
+                                           active_error: BaseException | None) -> None:
+    if path is None or not path.exists():
+        return
+    if (isinstance(active_error, HarnessOwnerShutdownError)
+            and active_error.owner_kind == "simulated_ao"
+            and active_error.owner_unresolved):
+        active_error.retain_temporary_path(path)
+        return
+    try:
+        shutil.rmtree(path)
+    except OSError as exc:
+        if active_error is None:
+            raise
+        active_error.add_note(
+            f"Could not remove temporary recording directory {path}: "
+            f"{type(exc).__name__}: {exc}")
+
+
 class _Harness:
     UNPACED_RECORDER_NO_PROGRESS_TIMEOUT_S = 30.0
 
@@ -637,6 +938,11 @@ class _Harness:
                  inject_stall_ms: float = 0.0,
                  stall_at_source_index: int | None = None, stall_on_first_pulse: bool = False):
         self.config, self.progress_path = config, progress_path
+        self._progress_writer: _HarnessProgressWriter | None = None
+        self._progress_writer_init_lock = threading.Lock()
+        self._progress_diagnostic_lock = threading.Lock()
+        self._progress_diagnostic_error: str | None = None
+        self._recent_core_latencies: deque[tuple[float, int, int]] = deque(maxlen=2048)
         self.progress_interval_s, self.paced = progress_interval_s, paced
         self.on_generated = on_generated
         self.inject_stall_ms = float(inject_stall_ms)
@@ -663,6 +969,9 @@ class _Harness:
         self._ao_clock_stop = threading.Event()
         self._ao_clock_thread: threading.Thread | None = None
         self._ao_clock_error: BaseException | None = None
+        self._ao_clock_stop_timed_out = False
+        self._pending_ao_shutdown_error: HarnessOwnerShutdownError | None = None
+        self._ao_stop_timeout_s = 3.0
         self._observed_ao_fault: str | None = None
         self._observed_late_count = 0
         self._observed_active_miss_count = 0
@@ -680,6 +989,7 @@ class _Harness:
         self._recent_core_lock = threading.Lock()
         self._gc_event_cursor = 0
         self._generated_lock = threading.Lock()
+        self._progress_writer_result: dict[str, Any] | None = None
         self.recorder = app.H5Recorder(config, metadata)
         self.recording_path = self.recorder.start(_run_id(source_name, config.controller, config.ao_target_lead_ms))
         self.state.set_recording(True)
@@ -700,7 +1010,7 @@ class _Harness:
         if browser_ui:
             url = _browser_connection_url(browser_base_url, self.ui_port)
             if external_browser:
-                write_progress(self.progress_path, {
+                self._write_progress({
                     "type": "browser_required", "case_id": self.recording_path.stem,
                     "ws_port": self.ui_port, "url": url,
                     "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -712,10 +1022,36 @@ class _Harness:
                     raise RuntimeError("could not open the controller UI browser")
             deadline = time.monotonic() + 120.0
             while self.hub.client_count < 2 and time.monotonic() < deadline:
+                writer_error = self._progress_writer_error()
+                if writer_error is not None:
+                    self.abort()
+                    raise RuntimeError(f"progress diagnostics failed during browser startup: {writer_error}")
                 time.sleep(0.05)
             if not self._browser_presence.snapshot(time.perf_counter_ns())["ever_connected"]:
                 self.abort()
                 raise TimeoutError("browser UI did not connect to the benchmark WebSocket")
+        try:
+            self._initialize_harness_runtime(config, source_name, simulation, paced)
+        except BaseException as primary_error:
+            try:
+                cleanup_errors = self.abort()
+            except HarnessOwnerShutdownError as cleanup_error:
+                cleanup_error.add_note(
+                    f"Harness initialization also failed: "
+                    f"{type(primary_error).__name__}: {primary_error}")
+                raise
+            except BaseException as cleanup_error:
+                primary_error.add_note(
+                    f"Progress-writer initialization cleanup failed: "
+                    f"{type(cleanup_error).__name__}: {cleanup_error}")
+            else:
+                if cleanup_errors:
+                    primary_error.add_note(
+                        "Additional initialization cleanup failures: " + " | ".join(cleanup_errors))
+            raise
+
+    def _initialize_harness_runtime(self, config: app.AppConfig, source_name: str,
+                                    simulation: bool, paced: bool) -> None:
         self.pulse_commit_samples = 0
         self._pulse_commit_ids: set[str] = set()
         self._pulse_commit_ranges = _CommittedAoRangeCounter()
@@ -758,6 +1094,89 @@ class _Harness:
         self.state.set_stim("threshold_pulse", 0.5)
         self.pacing_epoch: float | None = None
         self.last_source_index: int | None = None
+
+    def _write_progress(self, value: dict[str, Any], *,
+                        recent_core_window: tuple[tuple[float, int, int], ...] | None = None
+                        ) -> bool:
+        """Queue a detached progress observation without waiting for disk I/O."""
+        if self.progress_path is None:
+            return True
+        try:
+            writer = getattr(self, "_progress_writer", None)
+            if writer is None:
+                init_lock = getattr(self, "_progress_writer_init_lock", None)
+                if init_lock is None:
+                    init_lock = threading.Lock()
+                    self._progress_writer_init_lock = init_lock
+                with init_lock:
+                    writer = getattr(self, "_progress_writer", None)
+                    if writer is None:
+                        writer = _HarnessProgressWriter(self.progress_path)
+                        self._progress_writer = writer
+            return writer.submit(value, recent_core_window=recent_core_window)
+        except BaseException as exc:
+            self._latch_progress_diagnostic_error(
+                f"could not enqueue progress observation: {type(exc).__name__}: {exc}")
+            return False
+
+    def _latch_progress_diagnostic_error(self, message: str) -> None:
+        lock = getattr(self, "_progress_diagnostic_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._progress_diagnostic_lock = lock
+        with lock:
+            if getattr(self, "_progress_diagnostic_error", None) is None:
+                self._progress_diagnostic_error = message
+
+    def _close_progress_writer(self) -> dict[str, Any] | None:
+        writer = getattr(self, "_progress_writer", None)
+        result = writer.close() if writer is not None else None
+        if result is None and getattr(self, "_progress_diagnostic_error", None) is None:
+            return None
+        error = self._progress_diagnostic_error
+        if result is not None:
+            writer_error = result["error"]
+            if error is None:
+                error = writer_error
+            if error is None and result.get("pending", 0):
+                error = "progress writer exited with accepted observations still pending"
+            if error is None and result.get("owner_alive"):
+                error = "progress writer owner remains alive after shutdown timeout"
+            result["error"] = error
+            self._progress_writer_result = result
+        else:
+            result = {
+                "error": error, "accepted": 0, "written": 0, "dropped": 0,
+                "pending": 0, "queue_high_water": 0, "closed": True,
+                "owner_alive": False, "close_timed_out": False,
+            }
+            self._progress_writer_result = result
+        metrics = getattr(self, "metrics", None)
+        if metrics is not None:
+            metrics.progress_diagnostic_error = error
+            metrics.progress_events_accepted = int(result.get("accepted", 0))
+            metrics.progress_events_written = int(result["written"])
+            metrics.progress_events_dropped = int(result["dropped"])
+            metrics.progress_events_rejected = int(result.get("rejected", 0))
+            metrics.progress_events_pending = int(result.get("pending", 0))
+            metrics.progress_queue_high_water = int(result["queue_high_water"])
+            metrics.progress_writer_close_timed_out = bool(result.get("close_timed_out", False))
+            metrics.progress_writer_owner_alive = bool(result.get("owner_alive", False))
+        if result.get("owner_alive"):
+            raise HarnessOwnerShutdownError(
+                "progress_writer", result, progress_path=self.progress_path)
+        return result
+
+    def _progress_writer_error(self) -> str | None:
+        if getattr(self, "_progress_diagnostic_error", None) is not None:
+            return self._progress_diagnostic_error
+        writer = getattr(self, "_progress_writer", None)
+        return writer.error if writer is not None else None
+
+    def _record_core_latency(self, source_index: int, elapsed_ms: float) -> None:
+        self.latencies_ms.append(float(elapsed_ms))
+        self._recent_core_latencies.append((
+            float(elapsed_ms), int(source_index), int(source_index + self.config.chunk_size)))
 
     def _mark_core_call_started(self, source_index: int,
                                 source_lag_ms: float | None) -> None:
@@ -883,14 +1302,14 @@ class _Harness:
                         for gc_end, pause, generation in self._gc_events
                         if start <= gc_end <= end
                     ]
-                    write_progress(self.progress_path, {
+                    self._write_progress({
                         "type": "slow_core_process", "source_sample_index": source_index,
                         "wall_ms": elapsed_ms, "thread_cpu_ms": thread_cpu_elapsed / 1e6,
                         "process_cpu_ms": process_cpu_elapsed / 1e6,
                         "process_cpu_minus_thread_ms": max(0.0, process_cpu_elapsed - thread_cpu_elapsed) / 1e6,
                         "gc_pauses": related_gc,
                     })
-        self.latencies_ms.append(elapsed_ms)
+        self._record_core_latency(source_index, elapsed_ms)
         self.metrics.processed_blocks += 1
         self.metrics.source_samples += int(np.count_nonzero(np.isfinite(values_mv[0])))
         self.metrics.recorder_backpressure_max_backlog = max(
@@ -943,7 +1362,7 @@ class _Harness:
             first_late = self._observed_late_count == 0
             self._observed_late_count = late_count
             if first_late:
-                write_progress(self.progress_path, {
+                self._write_progress({
                     "type": "first_late_command", "source_sample_index": source_index,
                     "target_block": target_block,
                     "generated_sample_count": scheduler_stats.get("generated_sample_count"),
@@ -956,7 +1375,7 @@ class _Harness:
             first_miss = self._observed_active_miss_count == 0
             self._observed_active_miss_count = active_misses
             if first_miss:
-                write_progress(self.progress_path, {
+                self._write_progress({
                     "type": "first_active_demand_miss",
                     "source_sample_index": source_index, "target_block": target_block,
                     "pulse_events": [asdict(event) for event in self.core.last_pulse_events],
@@ -990,7 +1409,8 @@ class _Harness:
 
         now = time.monotonic()
         if now - self.last_progress_time >= self.progress_interval_s:
-            write_progress(self.progress_path, {
+            recent_window = tuple(self._recent_core_latencies)
+            self._write_progress({
                 "type": "run_progress", "case_id": self.metrics.case_id,
                 "controller": self.config.controller, "source_samples": self.metrics.source_samples,
                 "skipped_source_samples": self.metrics.skipped_source_samples,
@@ -998,7 +1418,6 @@ class _Harness:
                 "source_availability_lag_ms": self._last_source_availability_lag_ms,
                 "processed_blocks": self.metrics.processed_blocks,
                 "elapsed_source_seconds": self.metrics.source_samples / self.config.sample_rate,
-                "latency_p99_ms_so_far": float(np.percentile(self.latencies_ms, 99)),
                 "ao": self.scheduler.stats_snapshot(),
                 "recorder_backlog": self.recorder.backlog,
                 "recorder_backpressure_wait_count": self.metrics.recorder_backpressure_wait_count,
@@ -1006,7 +1425,7 @@ class _Harness:
                 "recorder_backpressure_policy": self.metrics.recorder_backpressure_policy,
                 "recording_path": str(self.recording_path),
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-            })
+            }, recent_core_window=recent_window)
             self.last_progress_time = now
         if self.paced:
             assert self.pacing_epoch is not None
@@ -1039,7 +1458,7 @@ class _Harness:
         last_backlog = backlog
         self.metrics.recorder_backpressure_wait_count += 1
         if self.metrics.recorder_backpressure_wait_count == 1:
-            write_progress(self.progress_path, {
+            self._write_progress({
                 "type": "recorder_backpressure_started",
                 "source_sample_index": source_index,
                 "queue_depth": backlog,
@@ -1071,7 +1490,7 @@ class _Harness:
                     "wait_duration_ms": elapsed_ms,
                     "recorder_error": self.recorder.error,
                 }
-                write_progress(self.progress_path, details)
+                self._write_progress(details)
                 raise TimeoutError(
                     "HDF5 recorder queue made no progress while unpaced producer waited: "
                     f"source_sample_index={source_index}, queue_depth={backlog}, "
@@ -1212,7 +1631,7 @@ class _Harness:
                     stats = self.scheduler.stats_snapshot()
                     observed_ns = time.perf_counter_ns()
                     recent_context = self._snapshot_recent_core_context()
-                    write_progress(self.progress_path, {
+                    self._write_progress({
                         "type": "ao_clock_fault", "fault": state_fault,
                         "source_sample_index": recent_context["latest_source_sample_index_seen"],
                         "latest_completed_pulse_events": recent_context.pop(
@@ -1358,7 +1777,7 @@ class _Harness:
             }
             for name, samples in self.component_latencies_ns.items() if samples
         }
-        write_progress(self.progress_path, {
+        self._write_progress({
             "type": "run_complete", "case_id": self.metrics.case_id,
             "processed_blocks": self.metrics.processed_blocks, "ao": scheduler_stats,
             "actuator_rate_phase": actuator_phase,
@@ -1370,6 +1789,7 @@ class _Harness:
         self.loop_thread.join(timeout=3)
         self.loop.close()
         self._remove_gc_callback()
+        self._close_progress_writer()
         return self.metrics
 
     def _remove_gc_callback(self) -> None:
@@ -1391,7 +1811,42 @@ class _Harness:
                 errors.append(f"{label}: {type(exc).__name__}: {exc}")
                 return None
 
-        attempt("stop simulated AO clock", self._stop_ao_clock)
+        attempt("disarm runtime before abort", lambda: self.state.set_armed(False))
+        try:
+            self._stop_ao_clock()
+        except TimeoutError as exc:
+            status = self._ao_owner_status(str(exc))
+            pending_error = self._pending_ao_shutdown_error
+            if pending_error is None:
+                pending_error = HarnessOwnerShutdownError(
+                    "simulated_ao", status, progress_path=self.progress_path)
+                self._pending_ao_shutdown_error = pending_error
+            else:
+                pending_error.refresh(status)
+            if status["owner_alive"]:
+                if errors:
+                    pending_error.add_note("Disarm errors: " + " | ".join(errors))
+                raise pending_error
+            self._ao_clock_thread = None
+        except BaseException as exc:
+            errors.append(f"stop simulated AO clock: {type(exc).__name__}: {exc}")
+
+        if getattr(self, "_ao_clock_thread", None) is not None:
+            if not self._ao_clock_thread.is_alive():
+                self._ao_clock_thread = None
+            else:
+                status = self._ao_owner_status("simulated AO clock remains alive")
+                pending_error = self._pending_ao_shutdown_error
+                if pending_error is None:
+                    pending_error = HarnessOwnerShutdownError(
+                        "simulated_ao", status, progress_path=self.progress_path)
+                    self._pending_ao_shutdown_error = pending_error
+                else:
+                    pending_error.refresh(status)
+                raise pending_error
+        core = getattr(self, "core", None)
+        if core is not None:
+            attempt("drain final Core AO notifications", self._flush_final_core_notifications)
         attempt("disable recording", lambda: self.state.set_recording(False))
         attempt("stop recorder admission", self.recorder.stop_recording)
         attempt("close recorder", self.recorder.close)
@@ -1408,19 +1863,49 @@ class _Harness:
         attempt("remove GC callback", self._remove_gc_callback)
 
         if errors:
-            attempt("write cleanup diagnostics", lambda: write_progress(self.progress_path, {
-                "type": "cleanup_errors", "case_id": getattr(self.metrics, "case_id", None),
+            attempt("write cleanup diagnostics", lambda: self._write_progress({
+                "type": "cleanup_errors",
+                "case_id": getattr(getattr(self, "metrics", None), "case_id", None),
                 "errors": errors, "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             }))
+        try:
+            progress_result = self._close_progress_writer()
+        except HarnessOwnerShutdownError as exc:
+            if errors:
+                exc.add_note("Additional cleanup failures: " + " | ".join(errors))
+            pending_ao_error = self._pending_ao_shutdown_error
+            if pending_ao_error is not None and exc is not pending_ao_error:
+                exc.add_note(f"Earlier simulated AO shutdown failure: {pending_ao_error}")
+            raise
+        if progress_result and progress_result.get("error"):
+            errors.append(f"progress diagnostics: {progress_result['error']}")
+        pending_ao_error = self._pending_ao_shutdown_error
+        if pending_ao_error is not None:
+            pending_ao_error.refresh(self._ao_owner_status(
+                pending_ao_error.original_error or "simulated AO stop previously timed out"))
+            raise pending_ao_error
         return errors
 
     def _stop_ao_clock(self) -> None:
         self._ao_clock_stop.set()
         if self._ao_clock_thread is not None:
-            self._ao_clock_thread.join(timeout=3.0)
+            self._ao_clock_thread.join(timeout=self._ao_stop_timeout_s)
             if self._ao_clock_thread.is_alive():
+                self._ao_clock_stop_timed_out = True
                 raise TimeoutError("simulated AO clock did not stop")
             self._ao_clock_thread = None
+
+    def _ao_owner_status(self, error: str | None = None) -> dict[str, Any]:
+        thread = getattr(self, "_ao_clock_thread", None)
+        alive = bool(thread is not None and thread.is_alive())
+        return {
+            "owner_alive": alive,
+            "owner_thread_name": thread.name if thread is not None else None,
+            "owner_thread_ident": thread.ident if thread is not None else None,
+            "stop_requested": bool(getattr(self, "_ao_clock_stop", threading.Event()).is_set()),
+            "stop_timed_out": bool(getattr(self, "_ao_clock_stop_timed_out", False)),
+            "error": error,
+        }
 
     def _flush_final_core_notifications(self) -> None:
         """Persist final AO owner outcomes without advancing finite source time."""
@@ -1595,41 +2080,45 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
             "repeat only with an explicit boundary reset and separate logged segments"
         )
     if recording_dir is None:
-        tmp = tempfile.TemporaryDirectory(prefix="echo-chamber-benchmark-")
-        record_dir = Path(tmp.name)
+        temporary_recording_dir = Path(tempfile.mkdtemp(prefix="echo-chamber-benchmark-"))
+        record_dir = temporary_recording_dir
     else:
-        tmp = None
+        temporary_recording_dir = None
         record_dir = recording_dir
         record_dir.mkdir(parents=True, exist_ok=True)
-    config = replace(
-        _make_config(controller, lead_ms, record_dir),
-        electrode_labels=replay.channel_labels,
-        ctx_index=replay.ctx_index,
-    )
-    trace_meta = {
-        "path": str(replay_path), "sha256": file_sha256(replay_path),
-        "sample_count": replay.sample_count, "sample_rate_hz": replay.sample_rate_hz,
-        "duration_seconds": replay.duration_seconds,
-        "labels": replay.channel_labels, "roles": replay.channel_roles,
-        "ctx_index": replay.ctx_index, "segments": [asdict(s) for s in replay.segments],
-        "metadata": replay.metadata,
-    }
-    case_id = _run_id(replay_path.stem, controller, lead_ms)
-    metadata = {
-        "application": "Echo Chamber controller benchmark",
-        "benchmark_case_id": case_id,
-        "source": trace_meta,
-        "configuration": app.serializable_config(config),
-        "git_revision": git_revision(),
-        "physical_pulse_claims": False,
-    }
-    harness = _Harness(config, replay_path.stem, metadata, progress_path=progress_path,
-                       progress_interval_s=progress_interval_s, paced=paced,
-                       simulation=False, on_generated=None, browser_ui=browser_ui,
-                       external_browser=external_browser, browser_base_url=browser_base_url,
-                       inject_stall_ms=inject_stall_ms,
-                       stall_at_source_index=(int(round(stall_at_seconds * replay.sample_rate_hz))
-                                              if stall_at_seconds is not None else None))
+    try:
+        config = replace(
+            _make_config(controller, lead_ms, record_dir),
+            electrode_labels=replay.channel_labels,
+            ctx_index=replay.ctx_index,
+        )
+        trace_meta = {
+            "path": str(replay_path), "sha256": file_sha256(replay_path),
+            "sample_count": replay.sample_count, "sample_rate_hz": replay.sample_rate_hz,
+            "duration_seconds": replay.duration_seconds,
+            "labels": replay.channel_labels, "roles": replay.channel_roles,
+            "ctx_index": replay.ctx_index, "segments": [asdict(s) for s in replay.segments],
+            "metadata": replay.metadata,
+        }
+        case_id = _run_id(replay_path.stem, controller, lead_ms)
+        metadata = {
+            "application": "Echo Chamber controller benchmark",
+            "benchmark_case_id": case_id,
+            "source": trace_meta,
+            "configuration": app.serializable_config(config),
+            "git_revision": git_revision(),
+            "physical_pulse_claims": False,
+        }
+        harness = _Harness(config, replay_path.stem, metadata, progress_path=progress_path,
+                           progress_interval_s=progress_interval_s, paced=paced,
+                           simulation=False, on_generated=None, browser_ui=browser_ui,
+                           external_browser=external_browser, browser_base_url=browser_base_url,
+                           inject_stall_ms=inject_stall_ms,
+                           stall_at_source_index=(int(round(stall_at_seconds * replay.sample_rate_hz))
+                                                  if stall_at_seconds is not None else None))
+    except BaseException as exc:
+        _release_temporary_recording_directory(temporary_recording_dir, exc)
+        raise
     limit_samples = int(round(limit_seconds * replay.sample_rate_hz)) if limit_seconds is not None else None
     try:
         for source_index, values in _replay_blocks(replay, limit_samples):
@@ -1638,13 +2127,26 @@ def run_replay_case(replay_path: Path, controller: str, *, lead_ms: float = 100.
         if on_metrics:
             on_metrics(metrics)
     except BaseException as primary_error:
-        cleanup_errors = harness.abort()
+        try:
+            cleanup_errors = harness.abort()
+        except HarnessOwnerShutdownError as cleanup_error:
+            if cleanup_error is primary_error:
+                raise
+            cleanup_error.add_note(
+                f"Run also failed: {type(primary_error).__name__}: {primary_error}")
+            raise cleanup_error from primary_error
+        if isinstance(primary_error, HarnessOwnerShutdownError):
+            if primary_error.owner_kind == "progress_writer":
+                status = getattr(harness, "_progress_writer_result", None)
+            else:
+                status = harness._ao_owner_status(primary_error.original_error)
+            if status is not None:
+                primary_error.refresh(status)
         if cleanup_errors:
             primary_error.add_note("Additional cleanup failures: " + " | ".join(cleanup_errors))
         raise
     finally:
-        if tmp is not None:
-            tmp.cleanup()
+        _release_temporary_recording_directory(temporary_recording_dir, sys.exc_info()[1])
     environment = {
         "python": platform.python_version(), "platform": platform.platform(),
         "processor": platform.processor(), "git_revision": git_revision(),
