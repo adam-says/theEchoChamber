@@ -268,13 +268,16 @@ establishes real-time timing or hardware acceptance.
 Earlier suite runs on `09ebf1e`, `c32d151`, and the fault-event candidate are
 historical and superseded by the current suite below.
 
-The current suite passed 286 tests and 17 subtests on Python 3.12.14 in 42.71
-seconds and Python 3.14.0 in 38.33 seconds. It ran on an uncommitted candidate
-based on `996dd1ef7e3a355a2aa98921dea2ac718939219e`; the candidate was committed
-as `4967720` in the isolated checkout and cherry-picked as
-`ef81a2348bbf927da10da086a10c555359616f16` in main. Both map to tree
-`440255a110cd240c7b399df145fc0a360669b2b4`. The original source-hash manifest
-and exact logs are in [progress-reporting validation](validation/progress-reporting/).
+The final suite passed 286 tests and 17 subtests on Python 3.12.14 and Python
+3.14.0. It ran on an uncommitted candidate based on `996dd1e`, later committed
+as isolated `4967720` and cherry-picked as main `ef81a23`. The root-run suite
+logs and source-hash manifest are in [progress-reporting validation](validation/progress-reporting/).
+The independent runtime-input proof in
+[`validation/required-runs-c16c0ee/`](validation/required-runs-c16c0ee/)
+verifies those 69 captured code, test, config, model, and UI inputs against the
+c16 main snapshot. It found no content mismatches; 30 files differed only in
+line endings. This confirms tested-input provenance, not that the suite ran at
+c16, nor timing or hardware performance.
 Coverage includes AO ownership and terminal outcomes, calibration and settings
 transactions, EOF and shutdown drains, bounded progress reporting, legacy
 reader behavior, and optional post-run simulation-metric serialization. The
@@ -392,10 +395,45 @@ issues and at least 400,000 valid post-calibration feature samples per case.
 Eligible source coverage was 28.25 seconds for Rule, 33.99 seconds for PID,
 and 44.995 seconds for ESN. Runtime timing gates failed in 15 cases and passed
 in 3. Full-duration timing acceptance was not evaluated. See the
-[lead-sweep report and audit](validation/lead-sweep-650c4a4/README.md). The
-three 30-minute paced runs with an actual browser and the full simulation
-matrix remain pending. A
-paced Rule run and a separate paced PID run on
+[lead-sweep report and audit](validation/lead-sweep-650c4a4/README.md).
+
+## Final required full runs: timing qualification failed
+
+All 12 required full-duration software runs are complete. The nine-case
+unpaced replay matrix ran on `bb65477`; the three separate 30-minute paced
+runs with an actual browser ran on `c16c0ee`. The combined bundle was assembled
+at c16, with per-run source revisions preserved. The matrix is included because
+subsequent changes were outside its measured timed-component scope. The combined
+result is **REQUIRED FULL RUNS FAILED**. Every case exceeded at least one
+strict timing gate (p99 `<2.5 ms`, maximum `<5 ms`). The full metrics and
+independent HDF5 audit are in
+[`validation/required-runs-c16c0ee/`](validation/required-runs-c16c0ee/README.md).
+
+| Paced controller | Recorded / expected samples | p99 (ms) | Maximum (ms) | Deadline misses | AO active-demand misses | AO late | Browser disconnects |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Rule | 36,000,000 / 36,000,000 | 1.499801 | 35.1682 | 49 | 0 | 0 | 0 |
+| PID | 36,000,000 / 36,000,000 | 1.399002 | 27.5681 | 46 | 0 | 0 | 0 |
+| ESN | 5,564,500 / 36,000,000 | 1.312801 | 53.3083 | 17 | 1 | 0 | 0 |
+
+The ESN p99 shown above is an all-call aggregate that includes calls after
+acquisition stopped; it does not represent post-fault active-control timing.
+
+The ESN replay processed all 36 million source samples, but its latched AO
+active-demand fault stopped acquisition and recording at 5,564,500 samples
+(278.225 seconds). Its cleanly closed HDF5 file contains only that prefix.
+All paced runs drained the AO queue and remained browser-connected. The
+independent closed-file audit found no structural or provenance issues. The
+matrix also failed all nine cases: every maximum exceeded 5 ms, and every ESN
+p99 exceeded 2.5 ms. PID had positive requested-rate blocks but no pulse
+proposals, commits, or nonzero AO samples in the matrix or paced run. Hardware
+remains **ALL UNVERIFIED**. Full case details are in the linked report.
+
+The final runtime-input proof checked 69 captured code, test, config, model,
+and UI inputs against the 286-test manifest. It found no content mismatch
+between tested inputs and main; 30 files differed only in line endings. This
+is provenance evidence, not a timing or hardware result.
+
+A paced Rule run and a separate paced PID run on
 `09ebf1e` processed all 36,000,000 source samples, but both failed. The Rule
 recording contains only 16,608,200 samples. Its fault stopped acquisition and
 `RecordBlock` submission near source second 830.41. It had 578 processing
@@ -423,8 +461,8 @@ loop continued afterward and processed the remaining input, reaching
 36,000,000 source samples. It had 237 processing deadline misses, p99 2.1158 ms,
 and maximum 38.7395 ms. The browser remained connected, and AO drain completed,
 but full recording and runtime timing gates failed. These numeric Core and
-recorder results apply only to revision `6657c88`; current full-runtime reruns
-remain pending. The compact report is in
+recorder results apply only to revision `6657c88`; final full-runtime runs are
+reported above. The compact report is in
 [`validation/paced-esn-6657c88/`](validation/paced-esn-6657c88/). The
 [historical Rule attempt](validation/paced-browser-09ebf1e-attempt1/summary.json)
 and [historical PID attempt](validation/paced-pid-09ebf1e/controller_paced_20261029T125918Z.json)

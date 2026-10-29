@@ -10,12 +10,13 @@ signals and supports interchangeable rule, PID, and Echo State Network (ESN)
 controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
-> **Software validation is in progress.** The current full test suite passes
-> with 286 tests and 17 subtests on Python 3.12.14 and Python 3.14.0. It ran
-> on an uncommitted candidate based on `996dd1e`, then was committed as
-> isolated `4967720` and cherry-picked as main `ef81a23`, both at tree
-> `440255a110cd240c7b399df145fc0a360669b2b4`. Logs and the exact source-hash
-> manifest are in
+> **Required software runs completed; timing qualification failed.** The full
+> suite passes with 286 tests and 17 subtests on Python 3.12.14 and Python
+> 3.14.0. It ran on an uncommitted candidate based on `996dd1e`, later
+> committed as isolated `4967720` and cherry-picked as main `ef81a23`. The
+> runtime-input proof verifies its captured non-documentation inputs against
+> the c16 main snapshot, with line-ending-only differences in 30 files. Suite
+> logs and the source-hash manifest are in
 > [progress-reporting validation](docs/validation/progress-reporting/README.md).
 > The
 > `e965d808` replay matrix completed all nine 30-minute cases and failed the
@@ -31,7 +32,7 @@ passthrough mode.
 > actual-Core segments failed the strict maximum-time gate. Neither diagnostic
 > establishes runtime performance for the later progress-reporting fix. See
 > [implementation and validation status](IMPLEMENTATION_STATUS.md) for the
-> evidence and remaining software gates.
+> final required-run evidence and qualification result.
 >
 > A 32-second diagnostic on `bb65477` processed and recorded 640,000 samples
 > per controller. Rule p99/max were 2.190158/4.2422 ms with zero deadline
@@ -49,8 +50,18 @@ passthrough mode.
 > gates failed in 15 and passed in 3. Full-duration
 > timing was not evaluated. See
 > [the lead-sweep evidence](docs/validation/lead-sweep-650c4a4/README.md).
-> The three 30-minute paced runs with an actual browser and the full
-> simulation matrix remain pending.
+> The nine-case unpaced matrix ran on `bb65477`; the three 30-minute paced
+> runs with an actual browser ran on `c16c0ee`. The combined bundle was
+> assembled at c16, with per-run source revisions preserved. The matrix is
+> included because subsequent changes were outside its measured timed-component
+> scope. All nine matrix cases and all three paced runs have completed. The
+> combined status is **REQUIRED FULL RUNS
+> FAILED**: all nine matrix cases and all three paced cases fail at least one
+> strict timing gate. Rule and PID paced runs recorded all 36 million samples;
+> the ESN paced run stopped acquisition and recording at 5,564,500 samples
+> after a simulated AO active-demand fault. See the
+> [final required-run bundle](docs/validation/required-runs-c16c0ee/README.md)
+> for metrics and the independent closed-file audit.
 > The earlier default simulation export wrote JSON then failed during CSV
 > serialization; a separate PID control segment also faulted and recorded
 > only a prefix. The post-fix retry wrote all three CSV rows but had a separate
@@ -65,6 +76,11 @@ passthrough mode.
 > zero-output, no-effect, and drain checks, while correctly failing runtime
 > acceptance for the faulted prefix. It is software-only evidence: see
 > [the stall audit](docs/validation/stall-150ms-ef81a23/README.md).
+> The final runtime-input proof verified all 69 captured code, test, config,
+> model, and UI files against the 286-test manifest. Main matched the tested
+> inputs with no content differences; 30 files differed only by line endings.
+> This proves input provenance only, not timing or hardware behavior. The
+> proof is included in the final required-run bundle.
 >
 > **Hardware status: ALL UNVERIFIED.** The included hardware profile contains
 > working assumptions, not measured calibration. Do not treat software results
@@ -140,8 +156,9 @@ instead faulted in ESN stimulation. No cause is established.
   or mode mismatches. See [the reader report](docs/validation/full-reader-98b6ed/README.md).
 - The browser monitor is self-contained and does not require internet access.
 
-See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for completed
-verification and the remaining pending tests.
+See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for the completed
+software execution record and timing qualification failures. Hardware
+validation remains unverified.
 
 ## Install
 

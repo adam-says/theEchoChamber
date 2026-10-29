@@ -1,23 +1,42 @@
 # Implementation and validation status
 
-Status date: 2026-10-29
+Status date: 2026-10-30
 
-Current source: isolated commit `4967720`; main-checkout cherry-pick
-`ef81a2348bbf927da10da086a10c555359616f16`. Both map to Git tree
-`440255a110cd240c7b399df145fc0a360669b2b4`.
+The nine-case unpaced matrix ran at `bb65477`; the three paced runs used
+`c16c0eee0174c7c016d05a5ce617186a3c4c42d8`. The matrix is included because
+later changes were outside its measured timed-component scope. The combined
+evidence bundle was assembled at c16. Per-run source revisions remain recorded
+in the reports. The 286-test suite ran on an uncommitted candidate based on
+`996dd1ef7e3a355a2aa98921dea2ac718939219e`, later committed as isolated
+`4967720` and cherry-picked to main as `ef81a2348bbf927da10da086a10c555359616f16`.
+The runtime-input proof verifies that all 69 captured non-documentation inputs
+from that tested suite match the c16 main snapshot, with line-ending-only
+differences in 30 files. The final docs/evidence commits are separate; they do
+not define a new runtime build.
 
 The reviewed software paths listed below are implemented. The current full test
 suite passes with 286 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
-The earlier nine-case replay matrix completed every 30-minute recording but
-failed strict timing limits. That matrix predates the current ESN moment-only
-rebase. A paced ESN diagnostic on revision `6657c88`, before the progress-
-reporting fix, faulted and stopped recording at 21,606,700 samples. The replay
-loop continued afterward and processed all 36,000,000 source samples. This
-result is scoped to that revision and does not establish current full-runtime
-behavior. A 64-second synthetic PID tracking diagnostic on the same revision
-passed simulation tracking and recovery gates, but all three measured Core
-segments exceeded the strict maximum-time limit. Its numerical results also
-predate the progress-reporting fix.
+All 12 required full-duration software runs have now completed: the nine-case
+unpaced matrix on `bb65477` and three 30-minute paced runs on `c16c0ee` with an
+actual browser. The
+combined result is **REQUIRED FULL RUNS FAILED**; see
+[`docs/validation/required-runs-c16c0ee/`](docs/validation/required-runs-c16c0ee/).
+Rule and PID paced recordings cover the full 36 million samples; the ESN paced
+run stopped acquisition and recording at 5,564,500 samples after a simulated AO
+active-demand fault. All nine matrix cases and all three paced cases failed at
+least one strict timing limit. Hardware remains **ALL UNVERIFIED**.
+
+A separate runtime-input proof verified all 69 captured code, test, config,
+model, and UI inputs against the unit-test manifest. It found no content
+mismatches between the tested inputs and main; 30 files differed only in line
+endings. This establishes source/input provenance, not timing or hardware
+behavior. The proof is included in the required-runs evidence bundle.
+
+Earlier paced ESN and synthetic tracking results on `6657c88` predate the
+progress-reporting fix and do not describe the final full-runtime runs. The
+`e965d808` matrix is historical; the `bb65477` matrix is the matrix component
+of the final required-run bundle. Per-run provenance and the reason for
+combining the revisions are documented in that bundle.
 Full-recording ESN parity on the current bridge passed all three canonical recordings; see
 [`docs/validation/esn-full-parity-88469989/`](docs/validation/esn-full-parity-88469989/).
 No hardware requirement has been verified.
@@ -93,17 +112,14 @@ current acceptance.
 ## Current test status
 
 The full suite passes with 286 tests and 17 subtests under both supported
-interpreters. Root's captured runs took 42.71 seconds on Python 3.12.14 and
-38.33 seconds on Python 3.14.0. They ran on an uncommitted candidate based on
-`996dd1ef7e3a355a2aa98921dea2ac718939219e`; the candidate was committed in
-the isolated checkout as `4967720` and cherry-picked to main as
-`ef81a2348bbf927da10da086a10c555359616f16`, both at tree
-`440255a110cd240c7b399df145fc0a360669b2b4`. The original source-hash manifest
-and exact logs are in
+interpreters. It ran on the candidate and commit lineage described above. The
+root-run suite logs and source manifest are in
 [`docs/validation/progress-reporting/`](docs/validation/progress-reporting/).
-The manifest preserves the tested base, uncommitted-candidate status, hashes,
-and input-unchanged results. Run `python -m pytest -q` with each interpreter to
-reproduce the counts.
+The independent runtime-input proof in
+[`docs/validation/required-runs-c16c0ee/`](docs/validation/required-runs-c16c0ee/)
+checks all 69 captured code, test, config, model, and UI inputs against that
+manifest. It found no content mismatches; 30 files differ only in line endings.
+This verifies what was tested, not timing or hardware performance.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
 3.12 and 3.14. Its counts are historical and do not describe the current
@@ -289,9 +305,10 @@ samples. The detailed nine-case results are in
 [`docs/validation/replay-bb65477/`](docs/validation/replay-bb65477/). The
 45-second unpaced lead sweep with virtual AO has an audited 18/18 coverage result,
 with 15 runtime timing failures and 3 passes; full-duration timing was not
-evaluated. The three 30-minute paced runs with an actual browser and the full
-simulation matrix remain pending. The parked process-recorder prototype
-did not show a repeatable timing benefit and does not isolate GIL contention.
+evaluated. The final nine-case matrix and three actual-browser paced runs are
+complete and failed strict timing acceptance; see the c16 required-runs bundle.
+The parked process-recorder prototype did not show a repeatable timing benefit
+and does not isolate GIL contention.
 
 The frozen `6cc4035` baseline also completed all nine cases. All three PID
 cases had positive requested-rate blocks: 80,123 for May 29, 79,272 for Aug 5,
@@ -303,7 +320,9 @@ limit with maxima from 7.095 to 34.104 ms. Its three ESN p99 values ranged from
 4.745 to 4.830 ms. The current matrix results above supersede those numbers for
 the `e965d808` revision.
 
-The matrix report separates case coverage from timing acceptance. Full matrix
+The final required-run bundle contains the completed nine-case matrix and
+three actual-browser paced results. Together, the 12 required runs failed
+timing qualification. The matrix report separates case coverage from timing acceptance. Full matrix
 acceptance requires all nine trace/controller cases. Each case must meet both
 timing limits, process every source sample without gaps or skips, report no late
 or stale AO commands, active-demand misses, or noncommitted nonzero AO blocks,
