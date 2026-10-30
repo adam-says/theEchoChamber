@@ -1,0 +1,64 @@
+{
+  "schema": "echo-chamber-neural-mock-attempt-history-v1",
+  "scope": "Paired 24-second virtual-clock engineering demo; no biological calibration, hardware, or physical-output claim.",
+  "attempts": [
+    {
+      "run": "R1",
+      "result": "failed_startup_diagnostic",
+      "source_run_manifest": "outputs/neural-mock-source-run-r1.json",
+      "recording_directory": "outputs/neural-mock-24s-r1/recordings",
+      "failure": "Runner treated an empty Rule feature mask as an error on a Core block intentionally skipped while the output-generation drain was pending.",
+      "input_hashes_unchanged": true,
+      "notes": "This was a runner-side startup-mask handling defect. It did not demonstrate a model, controller, safety, or scheduler failure. No complete report was written."
+    },
+    {
+      "run": "R2",
+      "result": "failed_eof_drain_gate",
+      "report": "outputs/neural-mock-24s-r2/report.json",
+      "source_run_manifest": "outputs/neural-mock-source-run-r2.json",
+      "failure": "The already-disarmed off condition reached finite-source EOF with three queued zero commands. The runner checked only for a pending transition/barrier and therefore skipped starting an EOF drain transaction.",
+      "observed": {
+        "off_source_and_recorded_samples": 480000,
+        "off_generated_samples_at_check": 480000,
+        "off_pending_commands_at_check": 3,
+        "off_fault": null,
+        "feedback_source_and_recorded_samples": 480000,
+        "feedback_pending_commands_after_drain": 0,
+        "feedback_fault": null,
+        "all_other_closure_gates_passed": true
+      },
+      "input_hashes_unchanged": true,
+      "notes": "Fixed by starting RuntimeState.begin_recoverable_drain() at EOF even when the condition is already disarmed, and servicing until the barrier and command queue are clear. The safe-output policy and model parameters did not change."
+    },
+    {
+      "run": "R3",
+      "result": "all_closure_gates_passed",
+      "report": "outputs/neural-mock-24s-r3/report.json",
+      "source_run_manifest": "outputs/neural-mock-source-run-r3.json",
+      "notes": "Passed after the EOF drain fix. R4 repeats the paired run after clarifying measurement timestamps and adding negative cancellation/response tests."
+    },
+    {
+      "run": "R4",
+      "result": "all_closure_gates_passed",
+      "report": "report.json",
+      "source_run_manifest": "source-run-manifest.json",
+      "notes": "Final packaged run. All 74 captured source/input hashes were unchanged."
+    }
+  ],
+  "final_run": {
+    "source_samples_per_condition": 480000,
+    "recorded_samples_per_condition": 480000,
+    "rule_pulse_requests": 22,
+    "rule_pulse_committed_samples": 2200,
+    "rule_generated_nonzero_ao_samples": 2178,
+    "first_rule_source_decision_sample": 220214,
+    "first_rule_latest_used_sample": 220299,
+    "first_rule_target_ao_sample": 222214,
+    "first_generated_nonzero_ao_sample": 222215,
+    "first_neural_effect_sample": 222615,
+    "configured_neural_effect_delay_samples": 400,
+    "first_later_valid_rule_measurement_sample": 226399,
+    "core_mask_covers_every_artifact_oracle_sample": true,
+    "both_conditions_fault_free_and_drained": true
+  }
+}

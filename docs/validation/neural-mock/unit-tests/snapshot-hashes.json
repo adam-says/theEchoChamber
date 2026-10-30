@@ -1,0 +1,8 @@
+{
+  "schema": "echo-chamber-neural-mock-unit-test-snapshot-hashes-v1",
+  "files": {
+    "unit-test-manifest.json": "4c25f3781c4195fa8cd95200bf60ba7d3cd6415162f76bd2420334ba50db82ad",
+    "unit-tests-python312.txt": "cdd97a795238d22fe808aac7ecdcc9e4372c376b22a1770c01043634d0c454d7",
+    "unit-tests-python314.txt": "a6f8701d0bcc9c958d7e31cc6c1dc37d0c1c1c3143f43c3b0cdce51048d8d6bf"
+  }
+}

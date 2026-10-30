@@ -6,6 +6,22 @@ measure physical stimulation. Hardware work remains **ALL UNVERIFIED**. Follow
 [the NI staged controller protocol](ni_controller_protocol.md) before connecting
 AO to an isolator or preparation.
 
+## Evidence status as of 2026-10-30
+
+The accepted software architecture is the implementation basis for the paper's
+proposed experiment. It is not evidence of biological efficacy or an SWR
+ground-truth detector. The proposed proof of concept is to regulate causal CA3
+ripple-band RMS. Its target, disturbance schedule, and numeric tolerances remain
+to be set. See the [biological task qualification plan](biological_task_qualification.md).
+
+Treat the 5 ms processing interval as a software timing diagnostic. Keep the
+historical JSON and Markdown acceptance classifications unchanged. Report timing
+percentiles separately from AO faults and recording coverage. An AO fault stops
+acquisition and later `RecordBlock` submissions; a cleanly closed H5 prefix is
+not a complete run. Timing calls after acquisition stops do not measure active
+closed-loop control. None of these software results establishes biological
+success or physical output.
+
 The replay commands use the canonical recordings in
 `recordings/ca3_slow_waves/`. Import the ABF files first with the steps in
 [the replay import guide](replay_import.md). Each canonical replay contains
@@ -268,10 +284,18 @@ establishes real-time timing or hardware acceptance.
 Earlier suite runs on `09ebf1e`, `c32d151`, and the fault-event candidate are
 historical and superseded by the current suite below.
 
-The final suite passed 286 tests and 17 subtests on Python 3.12.14 and Python
-3.14.0. It ran on an uncommitted candidate based on `996dd1e`, later committed
-as isolated `4967720` and cherry-picked as main `ef81a23`. The root-run suite
-logs and source-hash manifest are in [progress-reporting validation](validation/progress-reporting/).
+The latest full suite passed 305 tests and 20 subtests on Python 3.12.14 and
+Python 3.14.0. It ran on an uncommitted candidate based on isolated
+`c2e41199191d42b55298baaf46e9c868576d1b2b`. All 74 captured runtime, model,
+configuration, UI, and test inputs remained unchanged across both runs. Logs
+and the manifest are in the [neural-mock unit-test snapshot](validation/neural-mock/unit-tests/).
+The neural-mock plotting postprocessor was checked separately and is outside
+that capture.
+
+The previous full suite passed 286 tests and 17 subtests on both interpreters.
+It ran on an uncommitted candidate based on `996dd1e`, later committed as
+isolated `4967720` and cherry-picked as main `ef81a23`. The root-run suite logs
+and source-hash manifest are in [progress-reporting validation](validation/progress-reporting/).
 The independent runtime-input proof in
 [`validation/required-runs-c16c0ee/`](validation/required-runs-c16c0ee/)
 verifies those 69 captured code, test, config, model, and UI inputs against the
@@ -428,8 +452,8 @@ p99 exceeded 2.5 ms. PID had positive requested-rate blocks but no pulse
 proposals, commits, or nonzero AO samples in the matrix or paced run. Hardware
 remains **ALL UNVERIFIED**. Full case details are in the linked report.
 
-The final runtime-input proof checked 69 captured code, test, config, model,
-and UI inputs against the 286-test manifest. It found no content mismatch
+The earlier c16 runtime-input proof checked 69 captured code, test, config,
+model, and UI inputs against the 286-test manifest. It found no content mismatch
 between tested inputs and main; 30 files differed only in line endings. This
 is provenance evidence, not a timing or hardware result.
 

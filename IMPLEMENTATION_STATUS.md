@@ -2,6 +2,34 @@
 
 Status date: 2026-10-30
 
+## User-selected biological task
+
+The user accepts the architecture as the basis for the methodological paper
+and selects regulation of the CA3 100–250 Hz RMS envelope toward a target. The software
+computes a causal envelope with 10 ms smoothing and normalizes it against the
+frozen valid baseline. The numeric target, direction, response window,
+biological tolerances, and sample-size analysis remain for the experimenters
+to prespecify. This design choice does not establish biological validation.
+See the [biological task qualification plan](docs/biological_task_qualification.md).
+
+## Neural mock circuit closure
+
+The paired 24-second virtual Rule-off/on R4 run passed all ten declared
+circuit-closure gates. Both arms recorded 480,000 samples. The feedback arm
+made 22 pulse requests and generated 2,178 nonzero AO samples. Its first
+generated output affected the neural-mass state after the configured 20 ms
+sample delay. A later valid Rule measurement changed after the actual Core
+blanking and feature-recovery path. This confirms virtual circuit closure,
+delay, response, and basic software blanking only. It does not establish
+biological target tracking, physical artifact recovery, or NI latency. See the
+[R4 report](docs/validation/neural-mock/README.md) and the
+[mock circuit closure guide](docs/mock_neural_test.md).
+
+The separate [PID stimulation demonstration](docs/validation/pid-stimulation-demo/README.md)
+uses a generic responsive plant with a preset 150 Hz carrier. Its stimulated
+phase produced 32 unique pulse proposals and all three 64-second phases
+completed. It is not a neural model or tissue result.
+
 The nine-case unpaced matrix ran at `bb65477`; the three paced runs used
 `c16c0eee0174c7c016d05a5ce617186a3c4c42d8`. The matrix is included because
 later changes were outside its measured timed-component scope. The combined
@@ -14,8 +42,13 @@ from that tested suite match the c16 main snapshot, with line-ending-only
 differences in 30 files. The final docs/evidence commits are separate; they do
 not define a new runtime build.
 
-The reviewed software paths listed below are implemented. The current full test
-suite passes with 286 tests and 17 subtests on Python 3.12.14 and Python 3.14.0.
+The reviewed software paths listed below are implemented. The latest full suite
+passed 305 tests and 20 subtests on Python 3.12.14 and Python 3.14.0. It ran on
+an uncommitted candidate based on isolated `c2e41199191d42b55298baaf46e9c868576d1b2b`.
+The 74 captured runtime, model, configuration, UI, and test inputs were
+unchanged through both runs. Documentation was outside the capture. The neural
+mock plotting postprocessor was checked separately. See the [unit-test
+snapshot](docs/validation/neural-mock/unit-tests/).
 All 12 required full-duration software runs have now completed: the nine-case
 unpaced matrix on `bb65477` and three 30-minute paced runs on `c16c0ee` with an
 actual browser. The
@@ -25,6 +58,15 @@ Rule and PID paced recordings cover the full 36 million samples; the ESN paced
 run stopped acquisition and recording at 5,564,500 samples after a simulated AO
 active-demand fault. All nine matrix cases and all three paced cases failed at
 least one strict timing limit. Hardware remains **ALL UNVERIFIED**.
+
+The c16 ESN fault analysis links all 17 over-deadline Core calls to the bounded
+log and conditionally associates the 52.1041 ms UI-submission maximum with the
+53.3083 ms call at sample 5,564,400. The timing narrows the location, not the
+cause. Two six-minute probes and a scheduler-boundary check completed without
+reproducing the fault or establishing a fix. The boundary check confirms the
+software 50 ms reserve behavior, not a physical underrun. See the
+[fault analysis](docs/validation/esn-fault-investigation-c16c0ee/README-analysis.md)
+and [probe results](docs/validation/esn-fault-probes-c2e4119/README.md).
 
 A separate runtime-input proof verified all 69 captured code, test, config,
 model, and UI inputs against the unit-test manifest. It found no content
@@ -41,7 +83,7 @@ Full-recording ESN parity on the current bridge passed all three canonical recor
 [`docs/validation/esn-full-parity-88469989/`](docs/validation/esn-full-parity-88469989/).
 No hardware requirement has been verified.
 
-The strict software timing limits remain p99 `<2.5 ms` and maximum `<5 ms`.
+The software benchmark retains its diagnostic limits of p99 `<2.5 ms` and maximum `<5 ms`. These values are not universal biological acceptance thresholds. The biological task, measured output latency, tissue response window, and pass limits remain to be set and measured under the [biological task qualification plan](docs/biological_task_qualification.md).
 The current full matrix completed and failed timing acceptance. The 45-second
 unpaced lead sweep with virtual AO has a successful 18-case coverage audit, but its
 timing gates failed in 15 cases and passed in 3. Full-duration timing
@@ -111,15 +153,18 @@ current acceptance.
 
 ## Current test status
 
-The full suite passes with 286 tests and 17 subtests under both supported
-interpreters. It ran on the candidate and commit lineage described above. The
-root-run suite logs and source manifest are in
-[`docs/validation/progress-reporting/`](docs/validation/progress-reporting/).
-The independent runtime-input proof in
+The latest full suite passed 305 tests and 20 subtests under Python 3.12.14 and
+Python 3.14.0. It ran on the uncommitted `c2e4119` candidate described above.
+The frozen logs and manifest are in
+[`docs/validation/neural-mock/unit-tests/`](docs/validation/neural-mock/unit-tests/).
+The neural-mock plotting postprocessor was checked separately and is not part
+of the 74-input capture. The previous full suite passed 286 tests and 17
+subtests on both interpreters. The earlier c16 runtime-input proof in
 [`docs/validation/required-runs-c16c0ee/`](docs/validation/required-runs-c16c0ee/)
-checks all 69 captured code, test, config, model, and UI inputs against that
-manifest. It found no content mismatches; 30 files differ only in line endings.
-This verifies what was tested, not timing or hardware performance.
+checks 69 code, test, config, model, and UI inputs against the historical
+286-test manifest. It found no content mismatches; 30 files differ only in
+line endings. That proof does not describe the newer candidate or establish
+timing or hardware performance.
 
 The frozen baseline `6cc4035` passed 189 tests and 6 subtests under both Python
 3.12 and 3.14. Its counts are historical and do not describe the current

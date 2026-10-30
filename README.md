@@ -10,9 +10,44 @@ signals and supports interchangeable rule, PID, and Echo State Network (ESN)
 controllers through a shared pulse-output path. The ESN also retains its
 passthrough mode.
 
-> **Required software runs completed; timing qualification failed.** The full
-> suite passes with 286 tests and 17 subtests on Python 3.12.14 and Python
-> 3.14.0. It ran on an uncommitted candidate based on `996dd1e`, later
+**User-selected biological task (2026-10-30):** regulate the CA3 100–250 Hz
+RMS envelope, smoothed over 10 ms and normalized to the frozen valid baseline,
+toward a target. The user accepts the architecture as the basis for the
+methodological paper. The target, direction, response window, biological tolerances, and
+slice-level analysis remain to be set. This direction is not evidence of biological
+validation. See the [biological task qualification plan](docs/biological_task_qualification.md).
+
+The paired 24-second neural mock passed its ten virtual circuit-closure gates:
+each Rule-off/on run recorded 480,000 samples, and the feedback run produced
+22 pulse requests and 2,178 nonzero AO samples. A generated pulse changed the
+model after the configured 20 ms sample delay, followed by a later valid Rule
+measurement after the real Core blanking path. These are virtual sample-clock
+results, not NI latency or biological evidence. See the [mock neural circuit
+closure report](docs/validation/neural-mock/README.md).
+
+The earlier c16 ESN paced run remains failed and truncated at 5,564,500
+recorded samples after a simulated AO active-demand deadline fault. The bounded
+[fault timeline](docs/validation/esn-fault-investigation-c16c0ee/README-analysis.md)
+correlates the source block with a long synchronous UI-publication call but
+does not identify a cause. Two six-minute instrumented probes completed cleanly
+without reproducing the fault, and a separate scheduler-boundary test confirmed
+the software 50 ms reserve guard. Neither establishes a fix or physical
+underrun. See the [probe summary](docs/validation/esn-fault-probes-c2e4119/README.md).
+
+The separate [PID stimulation demonstration](docs/validation/pid-stimulation-demo/README.md)
+uses a generic responsive plant with a preset 150 Hz carrier. Its stimulated
+phase produced 32 unique pulse proposals and all three 64-second phases
+completed. It is not the neural mock or tissue evidence.
+
+> **Required software runs completed; timing qualification failed.** The latest
+> full suite passed 305 tests and 20 subtests on Python 3.12.14 and Python
+> 3.14.0. It ran on an uncommitted candidate based on isolated `c2e4119`.
+> Its 74 captured runtime, model, configuration, UI, and test inputs were
+> unchanged through both runs. Documentation was outside that capture; the
+> plotting postprocessor was checked separately. Logs and the input manifest
+> are in the [neural-mock unit-test snapshot](docs/validation/neural-mock/unit-tests/).
+> The earlier suite passed 286 tests and 17 subtests on Python 3.12.14 and
+> Python 3.14.0. It ran on an uncommitted candidate based on `996dd1e`, later
 > committed as isolated `4967720` and cherry-picked as main `ef81a23`. The
 > runtime-input proof verifies its captured non-documentation inputs against
 > the c16 main snapshot, with line-ending-only differences in 30 files. Suite
@@ -290,7 +325,7 @@ capacity calculation alone does not establish PID tracking; use
 tracking gate as such. The plant is a software fixture, not a tissue model.
 These replay and simulation commands do not establish SWR ground truth,
 biological efficacy, or physical stimulation.
-The staged NI procedure remains unverified and requires a lab operator.
+The staged NI procedure remains unverified and requires a lab operator. Before claiming biological activity regulation, follow the [biological task qualification plan](docs/biological_task_qualification.md). It keeps the software timing benchmark separate from measured electrical output and tissue response.
 Read the [controller validation guide](docs/controller_validation.md),
 [replay import guide](docs/replay_import.md), and
 [NI staged test protocol](docs/ni_controller_protocol.md) before those runs.
