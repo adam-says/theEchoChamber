@@ -1,0 +1,2535 @@
+{
+  "schema": "pid-stimulation-demo-audit-v1",
+  "report_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\pid-stimulation-demo-4e9cb5b-attempt1\\responsive_simulation_20261030T171013Z.json",
+  "report_git_revision": "4e9cb5b8e375a6b4fb56f9e9d68fc4c0aec7f892",
+  "report_schema": "echo-chamber-responsive-simulation-matrix-v1",
+  "scenario": "capacity_checked_pid_tracking",
+  "duration_seconds": 64.0,
+  "sample_rate_hz": 20000,
+  "block_samples": 100,
+  "ao_lead_ms": 100.0,
+  "pid_settings": {
+    "kp": 0.2,
+    "ki": 0.06,
+    "kd": 0.0,
+    "target_z": 1.0,
+    "direction": 1,
+    "max_rate_hz": 2.0,
+    "update_ms": 5.0
+  },
+  "plant_scope": "generic deterministic synthetic plant, not a tissue model",
+  "physical_pulse_claims": false,
+  "process_timing": {
+    "stimulated": {
+      "source_samples": 1280000,
+      "recording_committed_samples": 1280000,
+      "recording_completed": true,
+      "ao_drain_complete": true,
+      "runtime_fault": null,
+      "ao_active_demand_misses": 0,
+      "ao_late_commands": 0,
+      "deadline_exceeded_blocks": 3,
+      "process_p99_ms": 1.4174350000000007,
+      "process_max_ms": 6.7827,
+      "requested_pulse_events": 32,
+      "pulse_commit_samples": 3200,
+      "ao_nonzero_generated_samples": 3168,
+      "pulse_request_ids": [
+        "g2-p1",
+        "g2-p2",
+        "g2-p3",
+        "g2-p4",
+        "g2-p5",
+        "g2-p6",
+        "g2-p7",
+        "g2-p8",
+        "g2-p9",
+        "g2-p10",
+        "g2-p11",
+        "g2-p12",
+        "g2-p13",
+        "g2-p14",
+        "g2-p15",
+        "g2-p16",
+        "g2-p17",
+        "g2-p18",
+        "g2-p19",
+        "g2-p20",
+        "g2-p21",
+        "g2-p22",
+        "g2-p23",
+        "g2-p24",
+        "g2-p25",
+        "g2-p26",
+        "g2-p27",
+        "g2-p28",
+        "g2-p29",
+        "g2-p30",
+        "g2-p31",
+        "g2-p32"
+      ],
+      "pulse_commit_ids": [
+        "g2-p1",
+        "g2-p10",
+        "g2-p11",
+        "g2-p12",
+        "g2-p13",
+        "g2-p14",
+        "g2-p15",
+        "g2-p16",
+        "g2-p17",
+        "g2-p18",
+        "g2-p19",
+        "g2-p2",
+        "g2-p20",
+        "g2-p21",
+        "g2-p22",
+        "g2-p23",
+        "g2-p24",
+        "g2-p25",
+        "g2-p26",
+        "g2-p27",
+        "g2-p28",
+        "g2-p29",
+        "g2-p3",
+        "g2-p30",
+        "g2-p31",
+        "g2-p32",
+        "g2-p4",
+        "g2-p5",
+        "g2-p6",
+        "g2-p7",
+        "g2-p8",
+        "g2-p9"
+      ]
+    },
+    "no_stimulation_control": {
+      "source_samples": 1280000,
+      "recording_committed_samples": 1280000,
+      "recording_completed": true,
+      "ao_drain_complete": true,
+      "runtime_fault": null,
+      "ao_active_demand_misses": 0,
+      "ao_late_commands": 0,
+      "deadline_exceeded_blocks": 2,
+      "process_p99_ms": 1.4040230000000005,
+      "process_max_ms": 12.3083,
+      "requested_pulse_events": 0,
+      "pulse_commit_samples": 0,
+      "ao_nonzero_generated_samples": 0,
+      "pulse_request_ids": [],
+      "pulse_commit_ids": []
+    },
+    "capacity_reference": {
+      "source_samples": 1280000,
+      "recording_committed_samples": 1280000,
+      "recording_completed": true,
+      "ao_drain_complete": true,
+      "runtime_fault": null,
+      "ao_active_demand_misses": 0,
+      "ao_late_commands": 0,
+      "deadline_exceeded_blocks": 4,
+      "process_p99_ms": 1.9004820000000018,
+      "process_max_ms": 11.7851,
+      "requested_pulse_events": 67,
+      "pulse_commit_samples": 6700,
+      "ao_nonzero_generated_samples": 6633,
+      "pulse_request_ids": [
+        "g2-p1",
+        "g2-p2",
+        "g2-p3",
+        "g2-p4",
+        "g2-p5",
+        "g2-p6",
+        "g2-p7",
+        "g2-p8",
+        "g2-p9",
+        "g2-p10",
+        "g2-p11",
+        "g2-p12",
+        "g2-p13",
+        "g2-p14",
+        "g2-p15",
+        "g2-p16",
+        "g2-p17",
+        "g2-p18",
+        "g2-p19",
+        "g2-p20",
+        "g2-p21",
+        "g2-p22",
+        "g2-p23",
+        "g2-p24",
+        "g2-p25",
+        "g2-p26",
+        "g2-p27",
+        "g2-p28",
+        "g2-p29",
+        "g2-p30",
+        "g2-p31",
+        "g2-p32",
+        "g2-p33",
+        "g2-p34",
+        "g2-p35",
+        "g2-p36",
+        "g2-p37",
+        "g2-p38",
+        "g2-p39",
+        "g2-p40",
+        "g2-p41",
+        "g2-p42",
+        "g2-p43",
+        "g2-p44",
+        "g2-p45",
+        "g2-p46",
+        "g2-p47",
+        "g2-p48",
+        "g2-p49",
+        "g2-p50",
+        "g2-p51",
+        "g2-p52",
+        "g2-p53",
+        "g2-p54",
+        "g2-p55",
+        "g2-p56",
+        "g2-p57",
+        "g2-p58",
+        "g2-p59",
+        "g2-p60",
+        "g2-p61",
+        "g2-p62",
+        "g2-p63",
+        "g2-p64",
+        "g2-p65",
+        "g2-p66",
+        "g2-p67"
+      ],
+      "pulse_commit_ids": [
+        "g2-p1",
+        "g2-p10",
+        "g2-p11",
+        "g2-p12",
+        "g2-p13",
+        "g2-p14",
+        "g2-p15",
+        "g2-p16",
+        "g2-p17",
+        "g2-p18",
+        "g2-p19",
+        "g2-p2",
+        "g2-p20",
+        "g2-p21",
+        "g2-p22",
+        "g2-p23",
+        "g2-p24",
+        "g2-p25",
+        "g2-p26",
+        "g2-p27",
+        "g2-p28",
+        "g2-p29",
+        "g2-p3",
+        "g2-p30",
+        "g2-p31",
+        "g2-p32",
+        "g2-p33",
+        "g2-p34",
+        "g2-p35",
+        "g2-p36",
+        "g2-p37",
+        "g2-p38",
+        "g2-p39",
+        "g2-p4",
+        "g2-p40",
+        "g2-p41",
+        "g2-p42",
+        "g2-p43",
+        "g2-p44",
+        "g2-p45",
+        "g2-p46",
+        "g2-p47",
+        "g2-p48",
+        "g2-p49",
+        "g2-p5",
+        "g2-p50",
+        "g2-p51",
+        "g2-p52",
+        "g2-p53",
+        "g2-p54",
+        "g2-p55",
+        "g2-p56",
+        "g2-p57",
+        "g2-p58",
+        "g2-p59",
+        "g2-p6",
+        "g2-p60",
+        "g2-p61",
+        "g2-p62",
+        "g2-p63",
+        "g2-p64",
+        "g2-p65",
+        "g2-p66",
+        "g2-p67",
+        "g2-p7",
+        "g2-p8",
+        "g2-p9"
+      ]
+    }
+  },
+  "phase_results": {
+    "stimulated": {
+      "passed": true,
+      "failures": [],
+      "case_id": "20261030_180659_20261030T170659Z_responsive_generic_seed_1414_pid_100ms",
+      "recording_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\pid-stimulation-demo-4e9cb5b-attempt1\\recordings\\20261030_180659_20261030T170659Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "runtime_summary": {
+        "source_samples": 1280000,
+        "recording_committed_samples": 1280000,
+        "recording_completed": true,
+        "ao_drain_complete": true,
+        "runtime_fault": null,
+        "ao_active_demand_misses": 0,
+        "ao_late_commands": 0,
+        "deadline_exceeded_blocks": 3,
+        "process_p99_ms": 1.4174350000000007,
+        "process_max_ms": 6.7827,
+        "requested_pulse_events": 32,
+        "pulse_commit_samples": 3200,
+        "ao_nonzero_generated_samples": 3168,
+        "pulse_request_ids": [
+          "g2-p1",
+          "g2-p2",
+          "g2-p3",
+          "g2-p4",
+          "g2-p5",
+          "g2-p6",
+          "g2-p7",
+          "g2-p8",
+          "g2-p9",
+          "g2-p10",
+          "g2-p11",
+          "g2-p12",
+          "g2-p13",
+          "g2-p14",
+          "g2-p15",
+          "g2-p16",
+          "g2-p17",
+          "g2-p18",
+          "g2-p19",
+          "g2-p20",
+          "g2-p21",
+          "g2-p22",
+          "g2-p23",
+          "g2-p24",
+          "g2-p25",
+          "g2-p26",
+          "g2-p27",
+          "g2-p28",
+          "g2-p29",
+          "g2-p30",
+          "g2-p31",
+          "g2-p32"
+        ],
+        "pulse_commit_ids": [
+          "g2-p1",
+          "g2-p10",
+          "g2-p11",
+          "g2-p12",
+          "g2-p13",
+          "g2-p14",
+          "g2-p15",
+          "g2-p16",
+          "g2-p17",
+          "g2-p18",
+          "g2-p19",
+          "g2-p2",
+          "g2-p20",
+          "g2-p21",
+          "g2-p22",
+          "g2-p23",
+          "g2-p24",
+          "g2-p25",
+          "g2-p26",
+          "g2-p27",
+          "g2-p28",
+          "g2-p29",
+          "g2-p3",
+          "g2-p30",
+          "g2-p31",
+          "g2-p32",
+          "g2-p4",
+          "g2-p5",
+          "g2-p6",
+          "g2-p7",
+          "g2-p8",
+          "g2-p9"
+        ]
+      },
+      "h5_summary": {
+        "ao_nonzero_samples": 3168,
+        "ao_peak_v": 0.5,
+        "pulse_count": 32,
+        "pulse_rows": [
+          {
+            "pulse_id": "g2-p1",
+            "source_sample_index": 253485,
+            "target_sample_index": 255485,
+            "effect_start_sample_index": 255885,
+            "committed_ranges": [
+              [
+                255485,
+                255500
+              ],
+              [
+                255500,
+                255585
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p2",
+            "source_sample_index": 271921,
+            "target_sample_index": 273921,
+            "effect_start_sample_index": 274321,
+            "committed_ranges": [
+              [
+                273921,
+                274000
+              ],
+              [
+                274000,
+                274021
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p3",
+            "source_sample_index": 290404,
+            "target_sample_index": 292404,
+            "effect_start_sample_index": 292804,
+            "committed_ranges": [
+              [
+                292404,
+                292500
+              ],
+              [
+                292500,
+                292504
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p4",
+            "source_sample_index": 308413,
+            "target_sample_index": 310413,
+            "effect_start_sample_index": 310813,
+            "committed_ranges": [
+              [
+                310413,
+                310500
+              ],
+              [
+                310500,
+                310513
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p5",
+            "source_sample_index": 326645,
+            "target_sample_index": 328645,
+            "effect_start_sample_index": 329045,
+            "committed_ranges": [
+              [
+                328645,
+                328700
+              ],
+              [
+                328700,
+                328745
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p6",
+            "source_sample_index": 345036,
+            "target_sample_index": 347036,
+            "effect_start_sample_index": 347436,
+            "committed_ranges": [
+              [
+                347036,
+                347100
+              ],
+              [
+                347100,
+                347136
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p7",
+            "source_sample_index": 362890,
+            "target_sample_index": 364890,
+            "effect_start_sample_index": 365290,
+            "committed_ranges": [
+              [
+                364890,
+                364900
+              ],
+              [
+                364900,
+                364990
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p8",
+            "source_sample_index": 381141,
+            "target_sample_index": 383141,
+            "effect_start_sample_index": 383541,
+            "committed_ranges": [
+              [
+                383141,
+                383200
+              ],
+              [
+                383200,
+                383241
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p9",
+            "source_sample_index": 399278,
+            "target_sample_index": 401278,
+            "effect_start_sample_index": 401678,
+            "committed_ranges": [
+              [
+                401278,
+                401300
+              ],
+              [
+                401300,
+                401378
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p10",
+            "source_sample_index": 417894,
+            "target_sample_index": 419894,
+            "effect_start_sample_index": 420294,
+            "committed_ranges": [
+              [
+                419894,
+                419900
+              ],
+              [
+                419900,
+                419994
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p11",
+            "source_sample_index": 436415,
+            "target_sample_index": 438415,
+            "effect_start_sample_index": 438815,
+            "committed_ranges": [
+              [
+                438415,
+                438500
+              ],
+              [
+                438500,
+                438515
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p12",
+            "source_sample_index": 454560,
+            "target_sample_index": 456560,
+            "effect_start_sample_index": 456960,
+            "committed_ranges": [
+              [
+                456560,
+                456600
+              ],
+              [
+                456600,
+                456660
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p13",
+            "source_sample_index": 472829,
+            "target_sample_index": 474829,
+            "effect_start_sample_index": 475229,
+            "committed_ranges": [
+              [
+                474829,
+                474900
+              ],
+              [
+                474900,
+                474929
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p14",
+            "source_sample_index": 491554,
+            "target_sample_index": 493554,
+            "effect_start_sample_index": 493954,
+            "committed_ranges": [
+              [
+                493554,
+                493600
+              ],
+              [
+                493600,
+                493654
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p15",
+            "source_sample_index": 509632,
+            "target_sample_index": 511632,
+            "effect_start_sample_index": 512032,
+            "committed_ranges": [
+              [
+                511632,
+                511700
+              ],
+              [
+                511700,
+                511732
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p16",
+            "source_sample_index": 528149,
+            "target_sample_index": 530149,
+            "effect_start_sample_index": 530549,
+            "committed_ranges": [
+              [
+                530149,
+                530200
+              ],
+              [
+                530200,
+                530249
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p17",
+            "source_sample_index": 546887,
+            "target_sample_index": 548887,
+            "effect_start_sample_index": 549287,
+            "committed_ranges": [
+              [
+                548887,
+                548900
+              ],
+              [
+                548900,
+                548987
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p18",
+            "source_sample_index": 565353,
+            "target_sample_index": 567353,
+            "effect_start_sample_index": 567753,
+            "committed_ranges": [
+              [
+                567353,
+                567400
+              ],
+              [
+                567400,
+                567453
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p19",
+            "source_sample_index": 583625,
+            "target_sample_index": 585625,
+            "effect_start_sample_index": 586025,
+            "committed_ranges": [
+              [
+                585625,
+                585700
+              ],
+              [
+                585700,
+                585725
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p20",
+            "source_sample_index": 602191,
+            "target_sample_index": 604191,
+            "effect_start_sample_index": 604591,
+            "committed_ranges": [
+              [
+                604191,
+                604200
+              ],
+              [
+                604200,
+                604291
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p21",
+            "source_sample_index": 620937,
+            "target_sample_index": 622937,
+            "effect_start_sample_index": 623337,
+            "committed_ranges": [
+              [
+                622937,
+                623000
+              ],
+              [
+                623000,
+                623037
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p22",
+            "source_sample_index": 639485,
+            "target_sample_index": 641485,
+            "effect_start_sample_index": 641885,
+            "committed_ranges": [
+              [
+                641485,
+                641500
+              ],
+              [
+                641500,
+                641585
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p23",
+            "source_sample_index": 658069,
+            "target_sample_index": 660069,
+            "effect_start_sample_index": 660469,
+            "committed_ranges": [
+              [
+                660069,
+                660100
+              ],
+              [
+                660100,
+                660169
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p24",
+            "source_sample_index": 676722,
+            "target_sample_index": 678722,
+            "effect_start_sample_index": 679122,
+            "committed_ranges": [
+              [
+                678722,
+                678800
+              ],
+              [
+                678800,
+                678822
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p25",
+            "source_sample_index": 695251,
+            "target_sample_index": 697251,
+            "effect_start_sample_index": 697651,
+            "committed_ranges": [
+              [
+                697251,
+                697300
+              ],
+              [
+                697300,
+                697351
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p26",
+            "source_sample_index": 713918,
+            "target_sample_index": 715918,
+            "effect_start_sample_index": 716318,
+            "committed_ranges": [
+              [
+                715918,
+                716000
+              ],
+              [
+                716000,
+                716018
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p27",
+            "source_sample_index": 732818,
+            "target_sample_index": 734818,
+            "effect_start_sample_index": 735218,
+            "committed_ranges": [
+              [
+                734818,
+                734900
+              ],
+              [
+                734900,
+                734918
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p28",
+            "source_sample_index": 751878,
+            "target_sample_index": 753878,
+            "effect_start_sample_index": 754278,
+            "committed_ranges": [
+              [
+                753878,
+                753900
+              ],
+              [
+                753900,
+                753978
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p29",
+            "source_sample_index": 770465,
+            "target_sample_index": 772465,
+            "effect_start_sample_index": 772865,
+            "committed_ranges": [
+              [
+                772465,
+                772500
+              ],
+              [
+                772500,
+                772565
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p30",
+            "source_sample_index": 789123,
+            "target_sample_index": 791123,
+            "effect_start_sample_index": 791523,
+            "committed_ranges": [
+              [
+                791123,
+                791200
+              ],
+              [
+                791200,
+                791223
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p31",
+            "source_sample_index": 808194,
+            "target_sample_index": 810194,
+            "effect_start_sample_index": 810594,
+            "committed_ranges": [
+              [
+                810194,
+                810200
+              ],
+              [
+                810200,
+                810294
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p32",
+            "source_sample_index": 827041,
+            "target_sample_index": 829041,
+            "effect_start_sample_index": 829441,
+            "committed_ranges": [
+              [
+                829041,
+                829100
+              ],
+              [
+                829100,
+                829141
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          }
+        ],
+        "action_stage_counts": {
+          "ao_committed": 32,
+          "ao_reserved": 32,
+          "ao_commit": 32,
+          "rendered_for_ao": 32,
+          "committed_tail_rendered": 32
+        },
+        "signal_shapes": {
+          "signals/ai_raw_V": [
+            2,
+            1280000
+          ],
+          "signals/electrode_mV": [
+            2,
+            1280000
+          ],
+          "signals/ao_command_V": [
+            1,
+            1280000
+          ]
+        }
+      }
+    },
+    "no_stimulation_control": {
+      "passed": true,
+      "failures": [],
+      "case_id": "20261030_180804_20261030T170804Z_responsive_generic_seed_1414_pid_100ms",
+      "recording_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\pid-stimulation-demo-4e9cb5b-attempt1\\recordings\\20261030_180804_20261030T170804Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "runtime_summary": {
+        "source_samples": 1280000,
+        "recording_committed_samples": 1280000,
+        "recording_completed": true,
+        "ao_drain_complete": true,
+        "runtime_fault": null,
+        "ao_active_demand_misses": 0,
+        "ao_late_commands": 0,
+        "deadline_exceeded_blocks": 2,
+        "process_p99_ms": 1.4040230000000005,
+        "process_max_ms": 12.3083,
+        "requested_pulse_events": 0,
+        "pulse_commit_samples": 0,
+        "ao_nonzero_generated_samples": 0,
+        "pulse_request_ids": [],
+        "pulse_commit_ids": []
+      },
+      "h5_summary": {
+        "ao_nonzero_samples": 0,
+        "ao_peak_v": 0.0,
+        "pulse_count": 0,
+        "pulse_rows": [],
+        "action_stage_counts": {},
+        "signal_shapes": {
+          "signals/ai_raw_V": [
+            2,
+            1280000
+          ],
+          "signals/electrode_mV": [
+            2,
+            1280000
+          ],
+          "signals/ao_command_V": [
+            1,
+            1280000
+          ]
+        }
+      }
+    },
+    "capacity_reference": {
+      "passed": true,
+      "failures": [],
+      "case_id": "20261030_180908_20261030T170908Z_responsive_generic_seed_1414_pid_100ms",
+      "recording_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\pid-stimulation-demo-4e9cb5b-attempt1\\recordings\\capacity_reference\\20261030_180908_20261030T170908Z_responsive_generic_seed_1414_pid_100ms.h5",
+      "runtime_summary": {
+        "source_samples": 1280000,
+        "recording_committed_samples": 1280000,
+        "recording_completed": true,
+        "ao_drain_complete": true,
+        "runtime_fault": null,
+        "ao_active_demand_misses": 0,
+        "ao_late_commands": 0,
+        "deadline_exceeded_blocks": 4,
+        "process_p99_ms": 1.9004820000000018,
+        "process_max_ms": 11.7851,
+        "requested_pulse_events": 67,
+        "pulse_commit_samples": 6700,
+        "ao_nonzero_generated_samples": 6633,
+        "pulse_request_ids": [
+          "g2-p1",
+          "g2-p2",
+          "g2-p3",
+          "g2-p4",
+          "g2-p5",
+          "g2-p6",
+          "g2-p7",
+          "g2-p8",
+          "g2-p9",
+          "g2-p10",
+          "g2-p11",
+          "g2-p12",
+          "g2-p13",
+          "g2-p14",
+          "g2-p15",
+          "g2-p16",
+          "g2-p17",
+          "g2-p18",
+          "g2-p19",
+          "g2-p20",
+          "g2-p21",
+          "g2-p22",
+          "g2-p23",
+          "g2-p24",
+          "g2-p25",
+          "g2-p26",
+          "g2-p27",
+          "g2-p28",
+          "g2-p29",
+          "g2-p30",
+          "g2-p31",
+          "g2-p32",
+          "g2-p33",
+          "g2-p34",
+          "g2-p35",
+          "g2-p36",
+          "g2-p37",
+          "g2-p38",
+          "g2-p39",
+          "g2-p40",
+          "g2-p41",
+          "g2-p42",
+          "g2-p43",
+          "g2-p44",
+          "g2-p45",
+          "g2-p46",
+          "g2-p47",
+          "g2-p48",
+          "g2-p49",
+          "g2-p50",
+          "g2-p51",
+          "g2-p52",
+          "g2-p53",
+          "g2-p54",
+          "g2-p55",
+          "g2-p56",
+          "g2-p57",
+          "g2-p58",
+          "g2-p59",
+          "g2-p60",
+          "g2-p61",
+          "g2-p62",
+          "g2-p63",
+          "g2-p64",
+          "g2-p65",
+          "g2-p66",
+          "g2-p67"
+        ],
+        "pulse_commit_ids": [
+          "g2-p1",
+          "g2-p10",
+          "g2-p11",
+          "g2-p12",
+          "g2-p13",
+          "g2-p14",
+          "g2-p15",
+          "g2-p16",
+          "g2-p17",
+          "g2-p18",
+          "g2-p19",
+          "g2-p2",
+          "g2-p20",
+          "g2-p21",
+          "g2-p22",
+          "g2-p23",
+          "g2-p24",
+          "g2-p25",
+          "g2-p26",
+          "g2-p27",
+          "g2-p28",
+          "g2-p29",
+          "g2-p3",
+          "g2-p30",
+          "g2-p31",
+          "g2-p32",
+          "g2-p33",
+          "g2-p34",
+          "g2-p35",
+          "g2-p36",
+          "g2-p37",
+          "g2-p38",
+          "g2-p39",
+          "g2-p4",
+          "g2-p40",
+          "g2-p41",
+          "g2-p42",
+          "g2-p43",
+          "g2-p44",
+          "g2-p45",
+          "g2-p46",
+          "g2-p47",
+          "g2-p48",
+          "g2-p49",
+          "g2-p5",
+          "g2-p50",
+          "g2-p51",
+          "g2-p52",
+          "g2-p53",
+          "g2-p54",
+          "g2-p55",
+          "g2-p56",
+          "g2-p57",
+          "g2-p58",
+          "g2-p59",
+          "g2-p6",
+          "g2-p60",
+          "g2-p61",
+          "g2-p62",
+          "g2-p63",
+          "g2-p64",
+          "g2-p65",
+          "g2-p66",
+          "g2-p67",
+          "g2-p7",
+          "g2-p8",
+          "g2-p9"
+        ]
+      },
+      "h5_summary": {
+        "ao_nonzero_samples": 6633,
+        "ao_peak_v": 0.5,
+        "pulse_count": 67,
+        "pulse_rows": [
+          {
+            "pulse_id": "g2-p1",
+            "source_sample_index": 230399,
+            "target_sample_index": 232399,
+            "effect_start_sample_index": 232799,
+            "committed_ranges": [
+              [
+                232399,
+                232400
+              ],
+              [
+                232400,
+                232499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p2",
+            "source_sample_index": 246199,
+            "target_sample_index": 248199,
+            "effect_start_sample_index": 248599,
+            "committed_ranges": [
+              [
+                248199,
+                248200
+              ],
+              [
+                248200,
+                248299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p3",
+            "source_sample_index": 261999,
+            "target_sample_index": 263999,
+            "effect_start_sample_index": 264399,
+            "committed_ranges": [
+              [
+                263999,
+                264000
+              ],
+              [
+                264000,
+                264099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p4",
+            "source_sample_index": 277799,
+            "target_sample_index": 279799,
+            "effect_start_sample_index": 280199,
+            "committed_ranges": [
+              [
+                279799,
+                279800
+              ],
+              [
+                279800,
+                279899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p5",
+            "source_sample_index": 293599,
+            "target_sample_index": 295599,
+            "effect_start_sample_index": 295999,
+            "committed_ranges": [
+              [
+                295599,
+                295600
+              ],
+              [
+                295600,
+                295699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p6",
+            "source_sample_index": 309399,
+            "target_sample_index": 311399,
+            "effect_start_sample_index": 311799,
+            "committed_ranges": [
+              [
+                311399,
+                311400
+              ],
+              [
+                311400,
+                311499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p7",
+            "source_sample_index": 325199,
+            "target_sample_index": 327199,
+            "effect_start_sample_index": 327599,
+            "committed_ranges": [
+              [
+                327199,
+                327200
+              ],
+              [
+                327200,
+                327299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p8",
+            "source_sample_index": 340999,
+            "target_sample_index": 342999,
+            "effect_start_sample_index": 343399,
+            "committed_ranges": [
+              [
+                342999,
+                343000
+              ],
+              [
+                343000,
+                343099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p9",
+            "source_sample_index": 356799,
+            "target_sample_index": 358799,
+            "effect_start_sample_index": 359199,
+            "committed_ranges": [
+              [
+                358799,
+                358800
+              ],
+              [
+                358800,
+                358899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p10",
+            "source_sample_index": 372599,
+            "target_sample_index": 374599,
+            "effect_start_sample_index": 374999,
+            "committed_ranges": [
+              [
+                374599,
+                374600
+              ],
+              [
+                374600,
+                374699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p11",
+            "source_sample_index": 388399,
+            "target_sample_index": 390399,
+            "effect_start_sample_index": 390799,
+            "committed_ranges": [
+              [
+                390399,
+                390400
+              ],
+              [
+                390400,
+                390499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p12",
+            "source_sample_index": 404199,
+            "target_sample_index": 406199,
+            "effect_start_sample_index": 406599,
+            "committed_ranges": [
+              [
+                406199,
+                406200
+              ],
+              [
+                406200,
+                406299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p13",
+            "source_sample_index": 419999,
+            "target_sample_index": 421999,
+            "effect_start_sample_index": 422399,
+            "committed_ranges": [
+              [
+                421999,
+                422000
+              ],
+              [
+                422000,
+                422099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p14",
+            "source_sample_index": 435799,
+            "target_sample_index": 437799,
+            "effect_start_sample_index": 438199,
+            "committed_ranges": [
+              [
+                437799,
+                437800
+              ],
+              [
+                437800,
+                437899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p15",
+            "source_sample_index": 451599,
+            "target_sample_index": 453599,
+            "effect_start_sample_index": 453999,
+            "committed_ranges": [
+              [
+                453599,
+                453600
+              ],
+              [
+                453600,
+                453699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p16",
+            "source_sample_index": 467399,
+            "target_sample_index": 469399,
+            "effect_start_sample_index": 469799,
+            "committed_ranges": [
+              [
+                469399,
+                469400
+              ],
+              [
+                469400,
+                469499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p17",
+            "source_sample_index": 483199,
+            "target_sample_index": 485199,
+            "effect_start_sample_index": 485599,
+            "committed_ranges": [
+              [
+                485199,
+                485200
+              ],
+              [
+                485200,
+                485299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p18",
+            "source_sample_index": 498999,
+            "target_sample_index": 500999,
+            "effect_start_sample_index": 501399,
+            "committed_ranges": [
+              [
+                500999,
+                501000
+              ],
+              [
+                501000,
+                501099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p19",
+            "source_sample_index": 514799,
+            "target_sample_index": 516799,
+            "effect_start_sample_index": 517199,
+            "committed_ranges": [
+              [
+                516799,
+                516800
+              ],
+              [
+                516800,
+                516899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p20",
+            "source_sample_index": 530599,
+            "target_sample_index": 532599,
+            "effect_start_sample_index": 532999,
+            "committed_ranges": [
+              [
+                532599,
+                532600
+              ],
+              [
+                532600,
+                532699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p21",
+            "source_sample_index": 546399,
+            "target_sample_index": 548399,
+            "effect_start_sample_index": 548799,
+            "committed_ranges": [
+              [
+                548399,
+                548400
+              ],
+              [
+                548400,
+                548499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p22",
+            "source_sample_index": 562199,
+            "target_sample_index": 564199,
+            "effect_start_sample_index": 564599,
+            "committed_ranges": [
+              [
+                564199,
+                564200
+              ],
+              [
+                564200,
+                564299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p23",
+            "source_sample_index": 577999,
+            "target_sample_index": 579999,
+            "effect_start_sample_index": 580399,
+            "committed_ranges": [
+              [
+                579999,
+                580000
+              ],
+              [
+                580000,
+                580099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p24",
+            "source_sample_index": 593799,
+            "target_sample_index": 595799,
+            "effect_start_sample_index": 596199,
+            "committed_ranges": [
+              [
+                595799,
+                595800
+              ],
+              [
+                595800,
+                595899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p25",
+            "source_sample_index": 609599,
+            "target_sample_index": 611599,
+            "effect_start_sample_index": 611999,
+            "committed_ranges": [
+              [
+                611599,
+                611600
+              ],
+              [
+                611600,
+                611699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p26",
+            "source_sample_index": 625399,
+            "target_sample_index": 627399,
+            "effect_start_sample_index": 627799,
+            "committed_ranges": [
+              [
+                627399,
+                627400
+              ],
+              [
+                627400,
+                627499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p27",
+            "source_sample_index": 641199,
+            "target_sample_index": 643199,
+            "effect_start_sample_index": 643599,
+            "committed_ranges": [
+              [
+                643199,
+                643200
+              ],
+              [
+                643200,
+                643299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p28",
+            "source_sample_index": 656999,
+            "target_sample_index": 658999,
+            "effect_start_sample_index": 659399,
+            "committed_ranges": [
+              [
+                658999,
+                659000
+              ],
+              [
+                659000,
+                659099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p29",
+            "source_sample_index": 672799,
+            "target_sample_index": 674799,
+            "effect_start_sample_index": 675199,
+            "committed_ranges": [
+              [
+                674799,
+                674800
+              ],
+              [
+                674800,
+                674899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p30",
+            "source_sample_index": 688599,
+            "target_sample_index": 690599,
+            "effect_start_sample_index": 690999,
+            "committed_ranges": [
+              [
+                690599,
+                690600
+              ],
+              [
+                690600,
+                690699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p31",
+            "source_sample_index": 704399,
+            "target_sample_index": 706399,
+            "effect_start_sample_index": 706799,
+            "committed_ranges": [
+              [
+                706399,
+                706400
+              ],
+              [
+                706400,
+                706499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p32",
+            "source_sample_index": 720199,
+            "target_sample_index": 722199,
+            "effect_start_sample_index": 722599,
+            "committed_ranges": [
+              [
+                722199,
+                722200
+              ],
+              [
+                722200,
+                722299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p33",
+            "source_sample_index": 735999,
+            "target_sample_index": 737999,
+            "effect_start_sample_index": 738399,
+            "committed_ranges": [
+              [
+                737999,
+                738000
+              ],
+              [
+                738000,
+                738099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p34",
+            "source_sample_index": 751799,
+            "target_sample_index": 753799,
+            "effect_start_sample_index": 754199,
+            "committed_ranges": [
+              [
+                753799,
+                753800
+              ],
+              [
+                753800,
+                753899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p35",
+            "source_sample_index": 767599,
+            "target_sample_index": 769599,
+            "effect_start_sample_index": 769999,
+            "committed_ranges": [
+              [
+                769599,
+                769600
+              ],
+              [
+                769600,
+                769699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p36",
+            "source_sample_index": 783399,
+            "target_sample_index": 785399,
+            "effect_start_sample_index": 785799,
+            "committed_ranges": [
+              [
+                785399,
+                785400
+              ],
+              [
+                785400,
+                785499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p37",
+            "source_sample_index": 799199,
+            "target_sample_index": 801199,
+            "effect_start_sample_index": 801599,
+            "committed_ranges": [
+              [
+                801199,
+                801200
+              ],
+              [
+                801200,
+                801299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p38",
+            "source_sample_index": 814999,
+            "target_sample_index": 816999,
+            "effect_start_sample_index": 817399,
+            "committed_ranges": [
+              [
+                816999,
+                817000
+              ],
+              [
+                817000,
+                817099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p39",
+            "source_sample_index": 830799,
+            "target_sample_index": 832799,
+            "effect_start_sample_index": 833199,
+            "committed_ranges": [
+              [
+                832799,
+                832800
+              ],
+              [
+                832800,
+                832899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p40",
+            "source_sample_index": 846599,
+            "target_sample_index": 848599,
+            "effect_start_sample_index": 848999,
+            "committed_ranges": [
+              [
+                848599,
+                848600
+              ],
+              [
+                848600,
+                848699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p41",
+            "source_sample_index": 862399,
+            "target_sample_index": 864399,
+            "effect_start_sample_index": 864799,
+            "committed_ranges": [
+              [
+                864399,
+                864400
+              ],
+              [
+                864400,
+                864499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p42",
+            "source_sample_index": 878199,
+            "target_sample_index": 880199,
+            "effect_start_sample_index": 880599,
+            "committed_ranges": [
+              [
+                880199,
+                880200
+              ],
+              [
+                880200,
+                880299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p43",
+            "source_sample_index": 893999,
+            "target_sample_index": 895999,
+            "effect_start_sample_index": 896399,
+            "committed_ranges": [
+              [
+                895999,
+                896000
+              ],
+              [
+                896000,
+                896099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p44",
+            "source_sample_index": 909799,
+            "target_sample_index": 911799,
+            "effect_start_sample_index": 912199,
+            "committed_ranges": [
+              [
+                911799,
+                911800
+              ],
+              [
+                911800,
+                911899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p45",
+            "source_sample_index": 925599,
+            "target_sample_index": 927599,
+            "effect_start_sample_index": 927999,
+            "committed_ranges": [
+              [
+                927599,
+                927600
+              ],
+              [
+                927600,
+                927699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p46",
+            "source_sample_index": 941399,
+            "target_sample_index": 943399,
+            "effect_start_sample_index": 943799,
+            "committed_ranges": [
+              [
+                943399,
+                943400
+              ],
+              [
+                943400,
+                943499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p47",
+            "source_sample_index": 957199,
+            "target_sample_index": 959199,
+            "effect_start_sample_index": 959599,
+            "committed_ranges": [
+              [
+                959199,
+                959200
+              ],
+              [
+                959200,
+                959299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p48",
+            "source_sample_index": 972999,
+            "target_sample_index": 974999,
+            "effect_start_sample_index": 975399,
+            "committed_ranges": [
+              [
+                974999,
+                975000
+              ],
+              [
+                975000,
+                975099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p49",
+            "source_sample_index": 988799,
+            "target_sample_index": 990799,
+            "effect_start_sample_index": 991199,
+            "committed_ranges": [
+              [
+                990799,
+                990800
+              ],
+              [
+                990800,
+                990899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p50",
+            "source_sample_index": 1004599,
+            "target_sample_index": 1006599,
+            "effect_start_sample_index": 1006999,
+            "committed_ranges": [
+              [
+                1006599,
+                1006600
+              ],
+              [
+                1006600,
+                1006699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p51",
+            "source_sample_index": 1020399,
+            "target_sample_index": 1022399,
+            "effect_start_sample_index": 1022799,
+            "committed_ranges": [
+              [
+                1022399,
+                1022400
+              ],
+              [
+                1022400,
+                1022499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p52",
+            "source_sample_index": 1036199,
+            "target_sample_index": 1038199,
+            "effect_start_sample_index": 1038599,
+            "committed_ranges": [
+              [
+                1038199,
+                1038200
+              ],
+              [
+                1038200,
+                1038299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p53",
+            "source_sample_index": 1051999,
+            "target_sample_index": 1053999,
+            "effect_start_sample_index": 1054399,
+            "committed_ranges": [
+              [
+                1053999,
+                1054000
+              ],
+              [
+                1054000,
+                1054099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p54",
+            "source_sample_index": 1067799,
+            "target_sample_index": 1069799,
+            "effect_start_sample_index": 1070199,
+            "committed_ranges": [
+              [
+                1069799,
+                1069800
+              ],
+              [
+                1069800,
+                1069899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p55",
+            "source_sample_index": 1083599,
+            "target_sample_index": 1085599,
+            "effect_start_sample_index": 1085999,
+            "committed_ranges": [
+              [
+                1085599,
+                1085600
+              ],
+              [
+                1085600,
+                1085699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p56",
+            "source_sample_index": 1099399,
+            "target_sample_index": 1101399,
+            "effect_start_sample_index": 1101799,
+            "committed_ranges": [
+              [
+                1101399,
+                1101400
+              ],
+              [
+                1101400,
+                1101499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p57",
+            "source_sample_index": 1115199,
+            "target_sample_index": 1117199,
+            "effect_start_sample_index": 1117599,
+            "committed_ranges": [
+              [
+                1117199,
+                1117200
+              ],
+              [
+                1117200,
+                1117299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p58",
+            "source_sample_index": 1130999,
+            "target_sample_index": 1132999,
+            "effect_start_sample_index": 1133399,
+            "committed_ranges": [
+              [
+                1132999,
+                1133000
+              ],
+              [
+                1133000,
+                1133099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p59",
+            "source_sample_index": 1146799,
+            "target_sample_index": 1148799,
+            "effect_start_sample_index": 1149199,
+            "committed_ranges": [
+              [
+                1148799,
+                1148800
+              ],
+              [
+                1148800,
+                1148899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p60",
+            "source_sample_index": 1162599,
+            "target_sample_index": 1164599,
+            "effect_start_sample_index": 1164999,
+            "committed_ranges": [
+              [
+                1164599,
+                1164600
+              ],
+              [
+                1164600,
+                1164699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p61",
+            "source_sample_index": 1178399,
+            "target_sample_index": 1180399,
+            "effect_start_sample_index": 1180799,
+            "committed_ranges": [
+              [
+                1180399,
+                1180400
+              ],
+              [
+                1180400,
+                1180499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p62",
+            "source_sample_index": 1194199,
+            "target_sample_index": 1196199,
+            "effect_start_sample_index": 1196599,
+            "committed_ranges": [
+              [
+                1196199,
+                1196200
+              ],
+              [
+                1196200,
+                1196299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p63",
+            "source_sample_index": 1209999,
+            "target_sample_index": 1211999,
+            "effect_start_sample_index": 1212399,
+            "committed_ranges": [
+              [
+                1211999,
+                1212000
+              ],
+              [
+                1212000,
+                1212099
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p64",
+            "source_sample_index": 1225799,
+            "target_sample_index": 1227799,
+            "effect_start_sample_index": 1228199,
+            "committed_ranges": [
+              [
+                1227799,
+                1227800
+              ],
+              [
+                1227800,
+                1227899
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p65",
+            "source_sample_index": 1241599,
+            "target_sample_index": 1243599,
+            "effect_start_sample_index": 1243999,
+            "committed_ranges": [
+              [
+                1243599,
+                1243600
+              ],
+              [
+                1243600,
+                1243699
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p66",
+            "source_sample_index": 1257399,
+            "target_sample_index": 1259399,
+            "effect_start_sample_index": 1259799,
+            "committed_ranges": [
+              [
+                1259399,
+                1259400
+              ],
+              [
+                1259400,
+                1259499
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          },
+          {
+            "pulse_id": "g2-p67",
+            "source_sample_index": 1273199,
+            "target_sample_index": 1275199,
+            "effect_start_sample_index": 1275599,
+            "committed_ranges": [
+              [
+                1275199,
+                1275200
+              ],
+              [
+                1275200,
+                1275299
+              ]
+            ],
+            "committed_samples": 100,
+            "command_nonzero_samples": 99,
+            "command_peak_v": 0.5
+          }
+        ],
+        "action_stage_counts": {
+          "ao_committed": 67,
+          "ao_reserved": 67,
+          "ao_commit": 67,
+          "rendered_for_ao": 67,
+          "committed_tail_rendered": 67
+        },
+        "signal_shapes": {
+          "signals/ai_raw_V": [
+            2,
+            1280000
+          ],
+          "signals/electrode_mV": [
+            2,
+            1280000
+          ],
+          "signals/ao_command_V": [
+            1,
+            1280000
+          ]
+        }
+      }
+    }
+  },
+  "h5_activity_crosscheck": {
+    "stimulated": {
+      "baseline_mean_ca3_block_rms_mv": 0.08494336906862374,
+      "baseline_observed_blocks": 1700,
+      "disturbance_mean_ca3_block_rms_mv": 0.0854408375163415,
+      "disturbance_observed_blocks": 5800,
+      "recovery_mean_ca3_block_rms_mv": 0.08458635220126372,
+      "recovery_observed_blocks": 4200,
+      "disturbance_window_complete": true
+    },
+    "no_stimulation_control": {
+      "baseline_mean_ca3_block_rms_mv": 0.08494336906862374,
+      "baseline_observed_blocks": 1700,
+      "disturbance_mean_ca3_block_rms_mv": 0.08706753435672893,
+      "disturbance_observed_blocks": 5800,
+      "recovery_mean_ca3_block_rms_mv": 0.08494216238927488,
+      "recovery_observed_blocks": 4200,
+      "disturbance_window_complete": true
+    },
+    "h5_disturbance_rms_reduction_mv": 0.0016266968403874232,
+    "report_disturbance_rms_reduction_mv": 0.0016266968414569982,
+    "positive_measured_h5_effect": true,
+    "report_h5_effect_match": true
+  },
+  "demo_passed": true,
+  "failures": [],
+  "scope_note": "Software-only evidence through ProcessingCore, safety, simulated AO scheduler and H5Recorder. The capacity phase is an explicit forced-demand reference, not regulated-controller output. Process deadline counts are retained as diagnostics; they do not imply physical delivery."
+}

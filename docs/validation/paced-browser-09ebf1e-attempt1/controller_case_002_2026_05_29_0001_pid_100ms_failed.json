@@ -1,0 +1,97 @@
+{
+  "schema": "echo-chamber-controller-case-checkpoint-v1",
+  "created_at_utc": "2026-10-29T12:22:05.183753+00:00",
+  "git_revision": "09ebf1e0fc9adf5776ca805890f7f9072e14811a",
+  "python": "3.14.0",
+  "machine": "Windows-11-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 189 Stepping 1, GenuineIntel",
+  "run_kind": "paced",
+  "case_index": 2,
+  "checkpoint_scope": "single_case",
+  "case_status": "failed",
+  "matrix_status": "in_progress",
+  "matrix_complete": false,
+  "case": null,
+  "environment": null,
+  "failure": {
+    "case_id": "2026_05_29_0001_pid_100ms_failed",
+    "source_name": "2026_05_29_0001",
+    "source_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\tmp\\ca3_import_validation\\2026_05_29_0001.h5",
+    "controller": "pid",
+    "ao_lead_ms": 100.0,
+    "exception_type": "TimeoutError",
+    "message": "browser UI did not connect to the benchmark WebSocket",
+    "failed_at_utc": "2026-10-29T12:22:05.183221+00:00"
+  },
+  "acceptance": {
+    "case_id": "2026_05_29_0001_pid_100ms_failed",
+    "scope": "paced_30min_case",
+    "runtime_checks_passed": false,
+    "runtime_failures": [
+      "TimeoutError: browser UI did not connect to the benchmark WebSocket"
+    ],
+    "coverage": {
+      "required": {
+        "duration_seconds": 1800.0,
+        "processed_blocks": 360000,
+        "source_samples": 36000000,
+        "sample_rate_hz": 20000.0,
+        "block_samples": 100,
+        "block_ms": 5.0,
+        "deadline_ms": 5.0
+      },
+      "observed": null,
+      "complete": false,
+      "failures": [
+        "case produced no complete coverage metrics"
+      ]
+    },
+    "full_acceptance_status": "FAIL",
+    "full_acceptance_passed": false,
+    "passed": false,
+    "failures": [
+      "TimeoutError: browser UI did not connect to the benchmark WebSocket"
+    ]
+  },
+  "collection_progress": {
+    "collection_kind": "paced",
+    "status": "IN PROGRESS",
+    "full_acceptance_passed": null,
+    "required": {
+      "case_count": 3,
+      "controller_count": 3,
+      "controllers": [
+        "rule",
+        "pid",
+        "esn"
+      ],
+      "trace_count": null,
+      "unique_source_controller_pairs": 3
+    },
+    "observed": {
+      "completed_case_count": 1,
+      "failed_case_count": 1,
+      "full_scope_case_count": 1,
+      "source_count": 1,
+      "source_names": [
+        "2026_05_29_0001"
+      ],
+      "controller_count": 1,
+      "controllers": [
+        "rule"
+      ],
+      "unique_source_controller_pairs": 1,
+      "full_acceptance_passed_case_count": 0,
+      "failed_full_acceptance_case_ids": [
+        "20261029_120911_20261029T110911Z_2026_05_29_0001_rule_100ms"
+      ]
+    },
+    "failures": [
+      "1 case(s) failed before producing metrics",
+      "runtime checks failed for 1 completed case(s)",
+      "full acceptance failed for 1 completed case(s)",
+      "paced collection requires one full 30-minute case for each of 3 controllers"
+    ]
+  },
+  "physical_pulse_claims": false
+}

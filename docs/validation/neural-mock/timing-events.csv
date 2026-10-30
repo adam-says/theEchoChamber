@@ -1,0 +1,9 @@
+condition,event,sample_index,time_s_virtual_sample_clock,relative_to_first_generated_nonzero_ms,note
+rule_feedback,first_decision_source_onset,220214,11.010700,-100.050,Event source onset sample; not the decision block start.
+rule_feedback,decision_latest_sample_used,220299,11.014950,-95.800,Last source sample used by the decision block; the following AO availability boundary is latest+1.
+rule_feedback,configured_ao_target_onset,222214,11.110700,-0.050,Scheduled target sample; target minus event source onset is the configured 100 ms lead.
+rule_feedback,first_generated_nonzero_ao,222215,11.110750,0.000,First nonzero sample in generated_ao_V on the virtual AO sample clock.
+rule_feedback,first_latent_neural_effect,222615,11.130750,20.000,"First feedback/off latent LFP divergence; this is model time, not a physical latency."
+rule_feedback,first_later_valid_controller_block_start,226300,11.315000,204.250,Start index of the block with the first later finite controller measurement.
+rule_feedback,first_later_valid_controller_latest_used,226399,11.319950,209.200,Latest source sample used by that valid controller measurement.
+off_control,paired_reference_first_generated_sample,,,,Off control contains no generated nonzero AO; timeline aligns to the feedback condition's first nonzero sample.

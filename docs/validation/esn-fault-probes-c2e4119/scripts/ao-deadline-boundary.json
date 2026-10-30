@@ -1,0 +1,348 @@
+{
+  "schema": "echo-chamber-deterministic-ao-deadline-probe-v1",
+  "purpose": "Prove the simulated scheduler's missing-target guard boundary only.",
+  "sample_rate_hz": 20000,
+  "chunk_samples": 100,
+  "ao_lead_samples": 2000,
+  "ao_lead_ms": 100.0,
+  "ao_deadline_samples": 1000,
+  "ao_deadline_ms": 50.0,
+  "supplied_source_blocks": [
+    {
+      "source_block": 0,
+      "target_block": 20
+    },
+    {
+      "source_block": 1,
+      "target_block": 21
+    },
+    {
+      "source_block": 2,
+      "target_block": 22
+    },
+    {
+      "source_block": 3,
+      "target_block": 23
+    },
+    {
+      "source_block": 4,
+      "target_block": 24
+    },
+    {
+      "source_block": 5,
+      "target_block": 25
+    },
+    {
+      "source_block": 6,
+      "target_block": 26
+    },
+    {
+      "source_block": 7,
+      "target_block": 27
+    },
+    {
+      "source_block": 8,
+      "target_block": 28
+    },
+    {
+      "source_block": 9,
+      "target_block": 29
+    }
+  ],
+  "delayed_source_block": 10,
+  "delayed_source_target_block": 30,
+  "producer_delay_ticks": 10,
+  "pre_refill_timeline": [
+    {
+      "tick": 1,
+      "generated_before_advance": 1000,
+      "generated_at_pre_refill": 1100,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1900,
+      "deficit_blocks": 1,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 1,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1900,
+      "first_missing_target_headroom_ms": 95.0,
+      "urgent_missing": false,
+      "generated_after_service": 1100,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1000,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 2,
+      "generated_before_advance": 1100,
+      "generated_at_pre_refill": 1200,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1800,
+      "deficit_blocks": 2,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 2,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1800,
+      "first_missing_target_headroom_ms": 90.0,
+      "urgent_missing": false,
+      "generated_after_service": 1200,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1100,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 3,
+      "generated_before_advance": 1200,
+      "generated_at_pre_refill": 1300,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1700,
+      "deficit_blocks": 3,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 3,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1700,
+      "first_missing_target_headroom_ms": 85.0,
+      "urgent_missing": false,
+      "generated_after_service": 1300,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1200,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 4,
+      "generated_before_advance": 1300,
+      "generated_at_pre_refill": 1400,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1600,
+      "deficit_blocks": 4,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 4,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1600,
+      "first_missing_target_headroom_ms": 80.0,
+      "urgent_missing": false,
+      "generated_after_service": 1400,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1300,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 5,
+      "generated_before_advance": 1400,
+      "generated_at_pre_refill": 1500,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1500,
+      "deficit_blocks": 5,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 5,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1500,
+      "first_missing_target_headroom_ms": 75.0,
+      "urgent_missing": false,
+      "generated_after_service": 1500,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1400,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 6,
+      "generated_before_advance": 1500,
+      "generated_at_pre_refill": 1600,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1400,
+      "deficit_blocks": 6,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 6,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1400,
+      "first_missing_target_headroom_ms": 70.0,
+      "urgent_missing": false,
+      "generated_after_service": 1600,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1500,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 7,
+      "generated_before_advance": 1600,
+      "generated_at_pre_refill": 1700,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1300,
+      "deficit_blocks": 7,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 7,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1300,
+      "first_missing_target_headroom_ms": 65.0,
+      "urgent_missing": false,
+      "generated_after_service": 1700,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1600,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 8,
+      "generated_before_advance": 1700,
+      "generated_at_pre_refill": 1800,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1200,
+      "deficit_blocks": 8,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 8,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1200,
+      "first_missing_target_headroom_ms": 60.0,
+      "urgent_missing": false,
+      "generated_after_service": 1800,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1700,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 9,
+      "generated_before_advance": 1800,
+      "generated_at_pre_refill": 1900,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1100,
+      "deficit_blocks": 9,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 9,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1100,
+      "first_missing_target_headroom_ms": 55.0,
+      "urgent_missing": false,
+      "generated_after_service": 1900,
+      "next_write_block_after_service": 30,
+      "active_demand_misses_after_service": 0,
+      "zero_substitutions_after_service": 0,
+      "fault_after_service": null,
+      "generated_output_blocks": [
+        {
+          "sample_index": 1800,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    },
+    {
+      "tick": 10,
+      "generated_before_advance": 1900,
+      "generated_at_pre_refill": 2000,
+      "next_write_block_pre_refill": 30,
+      "queued_samples_pre_refill": 1000,
+      "deficit_blocks": 10,
+      "ready_contiguous_prefix_blocks": 0,
+      "missing_blocks": 10,
+      "first_missing_target_block": 30,
+      "first_missing_target_sample_index": 3000,
+      "first_missing_target_headroom_samples": 1000,
+      "first_missing_target_headroom_ms": 50.0,
+      "urgent_missing": true,
+      "generated_after_service": 2000,
+      "next_write_block_after_service": 40,
+      "active_demand_misses_after_service": 1,
+      "zero_substitutions_after_service": 10,
+      "fault_after_service": "simulated AO active deadline missed; refill replaced with zeros",
+      "generated_output_blocks": [
+        {
+          "sample_index": 1900,
+          "stage": "initial_zero",
+          "nonzero_samples": 0
+        }
+      ]
+    }
+  ],
+  "final_scheduler_stats": {
+    "submitted_blocks": 10,
+    "committed_blocks": 20,
+    "zero_substitutions": 10,
+    "late_commands": 0,
+    "rejected_stale": 0,
+    "cancelled_blocks": 0,
+    "rejected_fault": 0,
+    "active_demand_misses": 1,
+    "pulse_tail_misses": 0,
+    "max_queue_depth": 10,
+    "pulse_requests": 0,
+    "pulse_committed_samples": 0,
+    "reconciled_blocks": 0,
+    "queue_depth": 0,
+    "generated_sample_count": 2000,
+    "barrier_generation": null,
+    "barrier_end_sample": 0
+  },
+  "final_fault": "simulated AO active deadline missed; refill replaced with zeros",
+  "interpretation_limit": "Deterministic simulator behavior, not paced host timing, actual NI underflow, physical output, or a cause attribution for an observed run."
+}

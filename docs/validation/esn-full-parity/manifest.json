@@ -1,0 +1,245 @@
+{
+  "probe": "full ESN rolling-threshold replay parity",
+  "started_utc": "2026-10-28T23:42:49+00:00",
+  "finished_utc": "2026-10-29T00:10:27+00:00",
+  "coverage_scope": "full_recording; no --limit-seconds",
+  "timing_fields": "diagnostic only; not a real-time acceptance result",
+  "inputs_and_code_before": {
+    "probe": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\tools\\compare_esn_thresholds.py",
+      "size_bytes": 31025,
+      "sha256": "1de7fa763fe15c13c5bcefcea462fb829d0d23a334dde158d5cdc32b29f6e760"
+    },
+    "bridge": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\esn_bridge.py",
+      "size_bytes": 25749,
+      "sha256": "f6147a59cc0e754e8fdcce53bb62999214daceed0de1bce24ce893e49f5d9644"
+    },
+    "artifact": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\artifacts\\esn_corrected_v1.npz",
+      "size_bytes": 2158,
+      "sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103"
+    },
+    "input_1": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_231556_20261028T221556Z_2026_05_29_0001_esn_100ms.h5",
+      "size_bytes": 93066985,
+      "sha256": "a791c6a548de1eb7a4f27920e01b7163a868fc0a352a05835df870871d52a3e2"
+    },
+    "input_2": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_233842_20261028T223842Z_2026_08_05_0000_esn_100ms.h5",
+      "size_bytes": 93741514,
+      "sha256": "c3a268ee086ecd1b0dc94f069284dafa5d517d9a60400f75430131c943112ae7"
+    },
+    "input_3": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261029_000231_20261028T230231Z_2026_08_06_0000_esn_100ms.h5",
+      "size_bytes": 94768208,
+      "sha256": "eb5c3e882c98da005c504069657d07b2c4e7c7c22ff6a34ec3a3080b96df03c3"
+    }
+  },
+  "inputs_and_code_after": {
+    "probe": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\tools\\compare_esn_thresholds.py",
+      "size_bytes": 31025,
+      "sha256": "1de7fa763fe15c13c5bcefcea462fb829d0d23a334dde158d5cdc32b29f6e760"
+    },
+    "bridge": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\esn_bridge.py",
+      "size_bytes": 25749,
+      "sha256": "f6147a59cc0e754e8fdcce53bb62999214daceed0de1bce24ce893e49f5d9644"
+    },
+    "artifact": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\artifacts\\esn_corrected_v1.npz",
+      "size_bytes": 2158,
+      "sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103"
+    },
+    "input_1": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_231556_20261028T221556Z_2026_05_29_0001_esn_100ms.h5",
+      "size_bytes": 93066985,
+      "sha256": "a791c6a548de1eb7a4f27920e01b7163a868fc0a352a05835df870871d52a3e2"
+    },
+    "input_2": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_233842_20261028T223842Z_2026_08_05_0000_esn_100ms.h5",
+      "size_bytes": 93741514,
+      "sha256": "c3a268ee086ecd1b0dc94f069284dafa5d517d9a60400f75430131c943112ae7"
+    },
+    "input_3": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261029_000231_20261028T230231Z_2026_08_06_0000_esn_100ms.h5",
+      "size_bytes": 94768208,
+      "sha256": "eb5c3e882c98da005c504069657d07b2c4e7c7c22ff6a34ec3a3080b96df03c3"
+    }
+  },
+  "sha256_unchanged": {
+    "probe": true,
+    "bridge": true,
+    "artifact": true,
+    "input_1": true,
+    "input_2": true,
+    "input_3": true
+  },
+  "runs": [
+    {
+      "recording": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_231556_20261028T221556Z_2026_05_29_0001_esn_100ms.h5",
+      "json": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\validation_logs\\esn_full_parity\\20261028_231556_20261028T221556Z_2026_05_29_0001_esn_100ms.json",
+      "log": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\validation_logs\\esn_full_parity\\20261028_231556_20261028T221556Z_2026_05_29_0001_esn_100ms.log",
+      "started_utc": "2026-10-28T23:42:49+00:00",
+      "finished_utc": "2026-10-28T23:51:51+00:00",
+      "returncode": 0,
+      "passed_full_coverage_gates": true,
+      "probe_result": "pass",
+      "coverage": {
+        "scope": "full_recording",
+        "requested_limit_seconds": null,
+        "planned_blocks": 360000,
+        "processed_blocks": 360000,
+        "selected_input_complete": true,
+        "all_committed_input_covered": true,
+        "committed_input_samples": 36000000,
+        "selected_input_samples": 36000000,
+        "stopped_at_first_event_mismatch": false
+      },
+      "event_parity": {
+        "mismatches": 0,
+        "examples": []
+      },
+      "threshold_abs_error": {
+        "max": 3.410605131648481e-13,
+        "p99": 4.2630829422130034e-16,
+        "mean": 8.747905876266222e-17,
+        "compared_blocks": 359798,
+        "tolerance_rule": "max(2e-12, 4 * abs(spacing(old_numpy_threshold)))",
+        "gate_failures": 0,
+        "gate_passed": true,
+        "failure_examples": []
+      },
+      "recording_reconstruction": {
+        "scope": "exact float32 block means and threshold diagnostics; HDF5 does not store full model predictions",
+        "model_block_mean_check": {
+          "compared_blocks": 359998,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "recorded_threshold_check": {
+          "compared_blocks": 359798,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "execution_evidence_mismatches": 0,
+        "total_gate_failures": 0,
+        "mismatch_examples": [],
+        "gate_passed": true
+      },
+      "rolling_stat_rebuild_count": 23,
+      "exact_threshold_fallback_count": 1979
+    },
+    {
+      "recording": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261028_233842_20261028T223842Z_2026_08_05_0000_esn_100ms.h5",
+      "json": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\validation_logs\\esn_full_parity\\20261028_233842_20261028T223842Z_2026_08_05_0000_esn_100ms.json",
+      "log": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\validation_logs\\esn_full_parity\\20261028_233842_20261028T223842Z_2026_08_05_0000_esn_100ms.log",
+      "started_utc": "2026-10-28T23:51:51+00:00",
+      "finished_utc": "2026-10-29T00:01:10+00:00",
+      "returncode": 0,
+      "passed_full_coverage_gates": true,
+      "probe_result": "pass",
+      "coverage": {
+        "scope": "full_recording",
+        "requested_limit_seconds": null,
+        "planned_blocks": 360000,
+        "processed_blocks": 360000,
+        "selected_input_complete": true,
+        "all_committed_input_covered": true,
+        "committed_input_samples": 36000000,
+        "selected_input_samples": 36000000,
+        "stopped_at_first_event_mismatch": false
+      },
+      "event_parity": {
+        "mismatches": 0,
+        "examples": []
+      },
+      "threshold_abs_error": {
+        "max": 5.400124791776761e-13,
+        "p99": 1.968911145233676e-16,
+        "mean": 1.4811964825288847e-16,
+        "compared_blocks": 359798,
+        "tolerance_rule": "max(2e-12, 4 * abs(spacing(old_numpy_threshold)))",
+        "gate_failures": 0,
+        "gate_passed": true,
+        "failure_examples": []
+      },
+      "recording_reconstruction": {
+        "scope": "exact float32 block means and threshold diagnostics; HDF5 does not store full model predictions",
+        "model_block_mean_check": {
+          "compared_blocks": 359998,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "recorded_threshold_check": {
+          "compared_blocks": 359798,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "execution_evidence_mismatches": 0,
+        "total_gate_failures": 0,
+        "mismatch_examples": [],
+        "gate_passed": true
+      },
+      "rolling_stat_rebuild_count": 29,
+      "exact_threshold_fallback_count": 1979
+    },
+    {
+      "recording": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-6cc4035\\full-matrix\\recordings\\20261029_000231_20261028T230231Z_2026_08_06_0000_esn_100ms.h5",
+      "json": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\validation_logs\\esn_full_parity\\20261029_000231_20261028T230231Z_2026_08_06_0000_esn_100ms.json",
+      "log": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\validation_logs\\esn_full_parity\\20261029_000231_20261028T230231Z_2026_08_06_0000_esn_100ms.log",
+      "started_utc": "2026-10-29T00:01:10+00:00",
+      "finished_utc": "2026-10-29T00:10:26+00:00",
+      "returncode": 0,
+      "passed_full_coverage_gates": true,
+      "probe_result": "pass",
+      "coverage": {
+        "scope": "full_recording",
+        "requested_limit_seconds": null,
+        "planned_blocks": 360000,
+        "processed_blocks": 360000,
+        "selected_input_complete": true,
+        "all_committed_input_covered": true,
+        "committed_input_samples": 36000000,
+        "selected_input_samples": 36000000,
+        "stopped_at_first_event_mismatch": false
+      },
+      "event_parity": {
+        "mismatches": 0,
+        "examples": []
+      },
+      "threshold_abs_error": {
+        "max": 7.212008767965017e-13,
+        "p99": 6.106226635438361e-16,
+        "mean": 1.8164809283591556e-16,
+        "compared_blocks": 359798,
+        "tolerance_rule": "max(2e-12, 4 * abs(spacing(old_numpy_threshold)))",
+        "gate_failures": 0,
+        "gate_passed": true,
+        "failure_examples": []
+      },
+      "recording_reconstruction": {
+        "scope": "exact float32 block means and threshold diagnostics; HDF5 does not store full model predictions",
+        "model_block_mean_check": {
+          "compared_blocks": 359998,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "recorded_threshold_check": {
+          "compared_blocks": 359798,
+          "mismatches": 0,
+          "max_abs_float32_error": 0.0
+        },
+        "execution_evidence_mismatches": 0,
+        "total_gate_failures": 0,
+        "mismatch_examples": [],
+        "gate_passed": true
+      },
+      "rolling_stat_rebuild_count": 23,
+      "exact_threshold_fallback_count": 1979
+    }
+  ],
+  "all_recordings_passed": true,
+  "all_hashed_files_unchanged": true
+}

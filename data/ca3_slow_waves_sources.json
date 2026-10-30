@@ -1,0 +1,18 @@
+{
+  "dataset": "CA3 slow waves",
+  "source_directory": "../data/CA3_slow_waves",
+  "format": "ABF2 gap-free",
+  "expected_bytes_each": 144018432,
+  "sample_rate_hz": 20000,
+  "duration_seconds": 1800,
+  "channels": [
+    {"position": 0, "region": "CA3", "role": "CA3", "physical_adc": 0, "stored_unit": "mV"},
+    {"position": 1, "region": "EC", "role": "Cortex", "physical_adc": 2, "stored_unit": "mV"}
+  ],
+  "files": [
+    {"name": "2026_05_29_0001.abf", "sha256": "eaef7545161022a46bd0b07360a7bbad90f977e8d0938347e4252f0a49f387af"},
+    {"name": "2026_08_05_0000.abf", "sha256": "9d1ca387535b7cba83a839796e50fe1ad6a2b66c86629078cad7ba47a7502a16"},
+    {"name": "2026_08_06_0000.abf", "sha256": "75c104cdab5204117ec910e5dfbb804aea30a3a4c444bcc89633f4794c652561"}
+  ],
+  "note": "SHA-256 values verify the supplied raw files. Never apply live amplifier gain to these stored mV values."
+}

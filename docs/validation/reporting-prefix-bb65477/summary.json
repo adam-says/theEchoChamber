@@ -1,0 +1,24 @@
+{
+  "schema": "echo-chamber-controller-prefix-summary-v1",
+  "source_revision": "bb65477dfb79b5372013d9f3ec52cfa2fd263401",
+  "tree": "8524f3b3b450d5cc0732743269f69cf9a17b16e5",
+  "scope": "32-second actual-core diagnostic prefix; not full replay or timing acceptance",
+  "sample_rate_hz": 20000,
+  "samples_per_controller": 640000,
+  "recording_samples_match_source": true,
+  "results": {
+    "rule": {"p99_ms": 2.190158, "max_ms": 4.2422, "deadline_misses": 0},
+    "pid": {"p99_ms": 2.439674, "max_ms": 5.7394, "deadline_misses": 1},
+    "esn": {"p99_ms": 2.776818, "max_ms": 5.401, "deadline_misses": 1}
+  },
+  "progress_reporting": {
+    "errors": 0,
+    "accepted_events": {"rule": 9, "pid": 11, "esn": 12},
+    "written_events": {"rule": 9, "pid": 11, "esn": 12},
+    "discarded_events": 0,
+    "pending_events": 0
+  },
+  "timing_gates": {"p99_ms_exclusive": 2.5, "max_ms_exclusive": 5.0, "all_controllers_passed": false},
+  "recording_or_physical_delivery_claim": false,
+  "diagnostic_artifacts": "work/validation_runs/acceptance-bb65477/reporting-prefix-32s"
+}

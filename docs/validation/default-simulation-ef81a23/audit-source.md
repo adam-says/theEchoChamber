@@ -1,0 +1,26 @@
+# Default responsive simulation evidence
+
+- Report: `work\theEchoChamber\work\validation_runs\acceptance-ef81a23\default-simulations\responsive_simulation_20261029T165702Z.json`
+- Revision: `ef81a2348bbf927da10da086a10c555359616f16`
+- Scope: six finite 24-second software simulation runs (stimulated/control for Rule, PID, ESN). HDF5 metadata, shapes, diagnostic row indices and AO command samples were inspected; raw AI/electrode samples were not reread.
+- Aggregate JSON contains all six segments. CSV contains 3 controller rows; complete three-controller export=True.
+ - CLI exit status is not a simulation-acceptance result; all three controller-level simulation acceptance gates are false.
+- All six HDF5 files have complete=1 and contiguous recorded block indices. Five contain 480,000/480,000 samples. Faulted segment(s): esn stimulated recorded 136800/480000 samples (28.5%) after `simulated AO host refill stalled past committed output`
+ - The finite replay processed 480,000 source samples for each segment; a runtime fault stops later RecordBlock submission even while the source loop advances.
+- Functional comparison by controller:
+  - rule: activity changed=True; RMS reduction=0.0003938979560124678 mV; tracking IAE improved=True; tracking/recovery/overall gates=False/False/False.
+  - pid: activity changed=True; RMS reduction=0.015439837265240342 mV; tracking IAE improved=True; tracking/recovery/overall gates=False/False/False.
+  - esn: activity changed=False; RMS reduction=0.0 mV; tracking IAE improved=False; tracking/recovery/overall gates=False/True/False.
+- Processing timing by segment (p99 / max / deadline misses, ms / ms / count):
+  - rule stimulated: 1.4002120000000002 / 2.4972 / 0; recording 480000/480000 samples.
+  - rule no_stimulation_control: 1.3513180000000002 / 2.2138 / 0; recording 480000/480000 samples.
+  - pid stimulated: 1.1852460000000011 / 4.0823 / 0; recording 480000/480000 samples.
+  - pid no_stimulation_control: 1.3904350000000008 / 2.5505 / 0; recording 480000/480000 samples.
+  - esn stimulated: 1.701540000000001 / 302.4315 / 5; recording 136800/480000 samples.
+  - esn no_stimulation_control: 2.570704 / 5.82 / 3; recording 480000/480000 samples.
+- Functional and processing results are separate. P99 is an all-call aggregate and does not hide any fault, deadline miss, or shortened recording.
+- Fault-zero H5 ranges and scheduler zero-substitution counters are both included in the segment CSV/JSON; they are separate metrics.
+- In the faulted ESN-stimulated segment, the H5 has 69 coalesced fault-zero ranges totaling 336,900 AO samples; the scheduler reports 3,471 zero-substitution blocks (347,100 samples). The 10,200-sample difference is retained as an unreconciled accounting discrepancy.
+- Compared with the earlier attempt, the PID no-stimulation recording now reached all 480,000 samples, while the AO host-refill fault occurred in ESN stimulation at 136,800 samples. This run-to-run shift does not establish a cause or show the fault is fixed.
+- Timing remains separate from functional gates: four segments had no processing deadline misses; both ESN segments had misses (five in stimulated, three in control). The faulted ESN segment reached a 302.4315 ms maximum processing call.
+- Reported AO values are simulated command data, not physical pulse delivery. The plant is generic, not a tissue model.

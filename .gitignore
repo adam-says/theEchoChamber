@@ -12,12 +12,17 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv*/
 venv/
 env/
 
 # Recorded experimental data and incomplete writes
 recordings/
 *.h5.partial
+*.abf
+
+# Validation scratch data, imported recordings, and run evidence stay local.
+/work/
 
 # Local logs and generated plots
 *.log

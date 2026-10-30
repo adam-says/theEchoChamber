@@ -1,5 +1,10 @@
 # Echo Chamber stabilization plan
 
+> Historical plan: checked boxes record the accepted implementation work at
+> the time of the plan. They do not mean that current replay timing, lead-sweep,
+> paced-soak, simulation-matrix, or hardware acceptance gates have passed. See
+> [current implementation and validation status](IMPLEMENTATION_STATUS.md).
+
 This plan records the agreed implementation goal: stabilize and optimize the
 current NI architecture, replace the unsafe/slow model boundary, preserve the
 current pulse waveform, and make pending-test assumptions explicit without

@@ -1,0 +1,820 @@
+{
+  "schema": "echo-chamber-esn-fault-probe-comparison-v1",
+  "status": "diagnostic_comparison_no_fault_reproduced",
+  "tested_revision": "c2e41199191d42b55298baaf46e9c868576d1b2b",
+  "comparison_scope": "Same 360 source-second May 29 ESN replay, 20 kHz, 5 ms processing block, 100 ms AO lead, recorder and real Core/AO path. V1 used the internal WebSocket consumer. V2 requested and maintained an external browser connection through run completion.",
+  "runs": [
+    {
+      "run_id": "v1_internal-websocket-no-browser",
+      "stop_reason": "duration_limit",
+      "revision_before": "c2e41199191d42b55298baaf46e9c868576d1b2b",
+      "revision_after": "c2e41199191d42b55298baaf46e9c868576d1b2b",
+      "hashes_unchanged": true,
+      "source_h5_sha256": "282827974028af3f22375fba78cc3d969e228e39e5de23458b0a9ddccb44422b",
+      "esn_artifact_npz_sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+      "esn_artifact_json_sha256": "8ffafccf0aa85471c9d67fa8c7dba473469b8ccdd5622fc55169949ce354533f",
+      "probe_sha256": "feed31741117446b7f1c1d397f76201dee443c1d079e82ac6e04cff791aeb4c8",
+      "source": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "block_ms": 5.0,
+        "lead_ms": 100.0,
+        "deadline_ms": 5.0,
+        "samples_processed": 7200000,
+        "blocks_processed": 72000,
+        "source_seconds_processed": 360.0,
+        "skipped_samples": 0,
+        "source_gap_samples": 0
+      },
+      "core_diagnostic_metrics": {
+        "p99_ms": 2.3403029999999987,
+        "max_ms": 28.648,
+        "calls_over_5ms": 56,
+        "slow_call_count": 56,
+        "thread_cpu_max_ms": 15.625,
+        "gc_pause_count": 32,
+        "gc_pause_max_ms": 14.7177
+      },
+      "ao_scheduler": {
+        "ao_active_demand_misses": 0,
+        "ao_late_commands": 0,
+        "ao_zero_substitutions": 46,
+        "ao_drain_complete": true,
+        "ao_final_queue_depth": 0,
+        "ao_clock_max_service_gap_ms": 31.37419978156686,
+        "ao_clock_gaps_over_block_period": 23271
+      },
+      "recording": {
+        "complete": true,
+        "committed_samples": 7200000,
+        "max_backlog_blocks": 9,
+        "backpressure_wait_count": 0
+      },
+      "ui": {
+        "browser_requested": false,
+        "browser_connected": false,
+        "disconnect_count": 0,
+        "connected_at_finish": false,
+        "transport_kind": "websocket_client_without_browser_rendering",
+        "packets_submitted": 3500,
+        "packets_consumed": 3500
+      },
+      "bounded_phase_ring": {
+        "capacity": 50000,
+        "retained_rows": 50000,
+        "phase_distributions": {
+          "processing_core_total_wrapper": {
+            "count": 3103,
+            "p50_ms": 0.7935,
+            "p95_ms": 1.6430999999999996,
+            "p99_ms": 2.0859700000000005,
+            "max_ms": 5.6392
+          },
+          "esn_controller_step": {
+            "count": 3102,
+            "p50_ms": 0.40065,
+            "p95_ms": 0.8376849999999999,
+            "p99_ms": 1.1688939999999999,
+            "max_ms": 2.7265
+          },
+          "esn_bridge_process": {
+            "count": 3102,
+            "p50_ms": 0.37765,
+            "p95_ms": 0.7979199999999997,
+            "p99_ms": 1.108797,
+            "max_ms": 2.6749
+          },
+          "esn_streamer_process_chunk": {
+            "count": 3102,
+            "p50_ms": 0.2407,
+            "p95_ms": 0.5193599999999998,
+            "p99_ms": 0.8086049999999979,
+            "max_ms": 2.3276
+          },
+          "esn_decimator_and_anti_alias": {
+            "count": 3102,
+            "p50_ms": 0.0892,
+            "p95_ms": 0.20345499999999983,
+            "p99_ms": 0.41638799999999976,
+            "max_ms": 1.9608
+          },
+          "esn_model_band_filter": {
+            "count": 3102,
+            "p50_ms": 0.0368,
+            "p95_ms": 0.0822749999999999,
+            "p99_ms": 0.16857499999999945,
+            "max_ms": 0.4314
+          },
+          "esn_model_recurrence": {
+            "count": 3102,
+            "p50_ms": 0.0293,
+            "p95_ms": 0.0565,
+            "p99_ms": 0.08459799999999995,
+            "max_ms": 0.2803
+          },
+          "esn_upsampler": {
+            "count": 3102,
+            "p50_ms": 0.0599,
+            "p95_ms": 0.12168999999999996,
+            "p99_ms": 0.19736899999999932,
+            "max_ms": 0.4155
+          },
+          "esn_conditioning": {
+            "count": 3102,
+            "p50_ms": 0.0193,
+            "p95_ms": 0.03709499999999998,
+            "p99_ms": 0.0565909999999998,
+            "max_ms": 0.2856
+          },
+          "esn_event_detector": {
+            "count": 3102,
+            "p50_ms": 0.0792,
+            "p95_ms": 0.16887999999999992,
+            "p99_ms": 0.2398,
+            "max_ms": 1.367
+          },
+          "safety_process": {
+            "count": 3102,
+            "p50_ms": 0.078,
+            "p95_ms": 0.13248999999999997,
+            "p99_ms": 0.18519899999999997,
+            "max_ms": 0.6868
+          },
+          "actuator_process": {
+            "count": 3102,
+            "p50_ms": 0.0231,
+            "p95_ms": 0.0534,
+            "p99_ms": 0.08739499999999989,
+            "max_ms": 0.7834
+          },
+          "recorder_admission": {
+            "count": 3103,
+            "p50_ms": 0.0138,
+            "p95_ms": 0.03288999999999996,
+            "p99_ms": 0.0434,
+            "max_ms": 0.2135
+          },
+          "ui_submission_ring_and_job": {
+            "count": 3103,
+            "p50_ms": 0.1011,
+            "p95_ms": 0.29304999999999987,
+            "p99_ms": 0.600646,
+            "max_ms": 4.4726
+          },
+          "ui_ring_append": {
+            "count": 3103,
+            "p50_ms": 0.0898,
+            "p95_ms": 0.24552999999999975,
+            "p99_ms": 0.563846,
+            "max_ms": 2.2501
+          },
+          "ui_ring_take_new_points": {
+            "count": 151,
+            "p50_ms": 0.0693,
+            "p95_ms": 0.20195000000000002,
+            "p99_ms": 0.49205,
+            "max_ms": 3.954
+          },
+          "ui_job_queue_admission": {
+            "count": 152,
+            "p50_ms": 0.0138,
+            "p95_ms": 0.020145,
+            "p99_ms": 0.026547000000000005,
+            "max_ms": 0.0282
+          },
+          "ao_service_refill_near_deadline": {
+            "count": 61,
+            "p50_ms": 0.1612,
+            "p95_ms": 0.3182,
+            "p99_ms": 0.4627999999999999,
+            "max_ms": 0.5153
+          },
+          "producer_between_core_calls": {
+            "count": 3102,
+            "p50_ms": 4.14745,
+            "p95_ms": 4.766970000000001,
+            "p99_ms": 5.024486,
+            "max_ms": 6.4931
+          }
+        },
+        "queue_mutex_rows": 5000,
+        "queue_mutex_wait": {
+          "count": 2500,
+          "p50_ms": 0.0005,
+          "p95_ms": 0.0018,
+          "p99_ms": 0.004400999999999977,
+          "max_ms": 0.0105
+        },
+        "queue_mutex_hold": {
+          "count": 2500,
+          "p50_ms": 0.0062,
+          "p95_ms": 0.0173,
+          "p99_ms": 0.028801999999999953,
+          "max_ms": 0.069
+        }
+      },
+      "first_active_miss_decision": null,
+      "report_sha256": "63d511319a2a4ea06f1852b680bb46bc218852f28659b25fb0e779b2b2c222b0",
+      "source_code_sha256": {
+        "benchmarkControllers.py": "928d9e193c4bc9ee9df7b9c09cc8d4ea54ff3f1e4226aacbfb44d87f240d8028",
+        "echoChamber.py": "1854876c3280292a282659d2087bd182a41184ce527ea1c5913653eb2dfef07e",
+        "esn_bridge.py": "88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749",
+        "esn.py": "7af703874df79a5d91aa24d97a85497e224413d3041ac5a2c1181f4bfeb103f4",
+        "streaming.py": "543e7bb396c3cd4f3db2e2b0756e6e5da3c014b4585ace02b186b40a5ee22fda",
+        "inference.py": "c618a66fdd8ec6b609d10745745b89e4c3881906a1312f4b8cd9e83d8114d927",
+        "preprocessing.py": "b46c3c12eec2ad5ee477102142bb7f304e1ce2d09efa08b54bdcd87872031139",
+        "model.py": "fe678cbb093d3ee9f4e02a83bca82b5258e598f3b3e6446b6a8c4398bf4fdcfc",
+        "artifact.py": "6dcd236bb6b3689b305ea5bd728540fbad933e09620e56073913576947b15c08",
+        "esn_corrected_v1.npz": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+        "esn_corrected_v1.json": "8ffafccf0aa85471c9d67fa8c7dba473469b8ccdd5622fc55169949ce354533f",
+        "probe_esn_ao_fault.py": "feed31741117446b7f1c1d397f76201dee443c1d079e82ac6e04cff791aeb4c8"
+      },
+      "recording_file": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\diagnostics\\esn-first-fault-c2e4119\\recordings\\20261030_174813_20261030T164813Z_2026_05_29_0001_esn_100ms.h5",
+      "full_report_sha256": "63d511319a2a4ea06f1852b680bb46bc218852f28659b25fb0e779b2b2c222b0"
+    },
+    {
+      "run_id": "v2_external-browser-connected",
+      "stop_reason": "duration_limit",
+      "revision_before": "c2e41199191d42b55298baaf46e9c868576d1b2b",
+      "revision_after": "c2e41199191d42b55298baaf46e9c868576d1b2b",
+      "hashes_unchanged": true,
+      "source_h5_sha256": "282827974028af3f22375fba78cc3d969e228e39e5de23458b0a9ddccb44422b",
+      "esn_artifact_npz_sha256": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+      "esn_artifact_json_sha256": "8ffafccf0aa85471c9d67fa8c7dba473469b8ccdd5622fc55169949ce354533f",
+      "probe_sha256": "62f20ab6f43c93541187f7da28a638e4c7b909f5c57666b7bc3d6c82bbc028d7",
+      "source": {
+        "sample_rate_hz": 20000,
+        "block_samples": 100,
+        "block_ms": 5.0,
+        "lead_ms": 100.0,
+        "deadline_ms": 5.0,
+        "samples_processed": 7200000,
+        "blocks_processed": 72000,
+        "source_seconds_processed": 360.0,
+        "skipped_samples": 0,
+        "source_gap_samples": 0
+      },
+      "core_diagnostic_metrics": {
+        "p99_ms": 2.1552019999999987,
+        "max_ms": 37.4787,
+        "calls_over_5ms": 49,
+        "slow_call_count": 49,
+        "thread_cpu_max_ms": 15.625,
+        "gc_pause_count": 32,
+        "gc_pause_max_ms": 13.696
+      },
+      "ao_scheduler": {
+        "ao_active_demand_misses": 0,
+        "ao_late_commands": 0,
+        "ao_zero_substitutions": 37,
+        "ao_drain_complete": true,
+        "ao_final_queue_depth": 0,
+        "ao_clock_max_service_gap_ms": 41.24610009603202,
+        "ao_clock_gaps_over_block_period": 23256
+      },
+      "recording": {
+        "complete": true,
+        "committed_samples": 7200000,
+        "max_backlog_blocks": 7,
+        "backpressure_wait_count": 0
+      },
+      "ui": {
+        "browser_requested": true,
+        "browser_connected": true,
+        "disconnect_count": 0,
+        "connected_at_finish": true,
+        "transport_kind": "browser_and_websocket_client",
+        "packets_submitted": 3500,
+        "packets_consumed": 3500
+      },
+      "bounded_phase_ring": {
+        "capacity": 50000,
+        "retained_rows": 50000,
+        "phase_distributions": {
+          "processing_core_total_wrapper": {
+            "count": 3101,
+            "p50_ms": 0.857,
+            "p95_ms": 1.5754,
+            "p99_ms": 2.1036,
+            "max_ms": 4.7553
+          },
+          "esn_controller_step": {
+            "count": 3101,
+            "p50_ms": 0.4228,
+            "p95_ms": 0.7799,
+            "p99_ms": 1.0663,
+            "max_ms": 3.4471
+          },
+          "esn_bridge_process": {
+            "count": 3101,
+            "p50_ms": 0.3983,
+            "p95_ms": 0.7352,
+            "p99_ms": 1.0233,
+            "max_ms": 2.9346
+          },
+          "esn_streamer_process_chunk": {
+            "count": 3101,
+            "p50_ms": 0.2525,
+            "p95_ms": 0.4652,
+            "p99_ms": 0.7981,
+            "max_ms": 2.5657
+          },
+          "esn_decimator_and_anti_alias": {
+            "count": 3100,
+            "p50_ms": 0.0941,
+            "p95_ms": 0.18040499999999998,
+            "p99_ms": 0.4471089999999974,
+            "max_ms": 1.662
+          },
+          "esn_model_band_filter": {
+            "count": 3101,
+            "p50_ms": 0.0376,
+            "p95_ms": 0.0673,
+            "p99_ms": 0.1304,
+            "max_ms": 1.5896
+          },
+          "esn_model_recurrence": {
+            "count": 3101,
+            "p50_ms": 0.0316,
+            "p95_ms": 0.0544,
+            "p99_ms": 0.0799,
+            "max_ms": 0.4753
+          },
+          "esn_upsampler": {
+            "count": 3101,
+            "p50_ms": 0.0622,
+            "p95_ms": 0.1106,
+            "p99_ms": 0.165,
+            "max_ms": 0.6815
+          },
+          "esn_conditioning": {
+            "count": 3101,
+            "p50_ms": 0.0198,
+            "p95_ms": 0.0352,
+            "p99_ms": 0.048,
+            "max_ms": 0.1615
+          },
+          "esn_event_detector": {
+            "count": 3101,
+            "p50_ms": 0.0849,
+            "p95_ms": 0.16,
+            "p99_ms": 0.2165,
+            "max_ms": 0.5663
+          },
+          "safety_process": {
+            "count": 3101,
+            "p50_ms": 0.0801,
+            "p95_ms": 0.1385,
+            "p99_ms": 0.2069,
+            "max_ms": 0.5141
+          },
+          "actuator_process": {
+            "count": 3101,
+            "p50_ms": 0.0248,
+            "p95_ms": 0.056,
+            "p99_ms": 0.092,
+            "max_ms": 0.6347
+          },
+          "recorder_admission": {
+            "count": 3101,
+            "p50_ms": 0.015,
+            "p95_ms": 0.0358,
+            "p99_ms": 0.0495,
+            "max_ms": 0.1288
+          },
+          "ui_submission_ring_and_job": {
+            "count": 3101,
+            "p50_ms": 0.1075,
+            "p95_ms": 0.3073,
+            "p99_ms": 0.6637,
+            "max_ms": 1.8459
+          },
+          "ui_ring_append": {
+            "count": 3101,
+            "p50_ms": 0.0947,
+            "p95_ms": 0.2498,
+            "p99_ms": 0.614,
+            "max_ms": 1.6966
+          },
+          "ui_ring_take_new_points": {
+            "count": 151,
+            "p50_ms": 0.0686,
+            "p95_ms": 0.2133,
+            "p99_ms": 0.56925,
+            "max_ms": 1.3173
+          },
+          "ui_job_queue_admission": {
+            "count": 152,
+            "p50_ms": 0.0149,
+            "p95_ms": 0.025394999999999987,
+            "p99_ms": 0.033784000000000015,
+            "max_ms": 0.0417
+          },
+          "ao_service_refill_near_deadline": {
+            "count": 83,
+            "p50_ms": 0.1803,
+            "p95_ms": 0.35058999999999985,
+            "p99_ms": 0.5697479999999977,
+            "max_ms": 0.8187
+          },
+          "producer_between_core_calls": {
+            "count": 3100,
+            "p50_ms": 4.07275,
+            "p95_ms": 4.727055,
+            "p99_ms": 5.069722,
+            "max_ms": 7.1637
+          }
+        },
+        "queue_mutex_rows": 5000,
+        "queue_mutex_wait": {
+          "count": 2500,
+          "p50_ms": 0.0005,
+          "p95_ms": 0.0018,
+          "p99_ms": 0.004,
+          "max_ms": 0.0273
+        },
+        "queue_mutex_hold": {
+          "count": 2500,
+          "p50_ms": 0.00615,
+          "p95_ms": 0.0166,
+          "p99_ms": 0.02770799999999981,
+          "max_ms": 0.1682
+        }
+      },
+      "first_active_miss_decision": null,
+      "report_sha256": "c530f3f372f72fa9987031e984bbae44eb697f3770c66adbf55e781abead954b",
+      "source_code_sha256": {
+        "benchmarkControllers.py": "928d9e193c4bc9ee9df7b9c09cc8d4ea54ff3f1e4226aacbfb44d87f240d8028",
+        "echoChamber.py": "1854876c3280292a282659d2087bd182a41184ce527ea1c5913653eb2dfef07e",
+        "esn_bridge.py": "88469989b45429ec270f55e37139c96a1565ae91193dd2113c7b332d4e9c4749",
+        "esn.py": "7af703874df79a5d91aa24d97a85497e224413d3041ac5a2c1181f4bfeb103f4",
+        "streaming.py": "543e7bb396c3cd4f3db2e2b0756e6e5da3c014b4585ace02b186b40a5ee22fda",
+        "inference.py": "c618a66fdd8ec6b609d10745745b89e4c3881906a1312f4b8cd9e83d8114d927",
+        "preprocessing.py": "b46c3c12eec2ad5ee477102142bb7f304e1ce2d09efa08b54bdcd87872031139",
+        "model.py": "fe678cbb093d3ee9f4e02a83bca82b5258e598f3b3e6446b6a8c4398bf4fdcfc",
+        "artifact.py": "6dcd236bb6b3689b305ea5bd728540fbad933e09620e56073913576947b15c08",
+        "esn_corrected_v1.npz": "4908a423689067669f4b18e45948027e8577278b8def1fcae38c107dd5aac103",
+        "esn_corrected_v1.json": "8ffafccf0aa85471c9d67fa8c7dba473469b8ccdd5622fc55169949ce354533f",
+        "probe_esn_ao_fault_browser.py": "62f20ab6f43c93541187f7da28a638e4c7b909f5c57666b7bc3d6c82bbc028d7"
+      },
+      "recording_file": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\diagnostics\\esn-first-fault-browser-c2e4119\\recordings\\20261030_175758_20261030T165758Z_2026_05_29_0001_esn_100ms.h5",
+      "full_report_sha256": "c530f3f372f72fa9987031e984bbae44eb697f3770c66adbf55e781abead954b"
+    }
+  ],
+  "scheduler_boundary_probe": {
+    "schema": "echo-chamber-deterministic-ao-deadline-probe-v1",
+    "purpose": "Prove the simulated scheduler's missing-target guard boundary only.",
+    "sample_rate_hz": 20000,
+    "chunk_samples": 100,
+    "ao_lead_samples": 2000,
+    "ao_lead_ms": 100.0,
+    "ao_deadline_samples": 1000,
+    "ao_deadline_ms": 50.0,
+    "supplied_source_blocks": [
+      {
+        "source_block": 0,
+        "target_block": 20
+      },
+      {
+        "source_block": 1,
+        "target_block": 21
+      },
+      {
+        "source_block": 2,
+        "target_block": 22
+      },
+      {
+        "source_block": 3,
+        "target_block": 23
+      },
+      {
+        "source_block": 4,
+        "target_block": 24
+      },
+      {
+        "source_block": 5,
+        "target_block": 25
+      },
+      {
+        "source_block": 6,
+        "target_block": 26
+      },
+      {
+        "source_block": 7,
+        "target_block": 27
+      },
+      {
+        "source_block": 8,
+        "target_block": 28
+      },
+      {
+        "source_block": 9,
+        "target_block": 29
+      }
+    ],
+    "delayed_source_block": 10,
+    "delayed_source_target_block": 30,
+    "producer_delay_ticks": 10,
+    "pre_refill_timeline": [
+      {
+        "tick": 1,
+        "generated_before_advance": 1000,
+        "generated_at_pre_refill": 1100,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1900,
+        "deficit_blocks": 1,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 1,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1900,
+        "first_missing_target_headroom_ms": 95.0,
+        "urgent_missing": false,
+        "generated_after_service": 1100,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1000,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 2,
+        "generated_before_advance": 1100,
+        "generated_at_pre_refill": 1200,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1800,
+        "deficit_blocks": 2,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 2,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1800,
+        "first_missing_target_headroom_ms": 90.0,
+        "urgent_missing": false,
+        "generated_after_service": 1200,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1100,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 3,
+        "generated_before_advance": 1200,
+        "generated_at_pre_refill": 1300,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1700,
+        "deficit_blocks": 3,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 3,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1700,
+        "first_missing_target_headroom_ms": 85.0,
+        "urgent_missing": false,
+        "generated_after_service": 1300,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1200,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 4,
+        "generated_before_advance": 1300,
+        "generated_at_pre_refill": 1400,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1600,
+        "deficit_blocks": 4,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 4,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1600,
+        "first_missing_target_headroom_ms": 80.0,
+        "urgent_missing": false,
+        "generated_after_service": 1400,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1300,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 5,
+        "generated_before_advance": 1400,
+        "generated_at_pre_refill": 1500,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1500,
+        "deficit_blocks": 5,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 5,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1500,
+        "first_missing_target_headroom_ms": 75.0,
+        "urgent_missing": false,
+        "generated_after_service": 1500,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1400,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 6,
+        "generated_before_advance": 1500,
+        "generated_at_pre_refill": 1600,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1400,
+        "deficit_blocks": 6,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 6,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1400,
+        "first_missing_target_headroom_ms": 70.0,
+        "urgent_missing": false,
+        "generated_after_service": 1600,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1500,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 7,
+        "generated_before_advance": 1600,
+        "generated_at_pre_refill": 1700,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1300,
+        "deficit_blocks": 7,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 7,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1300,
+        "first_missing_target_headroom_ms": 65.0,
+        "urgent_missing": false,
+        "generated_after_service": 1700,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1600,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 8,
+        "generated_before_advance": 1700,
+        "generated_at_pre_refill": 1800,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1200,
+        "deficit_blocks": 8,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 8,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1200,
+        "first_missing_target_headroom_ms": 60.0,
+        "urgent_missing": false,
+        "generated_after_service": 1800,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1700,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 9,
+        "generated_before_advance": 1800,
+        "generated_at_pre_refill": 1900,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1100,
+        "deficit_blocks": 9,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 9,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1100,
+        "first_missing_target_headroom_ms": 55.0,
+        "urgent_missing": false,
+        "generated_after_service": 1900,
+        "next_write_block_after_service": 30,
+        "active_demand_misses_after_service": 0,
+        "zero_substitutions_after_service": 0,
+        "fault_after_service": null,
+        "generated_output_blocks": [
+          {
+            "sample_index": 1800,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      },
+      {
+        "tick": 10,
+        "generated_before_advance": 1900,
+        "generated_at_pre_refill": 2000,
+        "next_write_block_pre_refill": 30,
+        "queued_samples_pre_refill": 1000,
+        "deficit_blocks": 10,
+        "ready_contiguous_prefix_blocks": 0,
+        "missing_blocks": 10,
+        "first_missing_target_block": 30,
+        "first_missing_target_sample_index": 3000,
+        "first_missing_target_headroom_samples": 1000,
+        "first_missing_target_headroom_ms": 50.0,
+        "urgent_missing": true,
+        "generated_after_service": 2000,
+        "next_write_block_after_service": 40,
+        "active_demand_misses_after_service": 1,
+        "zero_substitutions_after_service": 10,
+        "fault_after_service": "simulated AO active deadline missed; refill replaced with zeros",
+        "generated_output_blocks": [
+          {
+            "sample_index": 1900,
+            "stage": "initial_zero",
+            "nonzero_samples": 0
+          }
+        ]
+      }
+    ],
+    "final_scheduler_stats": {
+      "submitted_blocks": 10,
+      "committed_blocks": 20,
+      "zero_substitutions": 10,
+      "late_commands": 0,
+      "rejected_stale": 0,
+      "cancelled_blocks": 0,
+      "rejected_fault": 0,
+      "active_demand_misses": 1,
+      "pulse_tail_misses": 0,
+      "max_queue_depth": 10,
+      "pulse_requests": 0,
+      "pulse_committed_samples": 0,
+      "reconciled_blocks": 0,
+      "queue_depth": 0,
+      "generated_sample_count": 2000,
+      "barrier_generation": null,
+      "barrier_end_sample": 0
+    },
+    "final_fault": "simulated AO active deadline missed; refill replaced with zeros",
+    "interpretation_limit": "Deterministic simulator behavior, not paced host timing, actual NI underflow, physical output, or a cause attribution for an observed run."
+  },
+  "interpretation": [
+    "Both probes processed all 7.2 million source samples and recorded all 7.2 million samples. Both ended with scheduler drain complete, zero active-demand misses, zero late AO commands, no runtime fault, and unchanged source/input hashes.",
+    "V2 browser connection was required, connected, and present at finish with no recorded disconnects. Browser rendering itself was not verified.",
+    "Neither run reproduced the earlier paced ESN active-demand miss. The deterministic virtual-clock test proves only that the scheduler triggers its missing-target safe-zero path at a 50 ms headroom boundary for this configuration.",
+    "The per-call timers and wrappers add observer overhead and may perturb scheduling. Phase rows are a bounded, threshold-selected sample, not a full-run sample. Nested wall spans overlap and include possible OS/thread scheduling delays.",
+    "A zero or quantized thread-CPU delta does not establish exclusive blocking or identify cause. UI phase timing is synchronous Core-side ring and queue work; background hub publish timing is separate. No phase correlation here proves causality.",
+    "The 5 ms measurements are diagnostic only. These runs do not qualify performance, demonstrate physical AO delivery, or establish biological-task effectiveness."
+  ]
+}

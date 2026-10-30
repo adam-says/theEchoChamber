@@ -1,0 +1,252 @@
+F......F.                                                             [100%]
+================================== FAILURES ===================================
+_ LeadSweepAuditFixtureTests.test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file _
+
+self = <test_audit_lead_sweep_evidence.LeadSweepAuditFixtureTests testMethod=test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file>
+
+    def test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            canonical = root / "2026_05_29_0001.h5"
+>           canonical.touch()
+
+work\test_audit_lead_sweep_evidence.py:134: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/angel/AppData/Local/Packages/sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}/AC/Temp/tmp4c7vs_zg/2026_05_29_0001.h5')
+mode = 438, exist_ok = True
+
+    def touch(self, mode=0o666, exist_ok=True):
+        """
+        Create this file with the given access mode, if it doesn't exist.
+        """
+    
+        if exist_ok:
+            # First try to bump modification time
+            # Implementation note: GNU touch uses the UTIME_NOW option of
+            # the utimensat() / futimens() functions.
+            try:
+                os.utime(self, None)
+            except OSError:
+                # Avoid exception chaining
+                pass
+            else:
+                return
+        flags = os.O_CREAT | os.O_WRONLY
+        if not exist_ok:
+            flags |= os.O_EXCL
+>       fd = os.open(self, flags, mode)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       PermissionError: [Errno 13] Permission denied: 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmp4c7vs_zg\\2026_05_29_0001.h5'
+
+C:\Python314\Lib\pathlib\__init__.py:1008: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+path = 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmp4c7vs_zg'
+dir_fd = None
+onexc = <function TemporaryDirectory._rmtree.<locals>.onexc at 0x0000026A233C7C10>
+
+    def _rmtree_unsafe(path, dir_fd, onexc):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        try:
+            st = os.lstat(path)
+        except OSError as err:
+            onexc(os.lstat, path, err)
+            return
+        try:
+            if _rmtree_islink(st):
+                # symlinks to directories are forbidden, see bug #1669
+                raise OSError("Cannot call rmtree on a symbolic link")
+        except OSError as err:
+            onexc(os.path.islink, path, err)
+            # can't continue even if onexc hook returns
+            return
+        def onerror(err):
+            if not isinstance(err, FileNotFoundError):
+                onexc(os.scandir, err.filename, err)
+        results = os.walk(path, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files)
+        for dirpath, dirnames, filenames in results:
+            for name in dirnames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.rmdir(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.rmdir, fullname, err)
+            for name in filenames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.unlink(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.unlink, fullname, err)
+        try:
+>           os.rmdir(path)
+E           PermissionError: [WinError 5] Acceso denegado: 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmp4c7vs_zg'
+
+C:\Python314\Lib\shutil.py:707: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_audit_lead_sweep_evidence.LeadSweepAuditFixtureTests testMethod=test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file>
+
+    def test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file(self) -> None:
+>       with tempfile.TemporaryDirectory() as folder:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+work\test_audit_lead_sweep_evidence.py:131: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python314\Lib\tempfile.py:971: in __exit__
+    self.cleanup()
+C:\Python314\Lib\tempfile.py:975: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+C:\Python314\Lib\tempfile.py:955: in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+C:\Python314\Lib\shutil.py:852: in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+C:\Python314\Lib\shutil.py:711: in _rmtree_unsafe
+    onexc(os.rmdir, path, err)
+C:\Python314\Lib\tempfile.py:927: in onexc
+    _resetperms(path)
+C:\Python314\Lib\tempfile.py:287: in _resetperms
+    _dont_follow_symlinks(_os.chmod, path, 0o700)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function chmod>
+path = 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmp4c7vs_zg'
+args = (448,)
+
+    def _dont_follow_symlinks(func, path, *args):
+        # Pass follow_symlinks=False, unless not supported on this platform.
+        if func in _os.supports_follow_symlinks:
+>           func(path, *args, follow_symlinks=False)
+E           PermissionError: [WinError 5] Acceso denegado: 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmp4c7vs_zg'
+
+C:\Python314\Lib\tempfile.py:276: PermissionError
+____ LeadSweepAuditFixtureTests.test_sha256_uses_the_supplied_source_file _____
+
+self = <test_audit_lead_sweep_evidence.LeadSweepAuditFixtureTests testMethod=test_sha256_uses_the_supplied_source_file>
+
+    def test_sha256_uses_the_supplied_source_file(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "canonical.h5"
+>           path.write_bytes(b"tiny canonical fixture")
+
+work\test_audit_lead_sweep_evidence.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python314\Lib\pathlib\__init__.py:801: in write_bytes
+    with self.open(mode='wb') as f:
+         ^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = WindowsPath('C:/Users/angel/AppData/Local/Packages/sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}/AC/Temp/tmpv4jqppor/canonical.h5')
+mode = 'wb', buffering = -1, encoding = None, errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       PermissionError: [Errno 13] Permission denied: 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmpv4jqppor\\canonical.h5'
+
+C:\Python314\Lib\pathlib\__init__.py:776: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+path = 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmpv4jqppor'
+dir_fd = None
+onexc = <function TemporaryDirectory._rmtree.<locals>.onexc at 0x0000026A23425010>
+
+    def _rmtree_unsafe(path, dir_fd, onexc):
+        if dir_fd is not None:
+            raise NotImplementedError("dir_fd unavailable on this platform")
+        try:
+            st = os.lstat(path)
+        except OSError as err:
+            onexc(os.lstat, path, err)
+            return
+        try:
+            if _rmtree_islink(st):
+                # symlinks to directories are forbidden, see bug #1669
+                raise OSError("Cannot call rmtree on a symbolic link")
+        except OSError as err:
+            onexc(os.path.islink, path, err)
+            # can't continue even if onexc hook returns
+            return
+        def onerror(err):
+            if not isinstance(err, FileNotFoundError):
+                onexc(os.scandir, err.filename, err)
+        results = os.walk(path, topdown=False, onerror=onerror, followlinks=os._walk_symlinks_as_files)
+        for dirpath, dirnames, filenames in results:
+            for name in dirnames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.rmdir(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.rmdir, fullname, err)
+            for name in filenames:
+                fullname = os.path.join(dirpath, name)
+                try:
+                    os.unlink(fullname)
+                except FileNotFoundError:
+                    continue
+                except OSError as err:
+                    onexc(os.unlink, fullname, err)
+        try:
+>           os.rmdir(path)
+E           PermissionError: [WinError 5] Acceso denegado: 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmpv4jqppor'
+
+C:\Python314\Lib\shutil.py:707: PermissionError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_audit_lead_sweep_evidence.LeadSweepAuditFixtureTests testMethod=test_sha256_uses_the_supplied_source_file>
+
+    def test_sha256_uses_the_supplied_source_file(self) -> None:
+>       with tempfile.TemporaryDirectory() as folder:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+work\test_audit_lead_sweep_evidence.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python314\Lib\tempfile.py:971: in __exit__
+    self.cleanup()
+C:\Python314\Lib\tempfile.py:975: in cleanup
+    self._rmtree(self.name, ignore_errors=self._ignore_cleanup_errors)
+C:\Python314\Lib\tempfile.py:955: in _rmtree
+    _shutil.rmtree(name, onexc=onexc)
+C:\Python314\Lib\shutil.py:852: in rmtree
+    _rmtree_impl(path, dir_fd, onexc)
+C:\Python314\Lib\shutil.py:711: in _rmtree_unsafe
+    onexc(os.rmdir, path, err)
+C:\Python314\Lib\tempfile.py:927: in onexc
+    _resetperms(path)
+C:\Python314\Lib\tempfile.py:287: in _resetperms
+    _dont_follow_symlinks(_os.chmod, path, 0o700)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+func = <built-in function chmod>
+path = 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmpv4jqppor'
+args = (448,)
+
+    def _dont_follow_symlinks(func, path, *args):
+        # Pass follow_symlinks=False, unless not supported on this platform.
+        if func in _os.supports_follow_symlinks:
+>           func(path, *args, follow_symlinks=False)
+E           PermissionError: [WinError 5] Acceso denegado: 'C:\\Users\\angel\\AppData\\Local\\Packages\\sandbox.{c524b747-22a8-429a-8bd4-2545e254d5ca}\\AC\\Temp\\tmpv4jqppor'
+
+C:\Python314\Lib\tempfile.py:276: PermissionError
+=========================== short test summary info ===========================
+FAILED work/test_audit_lead_sweep_evidence.py::LeadSweepAuditFixtureTests::test_case_audit_accepts_real_recorder_name_and_rejects_swapped_file
+FAILED work/test_audit_lead_sweep_evidence.py::LeadSweepAuditFixtureTests::test_sha256_uses_the_supplied_source_file
+2 failed, 7 passed, 3 subtests passed in 0.60s

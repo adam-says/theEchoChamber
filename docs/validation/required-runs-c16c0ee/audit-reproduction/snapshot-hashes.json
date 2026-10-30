@@ -1,0 +1,13 @@
+{
+  "schema": "paced-audit-reproducibility-snapshot-v1",
+  "auditor_source_sha256": "616e0068c3f8c89a85a8290d9ef28e7be94ae91faa01b6e9124541c9e315bf88",
+  "files": {
+    ".gitattributes": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
+    "audit_final_paced_runs.py": "616e0068c3f8c89a85a8290d9ef28e7be94ae91faa01b6e9124541c9e315bf88",
+    "historical-inline-runtime-input-proof.json": "0a8def8a7d64404b55068647952f63b8038b18e7e183cae7ef0ad7c2a8a16e74",
+    "README.md": "8d14496358cb9ef2ab3e93e3a4d2fb766e5688c5c164aa7ac0e3c0ef69c3f4a3",
+    "reconstruct_runtime_input_proof.py": "fa38c707cc333f3ed3915475c7c52cbcef83bd56e78ca7a7aeb406f14c3ad10f",
+    "runtime-input-proof-reconstruction.json": "00f74545cc5250ab4fee991671059579aead22f8974b002a9ebdcf8b156c1c05",
+    "unit-test-manifest.json": "0c5efa23273fa1bdc13473d142681739c71094af92f32f521fdd21dd24e9572f"
+  }
+}

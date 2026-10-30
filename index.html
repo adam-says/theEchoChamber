@@ -125,6 +125,42 @@
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
+            min-width: 0;
+        }
+
+        .controls,
+        #rule-settings,
+        #pid-settings,
+        #band-settings {
+            min-width: 0;
+        }
+
+        .controls input[type="number"] {
+            width: 100%;
+            min-width: 0;
+            max-width: 100%;
+            box-sizing: border-box;
+        }
+
+        .numeric-fields {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.35rem;
+        }
+
+        .numeric-fields label {
+            font-size: 0.68rem;
+            color: #94a3b8;
+            text-transform: none;
+            letter-spacing: 0;
+            font-weight: 500;
+        }
+
+        .numeric-field {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
         }
 
         .controls-group label {
@@ -311,6 +347,56 @@
                 <label>Experiment Mode</label>
                 <button id="btn-ctrl" class="active mode-ctrl" onclick="setMode('control')">Control</button>
                 <button id="btn-loop" onclick="setMode('closed-loop')">Closed-Loop</button>
+                <label for="controller-select">Controller</label>
+                <select id="controller-select" onchange="setController()">
+                    <option value="esn">Reference ESN</option>
+                    <option value="rule">Rule (CA3 envelope)</option>
+                    <option value="pid">PID (CA3 envelope)</option>
+                </select>
+                <div id="controller-status" class="filename-hint">ESN begins unarmed.</div>
+                <div id="feature-diagnostics" class="filename-hint" aria-live="polite"></div>
+                <div id="rule-settings" style="display:none">
+                    <label>Rule envelope thresholds (SD)</label>
+                    <div class="numeric-fields">
+                        <div class="numeric-field">
+                            <label for="rule-lower">Lower SD</label>
+                            <input id="rule-lower" type="number" min="0" max="20" step="0.1" value="1.5" aria-label="Rule lower threshold">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="rule-upper">Upper SD</label>
+                            <input id="rule-upper" type="number" min="0.1" max="20" step="0.1" value="3" aria-label="Rule upper threshold">
+                        </div>
+                    </div>
+                </div>
+                <div id="pid-settings" style="display:none">
+                    <label>PID gains and target z</label>
+                    <div class="numeric-fields">
+                        <div class="numeric-field">
+                            <label for="pid-kp">Kp</label>
+                            <input id="pid-kp" type="number" min="0" step="0.01" value="0" aria-label="Kp">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="pid-ki">Ki</label>
+                            <input id="pid-ki" type="number" min="0" step="0.01" value="0" aria-label="Ki">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="pid-kd">Kd</label>
+                            <input id="pid-kd" type="number" min="0" step="0.01" value="0" aria-label="Kd">
+                        </div>
+                        <div class="numeric-field">
+                            <label for="pid-target">Target z</label>
+                            <input id="pid-target" type="number" step="0.1" value="0" aria-label="PID target z">
+                        </div>
+                    </div>
+                </div>
+                <div id="band-settings" style="display:none">
+                    <label>CA3 filter band (Hz)</label>
+                    <div style="display:flex; gap:.4rem;">
+                        <input id="band-low" type="number" min="1" max="9999" value="100" aria-label="Band low Hz">
+                        <input id="band-high" type="number" min="2" max="10000" value="250" aria-label="Band high Hz">
+                    </div>
+                </div>
+                <button id="apply-controller-settings" style="display:none" onclick="applyControllerSettings()">Apply Controller Settings</button>
             </div>
 
             <div class="controls-group">
@@ -328,23 +414,19 @@
                     <option value="passthrough">ESN Passthrough</option>
                     <option value="threshold_pulse">ESN Threshold Pulse</option>
                 </select>
-                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
-                Stim gain
-            </div>
+                <div id="stim-gain-description" style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">ESN passthrough gain</div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
                     <input id="stim-gain" type="range" min="0" max="10" step="0.001" value="0" oninput="setStim(true)" onchange="setStim(false)" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="stim-gain-label">×0.000</div>
                 </div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
-                Noise threshold for pulse generation
-            </div>
+                <div id="esn-pulse-settings">
+                <div id="esn-noise-settings">
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">Noise threshold for pulse generation</div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
                     <input id="pulse-threshold" type="range" min="0.1" max="10" step="0.1" value="3.0" oninput="setPulseThreshold()" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-threshold-label">3.0 SD</div>
                 </div>
-                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">
-                Noise calculation window
-            </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 0.4rem;">Noise calculation window</div>
                 <div style="display:flex; gap: 0.5rem; align-items:center;">
                     <input id="pulse-window" type="range" min="1" max="60" step="1" value="10" oninput="setPulseWindow()" />
                     <div style="width: 64px; text-align:right; font-size: 12px;" id="pulse-window-label">10 s</div>
@@ -355,6 +437,8 @@
                     <option value="positive">Positive</option>
                     <option value="negative">Negative</option>
                 </select>
+                </div>
+                </div>
                 <button id="btn-arm" onclick="toggleArmed()">Arm Output</button>
                 <div class="filename-hint">Closed-loop computation does not energize AO until output is armed.</div>
             </div>
@@ -373,13 +457,14 @@
         <div class="chartsarea">
             <div id="chart-ai0" class="chart-box"></div>
             <div id="chart-ai1" class="chart-box"></div>
+            <div id="chart-activity" class="chart-box"></div>
             <div id="chart-ao0" class="chart-box"></div>
         </div>
     </div>
 
     <script>
         // --- UPLOT SETUP (3 Stacked Charts) ---
-        let uplotAi0, uplotAi1, uplotAo0;
+        let uplotAi0, uplotAi1, uplotActivity, uplotAo0;
 
         function makeOpts(title, strokeColor) {
             return {
@@ -404,8 +489,19 @@
 
         uplotAi0 = new uPlot(makeOpts("CA3 (AI0, mV)", "#3b82f6"), [[], []], document.getElementById("chart-ai0"));
         uplotAi1 = new uPlot(makeOpts("Cortex (AI1, mV)", "#10b981"), [[], []], document.getElementById("chart-ai1"));
+        function makeActivityOpts() {
+            const opts = makeOpts("CA3 activity (normalized z)", "#f59e0b");
+            opts.series = [
+                {},
+                { label: "Activity z", stroke: "#f59e0b", width: 2 },
+                { label: "Target / upper", stroke: "#f87171", width: 1, dash: [5, 4] },
+                { label: "Lower", stroke: "#60a5fa", width: 1, dash: [5, 4] },
+            ];
+            return opts;
+        }
+        uplotActivity = new uPlot(makeActivityOpts(), [[], [], [], []], document.getElementById("chart-activity"));
         function makeAoOpts() {
-            const opts = makeOpts("Stimulation (AO0, V)", "#ef4444");
+            const opts = makeOpts("AO command (AO0, V; source time)", "#ef4444");
             opts.series = [
                 {},
                 { label: "Passthrough preview", stroke: "rgba(148, 163, 184, 0.8)", width: 1 },
@@ -421,10 +517,11 @@
             let boxes = [
                 document.getElementById("chart-ai0"),
                 document.getElementById("chart-ai1"),
+                document.getElementById("chart-activity"),
                 document.getElementById("chart-ao0")
             ];
 
-            [uplotAi0, uplotAi1, uplotAo0].forEach((u, i) => {
+            [uplotAi0, uplotAi1, uplotActivity, uplotAo0].forEach((u, i) => {
                 let box = boxes[i];
                 u.setSize({
                     width: box.clientWidth,
@@ -447,24 +544,48 @@
         let ao0Array = [];
         let previewArray = [];
         let thresholdArray = [];
+        let activityTArray = [];
+        let activityZArray = [];
+        let activityTargetArray = [];
+        let activityLowerArray = [];
+        let displayInterpretationGeneration = null;
+        let lastDisplaySampleIndex = null;
+        let lastDisplaySequence = null;
+        let lastActivityDisplaySequence = null;
 
         // UI STATE
         let isRecording = false;
         let currentMode = 'control';
         let stimMode = 'off';
+        let controllerId = 'esn';
+        let controllerReady = false;
+        let controllerCalibrated = false;
+        let controllerSettings = {};
+        let syncControllerSettings = true;
+        let observedConfigGeneration = -1;
+        let controllerDiagnostics = {};
         let stimGain = 0.0;
+        let maxPulseAmplitudeV = 1.0;
         let pulseThresholdStd = 3.0;
         let pulseWindowSec = 10.0;
         let pulsePolarity = 'absolute';
         let cortexAi = 'ai1';
+        let inputMappingLocked = false;
         let isAcquiring = false;
         let isArmed = false;
+        let transitionPending = false;
         let currentFault = null;
         let shutdownRequested = false;
         let stimSendTimer = null;
 
         // --- WEBSOCKETS ---
         let ws;
+
+        function displayGapTimestamp(lastIndex, sampleIndex, sampleRate, displayStep) {
+            return sampleIndex - lastIndex > displayStep
+                ? (lastIndex + sampleIndex) / (2 * sampleRate)
+                : null;
+        }
 
         function connect() {
             const query = new URLSearchParams(window.location.search);
@@ -517,8 +638,35 @@
                     if (typeof msg.is_recording === "boolean") isRecording = msg.is_recording;
                     if (typeof msg.is_acquiring === "boolean") isAcquiring = msg.is_acquiring;
                     if (msg.mode) currentMode = msg.mode;
+                    if (msg.controller) controllerId = msg.controller;
+                    if (typeof msg.input_mapping_locked === 'boolean') inputMappingLocked = msg.input_mapping_locked;
+                    if (typeof msg.config_generation === 'number' && msg.config_generation !== observedConfigGeneration) {
+                        observedConfigGeneration = msg.config_generation;
+                        syncControllerSettings = true;
+                    }
+                    if (typeof msg.controller_ready === 'boolean') controllerReady = msg.controller_ready;
+                    if (typeof msg.controller_calibrated === 'boolean') controllerCalibrated = msg.controller_calibrated;
+                    if (typeof msg.transition_pending === 'boolean') transitionPending = msg.transition_pending;
+                    if (msg.controller_settings) controllerSettings = msg.controller_settings;
+                    if (msg.controller_diagnostics) controllerDiagnostics = msg.controller_diagnostics;
+                    if (typeof msg.display_interpretation_generation === 'number') {
+                        if (displayInterpretationGeneration !== null &&
+                            displayInterpretationGeneration !== msg.display_interpretation_generation) {
+                            tArray = []; ai0Array = []; ai1Array = []; ao0Array = [];
+                            previewArray = []; thresholdArray = [];
+                            activityTArray = []; activityZArray = [];
+                            activityTargetArray = []; activityLowerArray = [];
+                            lastDisplaySampleIndex = null;
+                            lastActivityDisplaySequence = null;
+                        }
+                        displayInterpretationGeneration = msg.display_interpretation_generation;
+                    }
+                    if (typeof msg.display_sequence === 'number') lastDisplaySequence = msg.display_sequence;
                     if (msg.stim_mode) stimMode = msg.stim_mode;
                     if (typeof msg.stim_gain === "number") stimGain = msg.stim_gain;
+                    if (typeof msg.max_pulse_amplitude_V === "number") {
+                        maxPulseAmplitudeV = msg.max_pulse_amplitude_V;
+                    }
                     if (typeof msg.pulse_threshold_std === "number") pulseThresholdStd = msg.pulse_threshold_std;
                     if (typeof msg.pulse_window_sec === "number") pulseWindowSec = msg.pulse_window_sec;
                     if (msg.pulse_polarity) pulsePolarity = msg.pulse_polarity;
@@ -537,8 +685,14 @@
                         document.getElementById("fs-info").innerHTML = `<strong>Data Stream FS:</strong> ${msg.fs} Hz`;
                     }
                     if (Array.isArray(msg.amplifier_gain) && typeof msg.ao_command_gain_v_per_esn_unit === "number") {
-                        document.getElementById("calibration-info").innerHTML =
-                            `<strong>Calibration:</strong> AI gains ${msg.amplifier_gain.join(' / ')}; AO ${msg.ao_command_gain_v_per_esn_unit} V per ESN unit`;
+                        const inputScaling = msg.input_source_kind === "electrode_mV" ||
+                            msg.input_source_kind === "replay_electrode_mV"
+                            ? "Input is already in electrode mV; NI AI gains are not applied."
+                            : `NI raw AI V → electrode mV using gains ${msg.amplifier_gain.join(' / ')}.`;
+                        const outputScaling = msg.controller === "esn" && msg.stim_mode === "passthrough"
+                            ? `ESN passthrough: ${msg.ao_command_gain_v_per_esn_unit} AO V per ESN output unit.`
+                            : "Fixed pulse amplitude is direct AO volts; ESN passthrough scaling is not applied.";
+                        document.getElementById("calibration-info").textContent = `${inputScaling} ${outputScaling}`;
                     }
 
                     let ai0 = (msg.ai || [[], []])[0] || [];
@@ -550,31 +704,88 @@
                     if (!numPoints) return;
                     let sampleIds = msg.sample_indices || [];
                     let rawFs = msg.sample_rate_hz || (downsampledFS * 2);
+                    let displayStep = Math.max(1, Number(msg.visual_sample_step) || 1);
 
                     for (let i = 0; i < numPoints; i++) {
+                        const sampleIndex = sampleIds.length === numPoints ? Number(sampleIds[i]) : null;
+                        if (sampleIndex !== null && lastDisplaySampleIndex !== null &&
+                            sampleIndex <= lastDisplaySampleIndex) continue;
+                        if (sampleIndex !== null && lastDisplaySampleIndex !== null) {
+                            const gapTime = displayGapTimestamp(
+                                lastDisplaySampleIndex, sampleIndex, rawFs, displayStep
+                            );
+                            if (gapTime !== null) {
+                                tArray.push(gapTime);
+                                ai0Array.push(null); ai1Array.push(null); ao0Array.push(null);
+                                previewArray.push(null); thresholdArray.push(null);
+                            }
+                        }
                         const fallback = tArray.length ? (tArray[tArray.length - 1] + 1 / downsampledFS) : 0;
-                        tArray.push(sampleIds.length === numPoints ? sampleIds[i] / rawFs : fallback);
+                        tArray.push(sampleIndex !== null ? sampleIndex / rawFs : fallback);
                         ai0Array.push(ai0[i]);
                         ai1Array.push(ai1[i]);
                         ao0Array.push(ao0[i]);
                         previewArray.push(preview[i] ?? null);
                         thresholdArray.push(threshold[i] ?? null);
+                        if (sampleIndex !== null) lastDisplaySampleIndex = sampleIndex;
                     }
-                    // Enforce max window using slice
-                    let maxP = Math.floor(MAX_SECONDS * downsampledFS);
-                    if (tArray.length > maxP) {
-                        tArray = tArray.slice(-maxP);
-                        ai0Array = ai0Array.slice(-maxP);
-                        ai1Array = ai1Array.slice(-maxP);
-                        ao0Array = ao0Array.slice(-maxP);
-                        previewArray = previewArray.slice(-maxP);
-                        thresholdArray = thresholdArray.slice(-maxP);
+                    // Clip on source time, so omitted display packets do not
+                    // change the plotted time window or source sample spacing.
+                    const displayCutoff = tArray.length ? tArray[tArray.length - 1] - MAX_SECONDS : -Infinity;
+                    let firstVisible = 0;
+                    while (firstVisible < tArray.length && tArray[firstVisible] < displayCutoff) firstVisible++;
+                    if (firstVisible) {
+                        tArray = tArray.slice(firstVisible);
+                        ai0Array = ai0Array.slice(firstVisible);
+                        ai1Array = ai1Array.slice(firstVisible);
+                        ao0Array = ao0Array.slice(firstVisible);
+                        previewArray = previewArray.slice(firstVisible);
+                        thresholdArray = thresholdArray.slice(firstVisible);
                     }
 
                     // Plot immediately directly from standard JS arrays
                     uplotAi0.setData([tArray, ai0Array]);
                     uplotAi1.setData([tArray, ai1Array]);
                     uplotAo0.setData([tArray, previewArray, thresholdArray, ao0Array]);
+
+                    if (sampleIds.length) {
+                        const diagnostics = msg.controller_diagnostics || {};
+                        const activityTime = sampleIds[sampleIds.length - 1] / rawFs;
+                        if (lastActivityDisplaySequence !== null &&
+                            typeof msg.display_sequence === 'number' &&
+                            msg.display_sequence > lastActivityDisplaySequence + 1) {
+                            activityTArray.push(activityTime - 1 / (msg.fs || downsampledFS));
+                            activityZArray.push(null); activityTargetArray.push(null); activityLowerArray.push(null);
+                        }
+                        const activityZ = diagnostics.z_score !== null && diagnostics.z_score !== undefined &&
+                            Number.isFinite(Number(diagnostics.z_score)) ? Number(diagnostics.z_score) : null;
+                        let activityTarget = null;
+                        let activityLower = null;
+                        if (msg.controller === 'rule') {
+                            activityTarget = Number(msg.controller_settings?.upper_z ?? 3);
+                            activityLower = Number(msg.controller_settings?.lower_z ?? 1.5);
+                        } else if (msg.controller === 'pid') {
+                            activityTarget = Number(msg.controller_settings?.target_z ?? 0);
+                        }
+                        activityTArray.push(activityTime);
+                        activityZArray.push(activityZ);
+                        activityTargetArray.push(activityTarget);
+                        activityLowerArray.push(activityLower);
+                        if (typeof msg.display_sequence === 'number') {
+                            lastActivityDisplaySequence = msg.display_sequence;
+                        }
+                        const cutoff = activityTime - MAX_SECONDS;
+                        let firstActivityVisible = 0;
+                        while (firstActivityVisible < activityTArray.length &&
+                               activityTArray[firstActivityVisible] < cutoff) firstActivityVisible++;
+                        if (firstActivityVisible) {
+                            activityTArray = activityTArray.slice(firstActivityVisible);
+                            activityZArray = activityZArray.slice(firstActivityVisible);
+                            activityTargetArray = activityTargetArray.slice(firstActivityVisible);
+                            activityLowerArray = activityLowerArray.slice(firstActivityVisible);
+                        }
+                    }
+                    uplotActivity.setData([activityTArray, activityZArray, activityTargetArray, activityLowerArray]);
 
                 } catch (err) {
                     console.error("RX Err:", err);
@@ -599,13 +810,82 @@
             let recordingFilename = document.getElementById('recording-filename');
             let pulsePolaritySelect = document.getElementById('pulse-polarity');
             let faultPanel = document.getElementById('fault-panel');
+            let controllerSelect = document.getElementById('controller-select');
+            let controllerStatus = document.getElementById('controller-status');
+            let gainDescription = document.getElementById('stim-gain-description');
+            let ruleSettings = document.getElementById('rule-settings');
+            let pidSettings = document.getElementById('pid-settings');
+            let bandSettings = document.getElementById('band-settings');
+            let applySettings = document.getElementById('apply-controller-settings');
+            let esnPulseSettings = document.getElementById('esn-pulse-settings');
+            let esnNoiseSettings = document.getElementById('esn-noise-settings');
+            let featureDiagnostics = document.getElementById('feature-diagnostics');
+            let passthroughOption = stimModeSel?.querySelector('option[value="passthrough"]');
+            let pulseOption = stimModeSel?.querySelector('option[value="threshold_pulse"]');
 
             btnCtrl.className = currentMode === 'control' ? 'active mode-ctrl' : '';
             btnLoop.className = currentMode === 'closed-loop' ? 'active mode-loop' : '';
 
             if (stimModeSel) stimModeSel.value = stimMode;
-            if (stimGainSlider) stimGainSlider.value = stimGain;
-            if (stimGainLabel) stimGainLabel.textContent = `×${Number(stimGain).toFixed(3)}`;
+            if (controllerSelect) controllerSelect.value = controllerId;
+            if (ruleSettings) ruleSettings.style.display = controllerId === 'rule' ? 'block' : 'none';
+            if (pidSettings) pidSettings.style.display = controllerId === 'pid' ? 'block' : 'none';
+            if (bandSettings) bandSettings.style.display = controllerId === 'esn' ? 'none' : 'block';
+            if (applySettings) applySettings.style.display = controllerId === 'esn' ? 'none' : 'block';
+            if (esnPulseSettings) esnPulseSettings.style.display = controllerId === 'esn' ? 'block' : 'none';
+            if (esnNoiseSettings) esnNoiseSettings.style.display = controllerId === 'esn' ? 'block' : 'none';
+            if (passthroughOption) passthroughOption.hidden = controllerId !== 'esn';
+            if (pulseOption) pulseOption.textContent = controllerId === 'esn' ? 'ESN Threshold Pulse' : 'Fixed pulse';
+            if (syncControllerSettings) {
+                if (controllerSettings.band_hz) {
+                    document.getElementById('band-low').value = controllerSettings.band_hz[0];
+                    document.getElementById('band-high').value = controllerSettings.band_hz[1];
+                }
+                if (controllerId === 'rule') {
+                    document.getElementById('rule-lower').value = controllerSettings.lower_z ?? 1.5;
+                    document.getElementById('rule-upper').value = controllerSettings.upper_z ?? 3;
+                } else if (controllerId === 'pid') {
+                    document.getElementById('pid-kp').value = controllerSettings.kp ?? 0;
+                    document.getElementById('pid-ki').value = controllerSettings.ki ?? 0;
+                    document.getElementById('pid-kd').value = controllerSettings.kd ?? 0;
+                    document.getElementById('pid-target').value = controllerSettings.target_z ?? 0;
+                }
+                syncControllerSettings = false;
+            }
+            if (controllerStatus) {
+                controllerStatus.textContent = currentFault ? `Fault · ${currentFault}` :
+                    !controllerReady ? `${controllerId.toUpperCase()} unavailable` :
+                    transitionPending ? 'Output drain in progress' :
+                    isArmed ? 'Output armed' :
+                    controllerId === 'esn' ? 'ESN available' :
+                    controllerCalibrated ? 'Baseline calibrated · ready to arm' :
+                    isAcquiring && currentMode === 'closed-loop'
+                        ? 'Calibrating baseline · output disabled'
+                        : 'Start acquisition and enter closed-loop to calibrate';
+            }
+            if (featureDiagnostics) {
+                const diagnostics = controllerDiagnostics || {};
+                if (controllerId === 'rule' || controllerId === 'pid') {
+                    const valid = diagnostics.feature_valid !== false;
+                    const stimulated = Number(diagnostics.stimulated_sample_count || 0);
+                    const invalid = Number(diagnostics.feature_invalid_sample_count || 0);
+                    const guard = Number(diagnostics.feature_recovery_samples || 0);
+                    const remaining = Number(diagnostics.feature_recovery_remaining_samples || 0);
+                    const featureState = diagnostics.reason === 'stimulus_feature_recovery'
+                        ? `Waiting for filter recovery (${remaining}/${guard} samples)`
+                        : valid ? 'Feature valid' : 'Feature unavailable';
+                    featureDiagnostics.textContent = `${featureState} · ${stimulated} stimulated · ${invalid} feature-ineligible. Acquisition gaps are tracked separately.`;
+                } else {
+                    featureDiagnostics.textContent = '';
+                }
+            }
+            const pulseOutput = controllerId === 'rule' || controllerId === 'pid' || stimMode === 'threshold_pulse';
+            if (stimGainSlider) {
+                stimGainSlider.max = pulseOutput ? maxPulseAmplitudeV : 10;
+                stimGainSlider.value = stimGain;
+            }
+            if (gainDescription) gainDescription.textContent = pulseOutput ? 'Pulse amplitude (AO V)' : 'ESN passthrough gain';
+            if (stimGainLabel) stimGainLabel.textContent = pulseOutput ? `${Number(stimGain).toFixed(3)} V` : `×${Number(stimGain).toFixed(3)}`;
             if (pulseThreshold) pulseThreshold.value = pulseThresholdStd;
             if (pulseThresholdLabel) pulseThresholdLabel.textContent = `${Number(pulseThresholdStd).toFixed(1)} SD`;
             if (pulseWindow) pulseWindow.value = pulseWindowSec;
@@ -618,7 +898,9 @@
             if (btnArm) {
                 btnArm.textContent = isArmed ? 'Disarm Output' : 'Arm Output';
                 btnArm.className = isArmed ? 'active arm-on' : '';
-                btnArm.disabled = !isAcquiring || currentMode !== 'closed-loop' || stimMode === 'off' || stimGain <= 0 || !!currentFault;
+                btnArm.disabled = !isAcquiring || currentMode !== 'closed-loop' || !controllerReady ||
+                    ((controllerId === 'rule' || controllerId === 'pid') && !controllerCalibrated) ||
+                    transitionPending || stimMode === 'off' || stimGain <= 0 || !!currentFault;
             }
             if (faultPanel) {
                 faultPanel.style.display = currentFault ? 'block' : 'none';
@@ -626,7 +908,9 @@
             }
             if (cortexChannel) {
                 cortexChannel.value = cortexAi;
-                cortexChannel.disabled = isRecording;
+                cortexChannel.disabled = isRecording || inputMappingLocked;
+                cortexChannel.title = inputMappingLocked
+                    ? 'Channel mapping is fixed by the calibrated mV input source.' : '';
             }
             if (recordingFilename) recordingFilename.disabled = isRecording;
 
@@ -645,6 +929,26 @@
             }
         }
 
+        function setController() {
+            const controller = document.getElementById('controller-select').value;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_controller', controller }));
+            }
+        }
+
+        function applyControllerSettings() {
+            const band_hz = [Number(document.getElementById('band-low').value), Number(document.getElementById('band-high').value)];
+            let settings;
+            if (controllerId === 'rule') {
+                settings = { lower_z: Number(document.getElementById('rule-lower').value), upper_z: Number(document.getElementById('rule-upper').value), band_hz };
+            } else if (controllerId === 'pid') {
+                settings = { kp: Number(document.getElementById('pid-kp').value), ki: Number(document.getElementById('pid-ki').value), kd: Number(document.getElementById('pid-kd').value), target_z: Number(document.getElementById('pid-target').value), direction: 1, max_rate_hz: 2, update_ms: 5, derivative_tau_s: .02, band_hz };
+            } else return;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'set_controller_settings', settings }));
+            }
+        }
+
         function toggleRecording() {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 let cmd = isRecording ? 'stop_recording' : 'start_recording';
@@ -659,7 +963,8 @@
         function setStim(isLive = false) {
             const requestedMode = document.getElementById('stim-mode').value;
             const requestedGain = parseFloat(document.getElementById('stim-gain').value);
-            document.getElementById('stim-gain-label').textContent = `×${requestedGain.toFixed(3)}`;
+            const pulseOutput = controllerId === 'rule' || controllerId === 'pid' || requestedMode === 'threshold_pulse';
+            document.getElementById('stim-gain-label').textContent = pulseOutput ? `${requestedGain.toFixed(3)} V` : `×${requestedGain.toFixed(3)}`;
             const send = () => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ command: 'set_stim', stim_mode: requestedMode, stim_gain: requestedGain }));
@@ -732,7 +1037,8 @@
             ws.send(JSON.stringify({ command: "shutdown" }));
         }
 
-        // Init App 
+        // Init App
+        updateButtonsVisually();
         connect();
     </script>
 </body>

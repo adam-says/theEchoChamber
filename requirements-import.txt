@@ -1,0 +1,2 @@
+# Optional offline ABF reader. Kept out of the runtime requirements.
+pyabf==2.3.8

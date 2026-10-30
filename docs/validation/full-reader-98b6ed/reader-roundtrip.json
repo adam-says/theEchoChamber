@@ -1,0 +1,150 @@
+{
+  "schema": "echo-chamber-full-reader-roundtrip-v1",
+  "diagnostic_only": true,
+  "result": "pass",
+  "recording": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-e965d80\\full-matrix\\recordings\\20261029_091358_20261029T081358Z_2026_05_29_0001_rule_100ms.h5",
+  "canonical_source": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\tmp\\ca3_import_validation\\2026_05_29_0001.h5",
+  "reader_api": "readEchoChamberData.load_recording",
+  "plot_api": "readEchoChamberData.plot_recording",
+  "plot_path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\outputs\\full-reader-98b6ed73-e965-recording\\reader-roundtrip-window.png",
+  "plot_window_seconds": {
+    "start": 12.0,
+    "duration": 4.0
+  },
+  "revision_before": "95603cf056b9c7b09fafc560ab56b32c76c4fa66",
+  "revision_after": "95603cf056b9c7b09fafc560ab56b32c76c4fa66",
+  "hashes_before": {
+    "reader": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\readEchoChamberData.py",
+      "size_bytes": 18251,
+      "sha256": "98b6ed7387f6dcd56e7b1180b22aebf3fe6bf2a7fe6e07b819f3c45c388543ca"
+    },
+    "runner": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\verify_full_recording_reader.py",
+      "size_bytes": 24446,
+      "sha256": "1f15d0e4fc2d16199d4858f4fcf5e2226d113426ba780eb0e47cb42cc5a4cf42"
+    },
+    "recording": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-e965d80\\full-matrix\\recordings\\20261029_091358_20261029T081358Z_2026_05_29_0001_rule_100ms.h5",
+      "size_bytes": 92615768,
+      "sha256": "5f1b962c75aeb1573e5205b33367c6cc53a41861cd45493d8e131dd47ac81de2"
+    },
+    "canonical_source": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\tmp\\ca3_import_validation\\2026_05_29_0001.h5",
+      "size_bytes": 69035446,
+      "sha256": "282827974028af3f22375fba78cc3d969e228e39e5de23458b0a9ddccb44422b"
+    }
+  },
+  "hashes_after": {
+    "reader": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\readEchoChamberData.py",
+      "size_bytes": 18251,
+      "sha256": "98b6ed7387f6dcd56e7b1180b22aebf3fe6bf2a7fe6e07b819f3c45c388543ca"
+    },
+    "runner": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\control-validation-fixes\\work\\verify_full_recording_reader.py",
+      "size_bytes": 24446,
+      "sha256": "1f15d0e4fc2d16199d4858f4fcf5e2226d113426ba780eb0e47cb42cc5a4cf42"
+    },
+    "recording": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\theEchoChamber\\work\\validation_runs\\acceptance-e965d80\\full-matrix\\recordings\\20261029_091358_20261029T081358Z_2026_05_29_0001_rule_100ms.h5",
+      "size_bytes": 92615768,
+      "sha256": "5f1b962c75aeb1573e5205b33367c6cc53a41861cd45493d8e131dd47ac81de2"
+    },
+    "canonical_source": {
+      "path": "C:\\Users\\angel\\Documents\\Codex\\2026-10-28\\make-a-plan-for-this-project-3\\work\\tmp\\ca3_import_validation\\2026_05_29_0001.h5",
+      "size_bytes": 69035446,
+      "sha256": "282827974028af3f22375fba78cc3d969e228e39e5de23458b0a9ddccb44422b"
+    }
+  },
+  "hashes_unchanged": {
+    "reader": true,
+    "runner": true,
+    "recording": true,
+    "canonical_source": true
+  },
+  "checks": {
+    "schema": "echo-chamber-recording",
+    "format_tag": "echoChamber_H5_v5",
+    "complete": true,
+    "committed_samples": 36000000,
+    "recording_signal_samples": 36000000,
+    "canonical_source_samples": 36000000,
+    "sample_count_matches": true,
+    "full_source_coverage": true,
+    "first_source_index": 0,
+    "source_starts_at_zero": true,
+    "source_discontinuity_count": 0,
+    "no_source_discontinuities": true,
+    "sample_rate_hz": 20000.0,
+    "source_sample_rate_hz": 20000.0,
+    "channel_labels": [
+      "CA3",
+      "EC"
+    ],
+    "channel_roles": [
+      "CA3",
+      "Cortex"
+    ],
+    "channel_regions": [
+      "CA3",
+      "EC"
+    ],
+    "cortex_region_preserved_as_ec": true,
+    "discontinuity_event_count": 0,
+    "absolute_index_mismatches": 0,
+    "source_nonfinite_sample_values": 0,
+    "raw_ai_shape": [
+      2,
+      36000000
+    ],
+    "raw_ai_shape_matches_committed_boundary": true,
+    "electrode_input_mismatches": 0,
+    "electrode_input_max_abs_error_mV": 0.0,
+    "ao_command_mismatches": 0,
+    "ao_command_max_abs_error_V": 0.0,
+    "mode_mismatches": 0,
+    "mode_max_abs_error": 0.0,
+    "block_diagnostic_rows_observed": 360000,
+    "expected_block_diagnostic_rows": 360000,
+    "block_offset_mismatches": 0,
+    "block_source_index_mismatches": 0,
+    "block_count_mismatches": 0,
+    "block_target_index_mismatches": 0,
+    "controller_diagnostic_rows_observed": 360000,
+    "controller_offset_mismatches": 0,
+    "controller_generation_order_mismatches": 0,
+    "controller_identity_mismatches": 0,
+    "controller_generation_min": 2,
+    "controller_generation_max": 2,
+    "controller_ids_observed": [
+      "rule"
+    ],
+    "action_stage_counts": {
+      "ao_commit": 3150,
+      "ao_committed": 3150,
+      "ao_reserved": 3150,
+      "committed_tail_rendered": 1571,
+      "drain_acknowledged": 2,
+      "rejected_refractory": 649,
+      "rendered_for_ao": 1579
+    },
+    "action_stage_row_count": 13251,
+    "pulse_event_row_count": 3135,
+    "action_stages_are_sparse_diagnostics_distinct_from_pulse_rows": true,
+    "optional_physical_monitor": {
+      "available": false,
+      "sample_count": 0,
+      "unit": null,
+      "shape_matches_committed_boundary": true
+    },
+    "physical_delivery_claim": false,
+    "timing_claim": false,
+    "complete_recording_coverage": true
+  },
+  "limitations": [
+    "AO is the recorded software command signal; this report does not prove physical delivery or current.",
+    "Timing was not measured and no hardware acceptance claim is made.",
+    "Action-stage row counts are sparse software diagnostics and are reported separately from pulse-event rows."
+  ]
+}
